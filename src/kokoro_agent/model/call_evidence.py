@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from kokoro_agent.model.call_models import (
     AttemptBinding,
+    SealModelCallObservation,
     ModelCallIdentityConflict,
     ModelCallInputInvalid,
 )
@@ -174,6 +175,37 @@ def _validate_evidence_binding(
         totals_state=totals_state,
         classification_state=classification_state,
     )
+
+
+def build_observed_call_evidence(
+    attempt: Mapping[str, object],
+    command: SealModelCallObservation,
+    database_now: datetime,
+) -> tuple[bytes, ValidatedModelCallEvidence]:
+    if attempt["status"] != "dispatch_started":
+        raise ModelCallIdentityConflict("observed response requires original dispatch")
+    raw, _ = build_terminal_closure_evidence(attempt, database_now)
+    document = _json_object(raw)
+    document.pop("digest")
+    document["execution"] = _json_object(rfc8785.dumps(document["execution"])) | {
+        "outcome": command.outcome
+    }
+    document["actual"] = command.actual.model_dump(mode="json")
+    document["usage"] = command.usage.model_dump(mode="json")
+    document["digest"] = hashlib.sha256(
+        _EVIDENCE_DOMAIN + rfc8785.dumps(document)
+    ).hexdigest()
+    raw = rfc8785.dumps(document)
+    artifact = validate_append_evidence(
+        raw,
+        attempt_binding_bytes=_bytes(attempt["attempt_binding_bytes"]),
+        planned_bytes=_bytes(attempt["planned_bytes"]),
+        authorization_bytes=_bytes(attempt["authorization_bytes"]),
+        prepared_at=_instant(attempt["prepared_at"]),
+        dispatch_started_at=_optional_instant(attempt["dispatch_started_at"]),
+        database_now=database_now,
+    )
+    return raw, artifact
 
 
 def build_terminal_closure_evidence(

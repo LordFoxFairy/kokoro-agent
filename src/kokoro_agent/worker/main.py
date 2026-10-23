@@ -34,6 +34,7 @@ from kokoro_agent.worker.platform import worker_platform_runtime
 from kokoro_agent.worker.model_financial import (
     worker_model_billing,
     ModelFinancialRecovery,
+    WorkerModelExecutionFactory,
     active_model_financial_recovery,
 )
 from kokoro_agent.model.financial_reconciliation import ModelFinancialReconciler
@@ -62,6 +63,17 @@ from kokoro_agent.worker.supervisor import RunSupervisor
 from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepositorySettings,
     make_chat_repository,
+)
+
+from kokoro_agent.execution.execution_proof_keys import (
+    WorkerExecutionProofConfig,
+    load_execution_proof_signer,
+)
+from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner
+from kokoro_agent.execution.execution_proof_supplier import ExecutionProofLeaseReadPort
+from kokoro_agent.infrastructure.postgres_execution_proof_lease import (
+    PostgresExecutionProofLeaseReader,
+    PostgresExecutionProofLeaseConfig,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -214,6 +226,32 @@ async def worker_storage_delivery(
         yield StorageDeliveryClient(run_repository, transport)
 
 
+def worker_execution_proofs(
+    config: AppConfig,
+) -> tuple[ExecutionProofSigner, ExecutionProofLeaseReadPort]:
+    if (
+        config.execution_proof_issuer is None
+        or config.execution_proof_private_key_file is None
+        or config.execution_proof_active_kid is None
+        or config.execution_proof_thumbprint is None
+    ):
+        raise ValueError("Worker execution proof configuration is required")
+    signer = load_execution_proof_signer(
+        WorkerExecutionProofConfig(
+            issuer=config.execution_proof_issuer,
+            private_key_file=config.execution_proof_private_key_file,
+            active_kid=config.execution_proof_active_kid,
+            active_jwk_thumbprint_sha256=config.execution_proof_thumbprint,
+        )
+    )
+    reader = PostgresExecutionProofLeaseReader(
+        PostgresExecutionProofLeaseConfig(
+            database_url=config.database_url, schema_name=config.database_schema
+        )
+    )
+    return signer, reader
+
+
 async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None:
     """Run one worker with deployment-selected public clients.
 
@@ -243,8 +281,11 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         config.custom_subagents_json, config.enabled_builtin_subagents
     )
     # 进程级共享 checkpointer + run 状态存储：PostgreSQL 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
+    signer, lease_reader = worker_execution_proofs(config)
     async with (
-        worker_platform_runtime(config) as platform,
+        worker_platform_runtime(
+            config, signer=signer, lease_reader=lease_reader
+        ) as platform,
         worker_model_resolver(config, owner_clients.model_resolver) as model_resolver,
         worker_model_billing(
             base_url=config.bff_base_url,
@@ -292,6 +333,13 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             checkpointer=interaction_checkpointer,
             run_repository=run_repository,
             model_call_repository=model_call_repository,
+            model_execution=WorkerModelExecutionFactory(
+                repository=model_call_repository,
+                budget=model_billing,
+                financial=financial_reconciler,
+                signer=signer,
+                lease_reader=lease_reader,
+            ),
             memory_store=memory_store,
             delivery=delivery,
             model_resolver=model_resolver,

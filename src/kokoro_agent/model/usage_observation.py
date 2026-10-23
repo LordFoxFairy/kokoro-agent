@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from io import BytesIO
 import json
@@ -61,6 +61,7 @@ class PhysicalUsageObservation:
     projection_digest: str | None = None
     service_tier: Literal["absent", "null", "default", "unsupported"] = "absent"
     unsupported_usage_category: bool = False
+    reported_model: str | None = None
 
 
 class _ObservationError(Exception):
@@ -139,6 +140,18 @@ def _count(source: dict[str, object], name: str) -> ObservedCount:
     return ObservedCount("reported", value)
 
 
+def _reported_model(document: dict[str, object]) -> str | None:
+    value = document.get("model")
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 512
+        and not any(ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        value.encode("utf-8", errors="strict")
+        return value
+    return None
+
+
 def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
     raw = document.get("usage")
     presence: Literal["missing", "null", "object"] = (
@@ -209,6 +222,7 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
         sha256(_DOMAIN + canonical).hexdigest(),
         tier,
         unknown,
+        _reported_model(document),
     )
 
 
@@ -222,6 +236,8 @@ class _Parser:
         self.events = 0
         self.done = False
         self.projection: PhysicalUsageObservation | None = None
+        self._seen_model: str | None = None
+        self._model_conflict = False
 
     def feed(self, chunk: bytes) -> None:
         if not self.streaming:
@@ -262,6 +278,14 @@ class _Parser:
             self.done = True
             return
         document = _document(data)
+        if "model" in document:
+            reported = _reported_model(document)
+            if reported is None or (
+                self._seen_model is not None and self._seen_model != reported
+            ):
+                self._model_conflict = True
+            if reported is not None:
+                self._seen_model = reported
         if document.get("choices") != [] or document.get("usage") is None:
             return
         candidate = _projection(document)
@@ -280,7 +304,12 @@ class _Parser:
             _fail("missing_done")
         if self.projection is None:
             _fail("missing_final")
-        return self.projection
+        return replace(
+            self.projection,
+            reported_model=None
+            if self._model_conflict
+            else self.projection.reported_model,
+        )
 
     def clear(self) -> None:
         self.scratch.clear()
@@ -403,6 +432,7 @@ def _observe(
             projection.projection_digest,
             projection.service_tier,
             projection.unsupported_usage_category,
+            projection.reported_model,
         )
     finally:
         parser.clear()

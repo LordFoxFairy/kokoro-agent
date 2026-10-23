@@ -280,17 +280,26 @@ class AppConfig(BaseModel):
             raise ValueError(
                 "BFF model billing configuration requires origin and workload secrets"
             )
-        values = (
+        transport = (
             self.iam_base_url,
             self.platform_base_url,
             self.platform_credentials_file,
+        )
+        signing = (
             self.execution_proof_issuer,
             self.execution_proof_private_key_file,
             self.execution_proof_active_kid,
             self.execution_proof_thumbprint,
         )
-        if any(value is not None for value in values) and not all(
-            value is not None for value in values
+        if any(value is not None for value in signing) and not all(
+            value is not None for value in signing
+        ):
+            raise ValueError(
+                "Worker execution proof signing descriptors must be complete"
+            )
+        if any(value is not None for value in transport) and (
+            not all(value is not None for value in transport)
+            or not all(value is not None for value in signing)
         ):
             raise ValueError(
                 "Platform transport requires all worker credential and signing descriptors"

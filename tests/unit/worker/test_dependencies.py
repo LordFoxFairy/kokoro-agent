@@ -127,6 +127,9 @@ async def test_real_worker_composition_sends_same_policy_to_factory_and_supervis
     def stream(settings: object) -> Mock:
         return Mock()
 
+    monkeypatch.setattr(
+        module, "worker_execution_proofs", Mock(return_value=(Mock(), Mock()))
+    )
     monkeypatch.setattr(module, "make_stream", stream)
 
     def factory(dependencies: WorkerDependencies) -> Mock:

@@ -293,6 +293,10 @@ async def build_deep_agent(
         def model_guard(peer_path: tuple[str, ...]) -> ModelCallRuntimeMiddleware:
             return ModelCallRuntimeMiddleware(
                 repository=dependencies.model_call_repository,
+                execution=dependencies.model_execution(
+                    LeasedRun(request=request, lease=lease)
+                ),
+                route=route,
                 request=request,
                 lease=lease,
                 planned=planned,

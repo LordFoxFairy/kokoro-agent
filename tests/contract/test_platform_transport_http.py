@@ -33,6 +33,21 @@ from kokoro_agent.execution.platform_request_binding import project_request_bind
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunInput, RunRequest
 from kokoro_agent.worker.platform import worker_platform_runtime
+from kokoro_agent.worker.main import worker_execution_proofs
+from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
+from kokoro_agent.worker.platform import WorkerPlatformRuntime
+
+
+@asynccontextmanager
+async def composed_platform_runtime(
+    config: AppConfig,
+) -> AsyncGenerator[WorkerPlatformRuntime | None, None]:
+    signer, reader = worker_execution_proofs(config)
+    async with worker_platform_runtime(
+        config, signer=signer, lease_reader=reader
+    ) as runtime:
+        yield runtime
 
 
 class Loopback:
@@ -247,7 +262,7 @@ class LeaseReader:
 async def test_worker_composition_real_http_proof_retry_and_close(
     loopback: Loopback, tmp_path: Path
 ) -> None:
-    async with worker_platform_runtime(loopback.config(tmp_path)) as runtime:
+    async with composed_platform_runtime(loopback.config(tmp_path)) as runtime:
         assert runtime is not None
         reader = LeaseReader()
         sender = replace(runtime, lease_reader=reader).for_run(leased_run())
@@ -272,7 +287,7 @@ async def test_worker_composition_real_http_proof_retry_and_close(
 async def test_real_connect_transport_boundaries(
     loopback: Loopback, tmp_path: Path, request_id: str
 ) -> None:
-    async with worker_platform_runtime(loopback.config(tmp_path)) as runtime:
+    async with composed_platform_runtime(loopback.config(tmp_path)) as runtime:
         assert runtime is not None
         sender = replace(runtime, lease_reader=LeaseReader()).for_run(leased_run())
         with pytest.raises(PlatformCallError):
@@ -287,7 +302,7 @@ async def test_real_connect_transport_boundaries(
 
 
 async def test_real_connect_caller_cancel(loopback: Loopback, tmp_path: Path) -> None:
-    async with worker_platform_runtime(loopback.config(tmp_path)) as runtime:
+    async with composed_platform_runtime(loopback.config(tmp_path)) as runtime:
         assert runtime is not None
         sender = replace(runtime, lease_reader=LeaseReader()).for_run(leased_run())
         task = asyncio.create_task(
@@ -349,7 +364,7 @@ async def test_real_postgres_lease_with_worker_owned_http(
             fence = await repository.try_claim(request, "worker")
             assert fence is not None
             loopback.expected_generation = fence.generation
-            async with worker_platform_runtime(config) as runtime:
+            async with composed_platform_runtime(config) as runtime:
                 assert runtime is not None
                 sender = runtime.for_run(LeasedRun(request=request, lease=fence))
                 operation = pb.GetMcpConnectorRequest(
@@ -448,7 +463,7 @@ async def test_typed_reader_uses_current_run_sender_fresh_proof_and_lease(
         )
 
     async with (
-        worker_platform_runtime(loopback.config(tmp_path)) as runtime,
+        composed_platform_runtime(loopback.config(tmp_path)) as runtime,
         SkillPackageTransport(
             "https://objects.test", transport=httpx.MockTransport(get)
         ) as packages,

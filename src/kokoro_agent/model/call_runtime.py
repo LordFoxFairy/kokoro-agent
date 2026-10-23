@@ -27,6 +27,8 @@ from kokoro_agent.model.call_models import (
     PrepareModelCall,
 )
 from kokoro_agent.model.call_scope import register_current_model_call_task
+from kokoro_agent.model.execution import ModelCallExecution, AuthorizedModelCall
+from kokoro_agent.model.usage_observation import capture_model_usage
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
@@ -37,6 +39,7 @@ _ATTEMPT_NAMESPACE = UUID("64675e75-8af6-50b4-ade3-d413e5144dc9")
 @dataclass(slots=True)
 class _FinalRequestScope:
     owner: asyncio.Task[object]
+    execution: ModelCallExecution
     repository: ModelCallRepository
     request: RunRequest
     lease: LeaseFence
@@ -45,6 +48,7 @@ class _FinalRequestScope:
     planned: PlannedBinding
     recipe: StaticRecipeBinding
     peer_path: tuple[str, ...]
+    call: AuthorizedModelCall | None = None
     claimant: asyncio.Task[object] | None = None
     closed: bool = False
     denial: Exception | None = None
@@ -53,6 +57,8 @@ class _FinalRequestScope:
         if self.owner.cancelling():
             raise asyncio.CancelledError
         if self.closed or self.owner.done():
+            if self.denial is not None:
+                raise self.denial
             raise ModelCallAuthorizationUnavailable("model-call final scope is closed")
 
     def close(self) -> None:
@@ -104,7 +110,7 @@ async def freeze_final_model_request(
     expected_endpoint: str,
     headers: Sequence[tuple[str, str]],
 ) -> None:
-    """Unique final-hook claimant; no authorization or network permit is returned."""
+    """Unique physical claimant; return only after one durable authorized dispatch."""
     scope = _FINAL_SCOPE.get()
     try:
         if scope is not None:
@@ -147,7 +153,7 @@ async def freeze_final_model_request(
             endpoint=endpoint, planned_digest=planned_digest, raw=raw
         )
         # No await separates the claim/active check from entry to real preparation.
-        await scope.repository.prepare(
+        prepared = await scope.repository.prepare(
             PrepareModelCall(
                 request=scope.request,
                 lease=scope.lease,
@@ -161,9 +167,8 @@ async def freeze_final_model_request(
             )
         )
         scope.require_active()
-        raise ModelCallAuthorizationUnavailable(
-            "model-call authorization consumer is unavailable"
-        )
+        scope.call = await scope.execution.authorize(prepared)
+        scope.require_active()
     except Exception as error:
         if scope is not None and scope.denial is None:
             scope.denial = error
@@ -171,12 +176,14 @@ async def freeze_final_model_request(
 
 
 class ModelCallRuntimeMiddleware(AgentMiddleware):
-    """Prepare one stable attempt and fail closed while Billing is unpublished."""
+    """Own one SDK call, its unique dispatch and same-stream durable financial evidence."""
 
     def __init__(
         self,
         *,
         repository: ModelCallRepository,
+        execution: ModelCallExecution,
+        route: ResolvedModel,
         request: RunRequest,
         lease: LeaseFence,
         planned: PlannedBinding,
@@ -185,6 +192,8 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
     ) -> None:
         super().__init__()
         self._repository = repository
+        self._execution = execution
+        self._route = route
         self._request = request
         self._lease = lease
         self._planned = planned
@@ -204,6 +213,7 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
         scope = _FinalRequestScope(
             owner=owner,
             repository=self._repository,
+            execution=self._execution,
             request=self._request,
             lease=self._lease,
             call_id=call_id,
@@ -213,28 +223,57 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
             peer_path=self._peer_path,
         )
         token = _FINAL_SCOPE.set(scope)
+        primary: BaseException | None = None
+        response: ModelResponse | None = None
+        capture = capture_model_usage(self._route)
         try:
             try:
-                await handler(request)
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                if owner.cancelling():
-                    raise asyncio.CancelledError from None
-                denial = scope.denial
-                if denial is not None and (
-                    error is denial or error.__cause__ is denial
-                ):
-                    raise denial from None
-                raise
+                with capture:
+                    response = await handler(request)
+                    scope.require_active()
+                    if scope.denial is not None:
+                        raise scope.denial
+                    if scope.call is None:
+                        raise ModelCallAuthorizationUnavailable(
+                            "model-call final request is unavailable"
+                        )
+                    capture.mark_sdk_consumption_complete()
+            except BaseException as error:
+                primary = error
+            if scope.call is not None:
+                try:
+                    await scope.execution.seal(
+                        call=scope.call,
+                        route=self._route,
+                        observation=capture.snapshot(),
+                        outcome="completed"
+                        if primary is None
+                        else "cancelled"
+                        if isinstance(primary, asyncio.CancelledError)
+                        else "failed",
+                    )
+                except BaseException as error:
+                    if primary is None:
+                        primary = error
+                    else:
+                        primary.add_note(
+                            "model evidence finalization also failed: "
+                            + type(error).__name__
+                        )
             if owner.cancelling():
                 raise asyncio.CancelledError
-            if scope.denial is not None:
-                raise scope.denial
-            # A swallowed denial or absent physical request never grants success.
-            raise ModelCallAuthorizationUnavailable(
-                "model-call final request is unavailable"
-            )
+            if primary is not None:
+                denial = scope.denial
+                if denial is not None and (
+                    primary is denial or primary.__cause__ is denial
+                ):
+                    raise denial from None
+                raise primary
+            if response is None:
+                raise ModelCallAuthorizationUnavailable(
+                    "model-call SDK response is unavailable"
+                )
+            return response
         finally:
             scope.close()
             _FINAL_SCOPE.reset(token)

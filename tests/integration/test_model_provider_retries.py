@@ -1084,6 +1084,8 @@ async def test_r225_public_owned_client_requires_strict_single_completion(
                     headers={
                         "Content-Type": "application/json",
                         "Accept": "application/json",
+                        "Authorization": "Bearer "
+                        + clients.credential.get_secret_value(),
                     },
                 )
             else:
@@ -1093,6 +1095,8 @@ async def test_r225_public_owned_client_requires_strict_single_completion(
                     headers={
                         "Content-Type": "application/json",
                         "Accept": "application/json",
+                        "Authorization": "Bearer "
+                        + clients.credential.get_secret_value(),
                     },
                 )
             return response.status_code
@@ -2085,7 +2089,7 @@ async def test_r246_sdk_structured_helpers_keep_exact_header_profile(
                 }
             )
         sdk = openai.AsyncOpenAI(
-            api_key="synthetic-r246",
+            api_key=clients.credential.get_secret_value(),
             base_url=peer.base_url,
             http_client=clients.async_client,
             max_retries=0,

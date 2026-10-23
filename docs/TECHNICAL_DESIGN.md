@@ -1,3 +1,15 @@
+## AGENT-1：正式模型执行与同流用量（2026-10-23，本地已验；正常整链待验）
+
+沿现预算／整数结算裁决和原主线，在现final request hook按prepare→原BudgetAuthorizer→唯一start_dispatch串接，不新建服务／表／wire或用户token回程。只有newly_started=true才交还HTTPX发送；相同attempt重放不重发provider。Worker只装配一份现私钥signer／当前PG lease reader，Platform与预算按Run复用同一原proof supplier；签名描述符不再要求配置Platform token client，恢复仍无proof。原Run行锁内阻止已有未ACK／pending财务证据后的新派发，当前lease／终态／冻结身份保障保持。
+
+复用原capture_model_usage和生产ModelHttpClients的同一响应stream，不另读／回放／drain响应、不以AIMessage推测token。只映射实际reported整数／明确unreported，校验原profile、总数／子集、service_tier与压缩完整性，未知不补0；Agent不定价或取整。成功、失败、取消均先以现owner DB时钟和原attempt绑定seal，再通过原reconciler通知；取消／失租／崩溃仍由原terminal closure与Worker恢复承接，未知／超预算停止后继模型／工具，不把pending冒成功。
+
+本轮具名实际归属取可信System精确连接＋已校验最终请求和credential binding＋同一HTTP响应中一致且与声明精确匹配的reported provider model name；它表示受信提供方API声明的执行模型，不证明供应商内部硬件或未披露转发。绑定digest覆盖同attempt、final request digest、冻结revision/provider/model和reported name，不含密钥；单独response.model、目录存在或planned复制均不足。缺／混合／不同reported名、非该响应或不完整用量保actual unknown／pending，不按别名猜测，不接fallback模型集合。
+
+写区：现model runtime／factory／usage observer和具名pure producer、原model repository内DB时钟封口及派发财务guard、现worker proof／预算factory装配与finite manifest、相关真实PG／SDK原路径／Billing组合及现文档。先验证同流归一化／归属与唯一许可正负行为，再完整工程／包门与有限真实供应商、用户会话／工具／产物／积分验收；正常执行开关及数据未因文档开放。
+
+本地验收：418输入完整八门均0，默认2588 PASS／853按marker未选、927上游warning保留；原生图十向量与原授权／封口／恢复184真实PG PASS，原SDK／金融HTTP323 PASS。双claim原始拒绝被closed遮蔽的RED2FAIL已修为原denial、取消仍优先，GREEN2PASS；后继captured放行、pending／坏ACK阻断已验。实际四方恢复36检查和仓外同锁hash安装／209份runtime包字节核同通过，独审Approved；模型／usage ACK图用具名财务fixture，实际四方仅QA100／hold及release10，零真实供应商／usage扣分，不冒正常整链。首次架构门／旧credential fixture、HTTP配置子进程原3秒偶发、harness缺fixture等失败留证；不弱化原期限、断言或权限。正常数据／进程保持，本片未PR合并。
+
 ## AGENT-1：Worker金融恢复装配（2026-10-23，本地已验；真实派发待接）
 
 沿原主线与abd1186c交付，在现Worker composition接同一个BFF预算pool和Agent金融repository；不新增服务／表／wire／token broker。部署显式提供BFF origin及按tenant隔离的专用机器secret快照（env-only、有限严格JSON、SecretStr，不复用System或浏览器凭据）；未配置完整时Worker启动拒绝，不保免费执行旁路。恢复不调用首次reserve／proof／provider，仍只按原requested六事实recover与原sealed event结算。

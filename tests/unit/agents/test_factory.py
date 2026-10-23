@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from support.model_execution import unavailable_model_execution
+
 import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
@@ -195,6 +197,7 @@ def _factory(
     repository = FakeRunRepository()
     return AgentFactory(
         WorkerDependencies(
+            model_execution=unavailable_model_execution,
             model=active_config.model,
             sandbox=active_config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
@@ -2276,6 +2279,9 @@ class _UnusedModelCallRepository:
         self, command: AppendModelCallEvidence
     ) -> ModelCallEvidenceReceipt:
         raise AssertionError(f"unexpected evidence: {command.attempt_id}")
+
+    async def seal_observation(self, command: object):
+        raise AssertionError("unrelated unit scope must not seal model usage")
 
     async def read_final_evidence(
         self, tenant_id: str, attempt_id: str, event_id: str

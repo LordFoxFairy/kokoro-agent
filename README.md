@@ -66,7 +66,7 @@ Redis LaunchRunRequest
 - `chat_events` 是 GA 安全事件事实和 replay 游标；它不写入 BFF 已有的
   browser-live stream，因为两者的 generated envelope 和 seq owner 不同。不创建
   `conversation_messages`、持久 `run_events` 或独立 `event_outbox`。
-- 模型按同 attempt 的真实用量由 Billing 统一计价、冻结倍率后一次整数积分结算；先预算预占，unknown／超预算保留待核对，不按流式分片或重复回执各扣一次。Worker 已接原预算／结算恢复；首次执行预算授权、唯一派发和真实 usage 封口仍待装配，恢复扫描不等于模型已开放执行。
+- 模型按同 attempt 的真实用量由 Billing 统一计价、冻结倍率后一次整数积分结算；先预算预占，unknown／超预算保留待核对，不按流式分片或重复回执各扣一次。Worker 复用原预算／结算客户端，最终请求先授权并取得唯一派发许可，再用同一响应流的实际用量封口和通知；未知结果阻止后续模型／工具。独立恢复扫描承接未确认回执；本地装配与隔离验收不等于正常环境的真实供应商和积分整链已验。
 
 ## 子仓文档
 

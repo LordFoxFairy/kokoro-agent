@@ -161,9 +161,15 @@ class Proofs:
 
 
 class Budget:
-    def __init__(self, effect: Callable[[], Awaitable[None]] | None = None):
+    def __init__(
+        self,
+        effect: Callable[[], Awaitable[None]] | None = None,
+        *,
+        admission_ref: str = "22222222-2222-4222-8222-222222222222",
+    ):
         self.calls: list[tuple[ModelBudgetCommand, str]] = []
         self.effect = effect
+        self.admission_ref = admission_ref
 
     async def reserve(
         self,
@@ -178,7 +184,7 @@ class Budget:
         self.calls.append((command, key))
         if self.effect:
             await self.effect()
-        return ModelBudgetGrant(admission_ref="22222222-2222-4222-8222-222222222222")
+        return ModelBudgetGrant(admission_ref=self.admission_ref)
 
 
 def authorizer(p: Prepared, b: Budget, proofs: Proofs) -> ModelBudgetAuthorizer:
@@ -298,3 +304,282 @@ async def test_cross_run_input_is_rejected_before_pending_or_http(
         )
     assert await prepared.row() == before
     assert not b.calls and not proofs.calls
+
+
+async def test_execution_consumer_grants_exactly_one_dispatch_per_attempt(
+    prepared: Prepared,
+) -> None:
+    from kokoro_agent.model.execution import ModelCallExecutor
+    from kokoro_agent.model.call_models import ModelCallAuthorizationUnavailable
+
+    class NoSettlement:
+        async def reconcile(self, tenant_id: str, attempt_id: str) -> None:
+            raise AssertionError("no settlement before provider result")
+
+    b, proofs = Budget(), Proofs()
+    execution = ModelCallExecutor(
+        repository=prepared.repo,
+        authorizer=authorizer(prepared, b, proofs),
+        financial=NoSettlement(),
+    )
+    call = await execution.authorize(prepared.prepared)
+    assert call.dispatch.newly_started and len(b.calls) == 1
+    before = await prepared.row()
+    with pytest.raises(ModelCallAuthorizationUnavailable):
+        await execution.authorize(prepared.prepared)
+    assert await prepared.row() == before and len(b.calls) == 1
+
+
+async def test_observed_call_uses_owner_clock_and_replays_one_durable_financial_ack(
+    prepared: Prepared,
+) -> None:
+    from kokoro_agent.clients.system import ResolvedModel, ModelConnection
+    from kokoro_agent.model.execution import ModelCallExecutor
+    from kokoro_agent.model.usage_observation import (
+        PhysicalUsageObservation,
+        ObservedCount,
+    )
+    from kokoro_agent.model.financial_reconciliation import ModelFinancialReconciler
+    from kokoro_agent.infrastructure.postgres_model_financial_repository import (
+        PostgresModelFinancialRepository,
+    )
+    from kokoro_agent.model.settlement import (
+        ModelSettlementCommand,
+        ModelSettlementReceipt,
+    )
+    from dataclasses import asdict
+    from types import MappingProxyType
+
+    class FinancialOwner:
+        async def recover(
+            self,
+            *,
+            tenant_id: str,
+            command: ModelBudgetCommand,
+            key: str,
+            request_id: str,
+        ) -> ModelBudgetGrant | None:
+            raise AssertionError("granted execution must not recover missing funds")
+
+        async def settle(
+            self,
+            *,
+            tenant_id: str,
+            admission_ref: str,
+            command: ModelSettlementCommand,
+            key: str,
+            request_id: str,
+        ) -> ModelSettlementReceipt:
+            return ModelSettlementReceipt(
+                admission_ref=admission_ref,
+                **asdict(command),
+                status="captured",
+                reason=None,
+                captured_credits="1",
+                released_credits="9",
+                usage_event_ref="33333333-3333-4333-8333-333333333333",
+                settlement_ref="44444444-4444-4444-8444-444444444444",
+                updated_at="2026-10-23T00:00:00.000Z",
+            )
+
+    financial = ModelFinancialReconciler(
+        repository=PostgresModelFinancialRepository(prepared.url, prepared.schema),
+        client=FinancialOwner(),
+    )
+    execution = ModelCallExecutor(
+        repository=prepared.repo,
+        authorizer=authorizer(prepared, Budget(), Proofs()),
+        financial=financial,
+    )
+    route = ResolvedModel(
+        model_id="model-1",
+        provider_id="provider-1",
+        revision_id="11111111-1111-4111-8111-111111111111",
+        revision=1,
+        digest="a" * 64,
+        generation="1",
+        tenant_generation="1",
+        provider_model_name="actual-model",
+        request_model="request-model",
+        feature_key="chat",
+        label_key="default",
+        context_window=128,
+        max_output_tokens=16,
+        connection=ModelConnection(
+            protocol="openai_chat_completions",
+            connection_type="direct",
+            base_url="https://fixture.invalid",
+            secret_handle_ref="fixture-handle",
+        ),
+    )
+    observed = PhysicalUsageObservation(
+        status="complete",
+        reason=None,
+        compression_integrity="validated",
+        usage_presence="object",
+        counts=MappingProxyType(
+            {
+                k: ObservedCount("reported", v)
+                if v is not None
+                else ObservedCount("missing")
+                for k, v in {
+                    "prompt_tokens": 17,
+                    "completion_tokens": 3,
+                    "total_tokens": 20,
+                    "cached_tokens": None,
+                    "reasoning_tokens": None,
+                }.items()
+            }
+        ),
+        projection_digest="a" * 64,
+        reported_model="actual-model",
+    )
+    call = await execution.authorize(prepared.prepared)
+    result = await execution.seal(
+        call=call, route=route, observation=observed, outcome="completed"
+    )
+    assert result.status == "captured" and result.captured_credits == "1"
+
+    async def facts():
+        async with connect_pg(prepared.url) as c, c.cursor() as cur:
+            await execute_sql(
+                cur,
+                f"SELECT row_to_json(t)::text,xmin::text FROM {qualified(prepared.schema, 'kokoro_agent_model_usage_evidence')} t",
+            )
+            return await fetch_one(cur)
+
+    before = await facts()
+    assert (
+        await execution.seal(
+            call=call, route=route, observation=observed, outcome="completed"
+        )
+        == result
+    )
+    assert await facts() == before
+
+    # A later logical call may dispatch after a complete, exact captured ACK.
+    next_attempt = await next_prepared(prepared)
+    next_execution = ModelCallExecutor(
+        repository=prepared.repo,
+        authorizer=authorizer(prepared, Budget(admission_ref=str(uuid4())), Proofs()),
+        financial=financial,
+    )
+    assert (await next_execution.authorize(next_attempt)).dispatch.newly_started
+
+
+async def next_prepared(prepared: Prepared) -> PreparedModelCall:
+    p = prepared.prepared
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"SELECT assembly_recipe_bytes,assembly_recipe_fingerprint FROM {qualified(prepared.schema, 'kokoro_agent_run')} WHERE run_id=%s",
+            (p.run_id,),
+        )
+        row = await fetch_one(cur)
+        assert row is not None
+    raw = row["assembly_recipe_bytes"]
+    assert isinstance(raw, bytes)
+    return await prepared.repo.prepare(
+        PrepareModelCall(
+            request=prepared.leased.request,
+            lease=prepared.leased.lease,
+            call_id=str(uuid4()),
+            attempt_id=str(uuid4()),
+            planned=PlannedBinding.model_validate_json(p.planned_bytes, strict=True),
+            peer_path=("assistant",),
+            recipe=StaticRecipeBinding(
+                canonical_bytes=raw, fingerprint=str(row["assembly_recipe_fingerprint"])
+            ),
+            final_request_binding_version=p.final_request_binding_version,
+            final_request_digest=p.final_request_digest,
+        )
+    )
+
+
+@pytest.mark.parametrize("ack_state", ["unacked", "pending", "corrupt"])
+async def test_prior_unacked_observation_stops_new_dispatch(
+    prepared: Prepared, ack_state: str
+) -> None:
+    from kokoro_agent.model.execution import ModelCallExecutor
+    from kokoro_agent.model.call_models import (
+        SealModelCallObservation,
+        ModelCallAuthorizationUnavailable,
+    )
+    from kokoro_agent.protocol.model_usage_v2_generated import (
+        UnknownAttribution,
+        UnresolvedUsage,
+    )
+
+    class NoSettlement:
+        async def reconcile(self, tenant_id: str, attempt_id: str) -> None:
+            raise AssertionError("not needed")
+
+    first = ModelCallExecutor(
+        repository=prepared.repo,
+        authorizer=authorizer(prepared, Budget(), Proofs()),
+        financial=NoSettlement(),
+    )
+    call = await first.authorize(prepared.prepared)
+    p = call.prepared
+    await prepared.repo.seal_observation(
+        SealModelCallObservation(
+            tenant_id=p.tenant_id,
+            run_id=p.run_id,
+            attempt_id=p.attempt_id,
+            lease=p.lease,
+            attempt_binding_digest=p.attempt_binding_digest,
+            planned_digest=p.planned_digest,
+            authorization_digest=call.authorization.authorization_digest,
+            outcome="unknown",
+            actual=UnknownAttribution(state="unknown", reason="not_observed"),
+            usage=UnresolvedUsage(
+                state="unresolved", reason="incomplete_response", raw_usage_digest=None
+            ),
+        )
+    )
+    if ack_state != "unacked":
+        from dataclasses import asdict
+        from kokoro_agent.infrastructure.postgres_model_financial_repository import (
+            PostgresModelFinancialRepository,
+        )
+        from kokoro_agent.model.settlement import ModelSettlementReceipt
+
+        financial = PostgresModelFinancialRepository(prepared.url, prepared.schema)
+        work = await financial.next_work(p.tenant_id, p.attempt_id)
+        assert work is not None
+        await financial.record_admission(work, call.authorization.admission_ref)
+        await financial.record_ack(
+            work,
+            ModelSettlementReceipt(
+                admission_ref=call.authorization.admission_ref,
+                **asdict(work.evidence),
+                status="pending_reconciliation",
+                reason="unknown_usage_or_outcome",
+                captured_credits="0",
+                released_credits="0",
+                usage_event_ref=None,
+                settlement_ref=None,
+                updated_at="2026-10-23T00:00:00.000Z",
+            ),
+        )
+        if ack_state == "corrupt":
+            async with connect_pg(prepared.url) as c, c.cursor() as cur:
+                await execute_sql(
+                    cur,
+                    f"UPDATE {qualified(prepared.schema, 'kokoro_agent_model_usage_evidence')} SET financial_ack_digest=%s WHERE attempt_id=%s",
+                    ("f" * 64, p.attempt_id),
+                )
+    next_attempt = await next_prepared(prepared)
+    # A valid pending ACK is still unresolved; a corrupt ACK is never accepted.
+    from kokoro_agent.model.financial_receipt import ModelFinancialConflict
+
+    with pytest.raises((ModelCallAuthorizationUnavailable, ModelFinancialConflict)):
+        await first.authorize(next_attempt)
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"SELECT dispatch_started_at FROM {qualified(prepared.schema, 'kokoro_agent_model_call_attempt')} WHERE attempt_id=%s",
+            (next_attempt.attempt_id,),
+        )
+        row = await fetch_one(cur)
+        assert row is not None and row["dispatch_started_at"] is None

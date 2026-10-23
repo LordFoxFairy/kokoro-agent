@@ -1,3 +1,24 @@
+## 2026-10-23 AGENT-1：最终请求执行与同流用量（本地已验，正常整链待验）
+
+沿同一产品整链目标，在现final request hook串接prepare→原预算授权→唯一start_dispatch；只有新许可才发送。
+Worker共用一份签名器／当前租约reader，按同一个LeasedRun装配预算proof，不新增服务／用户token或表。
+生产HTTPX同时验证所领凭据和最终请求；原响应stream同步观察，实际整数与unreported分别保留，不猜用量／价格。
+受信System连接、请求／凭据绑定及响应一致reported模型名共同给出具名actual归属；不匹配仍unknown。
+DB时钟封口与原事件ACK关联；同Run已有未ACK／pending时拒绝新派发，只有captured确认后才向原生图交回结果。
+
+原生DeepAgents图＋真实SDK／HTTP／PG已覆盖JSON/SSE十向量：完整、不同模型、缺用量、write_todos两轮实际原生工具、半响应取消。
+其中财务端是具名fixture，整数1的ACK不冒真实Billing计价。原授权／证据／恢复及上述回归184 PASS／0SKIP；
+原SDK协议与金融HTTP323 PASS。双claim首因被closed遮住已RED2FAIL→修复→GREEN2PASS，取消优先、不覆盖独立错误。
+旧公开HTTP fixture仅补所领同一key，原单次／profile负控不放宽；原架构门改为具名最窄composition imports，仍禁自行构造和签发proof。
+实际四方恢复组合36检查已通过：QA100只hold／release10，崩溃后的Worker仍同event/key零第二资金效果；Chat/JWKS为具名fixture。
+正常Schema／服务／资金未改，真实供应商请求及真实usage扣分仍未验，不勾AGENT-1／CREDIT-1整体完成。
+首完整架构门失败、第二次原HTTP配置子进程3秒时限失败和harness缺fixture setup失败均保留；不以重跑冒根因已消除。
+最终418非文档输入冻结，完整八门均0；默认2588 PASS／853按marker未选，927上游warning保留。
+原HTTP配置子进程时限不改，原三参数focused3 PASS及最终完整重验通过，不冒偶发根因已消除。
+仓外同锁hash安装／contract和新增执行／producer／guard导入通过，209份runtime Python与wheel／sdist逐字核同；独审Approved。
+13仓非递归fetch成功、main无新增；自有隔离库94→94，IAM自有prefix清理，正常资金与服务保持。
+本片源码交付不是整链完成，尚未集中PR合并。以下各节为历史组件交付，不恢复过时的“尚未装配”结论。
+
 ## 2026-10-23 AGENT-1：正式结算／恢复consumer（本地已验，持久ACK待接）
 
 固定BFF `5a303f2003fabeb50376c7f7e1f66f0d163adebb`／internal1.3原Git YAML，SHA256

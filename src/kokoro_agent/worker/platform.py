@@ -18,18 +18,10 @@ from kokoro_agent.clients.platform_tokens import PlatformTokenProvider
 from kokoro_agent.clients.platform_transport import PlatformTransport, RunPlatformClient
 from kokoro_agent.config import AppConfig
 from kokoro_agent.domain.run.models import LeasedRun
-from kokoro_agent.execution.execution_proof_keys import (
-    WorkerExecutionProofConfig,
-    load_execution_proof_signer,
-)
 from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner
 from kokoro_agent.execution.execution_proof_supplier import (
     ExecutionProofLeaseReadPort,
     create_execution_proof_supplier,
-)
-from kokoro_agent.infrastructure.postgres_execution_proof_lease import (
-    PostgresExecutionProofLeaseConfig,
-    PostgresExecutionProofLeaseReader,
 )
 
 
@@ -71,35 +63,18 @@ class WorkerPlatformRuntime:
 @asynccontextmanager
 async def worker_platform_runtime(
     config: AppConfig,
+    *,
+    signer: ExecutionProofSigner,
+    lease_reader: ExecutionProofLeaseReadPort,
 ) -> AsyncGenerator[WorkerPlatformRuntime | None, None]:
     if config.platform_base_url is None:
         yield None
         return
     # AppConfig enforces all-or-none; these checks also narrow the private descriptor types.
-    if (
-        config.iam_base_url is None
-        or config.platform_credentials_file is None
-        or config.execution_proof_issuer is None
-        or config.execution_proof_private_key_file is None
-        or config.execution_proof_active_kid is None
-        or config.execution_proof_thumbprint is None
-    ):
+    if config.iam_base_url is None or config.platform_credentials_file is None:
         raise ValueError("incomplete worker Platform configuration")
     credentials = CredentialFile(config.platform_credentials_file)
     credentials.validate()
-    signer = load_execution_proof_signer(
-        WorkerExecutionProofConfig(
-            issuer=config.execution_proof_issuer,
-            private_key_file=config.execution_proof_private_key_file,
-            active_kid=config.execution_proof_active_kid,
-            active_jwk_thumbprint_sha256=config.execution_proof_thumbprint,
-        )
-    )
-    reader = PostgresExecutionProofLeaseReader(
-        PostgresExecutionProofLeaseConfig(
-            database_url=config.database_url, schema_name=config.database_schema
-        )
-    )
     async with (
         AsyncExitStack() as stack,
         httpx.AsyncClient(
@@ -125,7 +100,7 @@ async def worker_platform_runtime(
                 tokens=tokens,
                 transport=transport,
                 signer=signer,
-                lease_reader=reader,
+                lease_reader=lease_reader,
                 packages=packages,
                 mcp_packages=mcp_packages,
             )

@@ -426,7 +426,6 @@ def test_execution_proof_supplier_is_standalone_without_dead_composition() -> No
 
     composition_paths = (
         _SRC / "agent_factory.py",
-        _SRC / "worker" / "main.py",
         _SRC / "worker" / "supervisor.py",
         _SRC / "interfaces" / "http" / "main.py",
         *_SRC.joinpath("clients").glob("*.py"),
@@ -437,6 +436,11 @@ def test_execution_proof_supplier_is_standalone_without_dead_composition() -> No
         source = path.read_text(encoding="utf-8")
         assert "execution_proof_supplier" not in source
         assert "ExecutionProofSupplier" not in source
+
+    # The composition root shares one signer/lease reader, but never constructs a supplier.
+    assert _from_imported_names(
+        _SRC / "worker/main.py", "kokoro_agent.execution.execution_proof_supplier"
+    ) == {"ExecutionProofLeaseReadPort"}
 
 
 def test_run_skill_lifecycle_reuses_only_public_native_loader_and_prompt() -> None:

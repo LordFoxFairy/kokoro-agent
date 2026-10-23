@@ -22,7 +22,13 @@ from kokoro_agent.infrastructure.schema import (
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
 from kokoro_agent.infrastructure.postgres_model_call_prepared import read_prepared
-from kokoro_agent.infrastructure.postgres_model_call_final import read_final_evidence
+from kokoro_agent.infrastructure.postgres_model_financial_guard import (
+    require_run_financial_clear,
+)
+from kokoro_agent.infrastructure.postgres_model_call_final import (
+    read_final_evidence,
+    read_final_evidence_in_cursor,
+)
 from kokoro_agent.infrastructure.postgres_run_profiles import validate_static_recipe
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     append_evidence_locked,
@@ -30,6 +36,7 @@ from kokoro_agent.infrastructure.postgres_model_call_evidence import (
 )
 from kokoro_agent.model.call_models import (
     AppendModelCallEvidence,
+    SealModelCallObservation,
     AuthorizationPendingReceipt,
     BeginModelCallAuthorization,
     GrantModelCallAuthorization,
@@ -58,8 +65,10 @@ from kokoro_agent.model.call_artifacts import (
 )
 from kokoro_agent.model.call_evidence import (
     validate_append_evidence,
+    build_observed_call_evidence,
     validate_frozen_attempt,
 )
+from kokoro_agent.model.usage_evidence_v2 import parse_evidence
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
@@ -321,6 +330,13 @@ class PostgresModelCallRepository:
                     )
                     current = str(row["status"])
                     if current == "authorized":
+                        await require_run_financial_clear(
+                            cursor,
+                            schema=self._schema,
+                            tenant_id=command.tenant_id,
+                            run_id=command.run_id,
+                            attempt_id=command.attempt_id,
+                        )
                         await execute_sql(
                             cursor,
                             f"""UPDATE {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)}
@@ -397,8 +413,97 @@ class PostgresModelCallRepository:
                         allow_new_revision=not terminal,
                     )
 
+    async def seal_observation(
+        self, command: SealModelCallObservation
+    ) -> ModelCallEvidenceReceipt:
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction(), connection.cursor() as cursor:
+                    attempt, clock, terminal = await self._lock_evidence_attempt(
+                        cursor, command
+                    )
+                    if _integer(attempt["latest_revision"]) > 0:
+                        await execute_sql(
+                            cursor,
+                            f"SELECT event_id FROM {qualified(self._schema, MODEL_USAGE_EVIDENCE_TABLE)} WHERE tenant_id=%s AND attempt_id=%s AND revision=1",
+                            (command.tenant_id, command.attempt_id),
+                        )
+                        first = await fetch_one(cursor)
+                        if first is None:
+                            raise ModelCallIdentityConflict(
+                                "original observation is missing"
+                            )
+                        final = await read_final_evidence_in_cursor(
+                            cursor,
+                            self._schema,
+                            command.tenant_id,
+                            command.attempt_id,
+                            str(first["event_id"]),
+                        )
+                        if final is None or final.artifact_version != "2.0.0":
+                            raise ModelCallIdentityConflict(
+                                "original observation conflicts"
+                            )
+                        original = parse_evidence(final.evidence_bytes)
+                        if (
+                            original.execution.outcome,
+                            original.actual,
+                            original.usage,
+                        ) != (command.outcome, command.actual, command.usage):
+                            raise ModelCallIdentityConflict(
+                                "observed response replay conflicts"
+                            )
+                        millis = utc_to_epoch_millis(final.observed_at)
+                        if millis is None:
+                            raise ModelCallIdentityConflict(
+                                "original observation time is missing"
+                            )
+                        return ModelCallEvidenceReceipt(
+                            tenant_id=command.tenant_id,
+                            run_id=command.run_id,
+                            attempt_id=command.attempt_id,
+                            event_id=final.event_id,
+                            revision=final.revision,
+                            evidence_digest=final.evidence_digest,
+                            observed_at_ms=millis,
+                            replayed=True,
+                        )
+                    if terminal:
+                        raise ModelCallAuthorityLost(
+                            "terminal Run rejects new observation"
+                        )
+                    raw, artifact = build_observed_call_evidence(
+                        attempt, command, clock
+                    )
+                    append = AppendModelCallEvidence(
+                        tenant_id=command.tenant_id,
+                        run_id=command.run_id,
+                        attempt_id=command.attempt_id,
+                        lease=command.lease,
+                        attempt_binding_digest=command.attempt_binding_digest,
+                        planned_digest=command.planned_digest,
+                        authorization_digest=command.authorization_digest,
+                        evidence_bytes=raw,
+                    )
+                    return await append_evidence_locked(
+                        cursor,
+                        run_table=qualified(self._schema, RUN_CLAIMS_TABLE),
+                        attempt_table=qualified(
+                            self._schema, MODEL_CALL_ATTEMPTS_TABLE
+                        ),
+                        evidence_table=qualified(
+                            self._schema, MODEL_USAGE_EVIDENCE_TABLE
+                        ),
+                        command=append,
+                        attempt=attempt,
+                        artifact=artifact,
+                        allow_new_revision=True,
+                    )
+
     async def _lock_evidence_attempt(
-        self, cursor: object, command: AppendModelCallEvidence
+        self,
+        cursor: object,
+        command: AppendModelCallEvidence | SealModelCallObservation,
     ) -> tuple[Mapping[str, object], datetime, bool]:
         await execute_sql(cursor, f"SET LOCAL lock_timeout='{self._lock_timeout_ms}ms'")
         await execute_sql(

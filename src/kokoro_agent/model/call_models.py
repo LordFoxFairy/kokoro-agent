@@ -17,6 +17,8 @@ from kokoro_agent.protocol.model_usage_v2_generated import (
     Opaque,
     Ordinal,
     PlannedBinding,
+    ActualAttribution,
+    UsageObservation,
     Uuid,
 )
 
@@ -203,6 +205,22 @@ class AppendModelCallEvidence(BaseModel):
     evidence_bytes: bytes = Field(min_length=1, max_length=65_536)
 
 
+class SealModelCallObservation(BaseModel):
+    """Trusted source projection; the owner supplies immutable bindings and DB time."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    tenant_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    attempt_id: Uuid
+    lease: LeaseFence
+    attempt_binding_digest: Digest
+    planned_digest: Digest
+    authorization_digest: Digest
+    outcome: Literal["completed", "failed", "cancelled", "unknown"]
+    actual: ActualAttribution
+    usage: UsageObservation
+
+
 class ModelCallEvidenceReceipt(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -274,6 +292,10 @@ class ModelCallRepository(Protocol):
         self, command: AppendModelCallEvidence
     ) -> ModelCallEvidenceReceipt: ...
 
+    async def seal_observation(
+        self, command: SealModelCallObservation
+    ) -> ModelCallEvidenceReceipt: ...
+
     async def read_final_evidence(
         self, tenant_id: str, attempt_id: str, event_id: str
     ) -> FinalModelCallEvidence | None: ...
@@ -299,4 +321,5 @@ __all__ = [
     "PrepareModelCall",
     "PreparedModelCall",
     "StartModelCallDispatch",
+    "SealModelCallObservation",
 ]

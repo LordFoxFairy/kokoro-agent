@@ -19,6 +19,7 @@ from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.model.credentials import ModelCredential
 from kokoro_agent.model.usage_observation import (
     observe_usage_response,
+    claim_usage_request,
     observe_usage_response_async,
 )
 
@@ -101,7 +102,14 @@ class ModelHttpClients:
             raise
         object.__setattr__(self, "async_client", client)
 
+    def _require_credential(self, request: httpx.Request) -> None:
+        if request.headers.get_list("authorization") != [
+            "Bearer " + self.credential.get_secret_value()
+        ]:
+            raise ModelCallInputInvalid("model request credential binding conflicts")
+
     def _validate(self, request: httpx.Request, raw: bytes) -> None:
+        self._require_credential(request)
         validate_request_profile(
             raw=raw,
             method=request.method,
@@ -136,6 +144,10 @@ class ModelHttpClients:
             reject_final_model_request(
                 ModelCallInputInvalid("model request must be materialized")
             )
+        try:
+            self._require_credential(request)
+        except ModelCallInputInvalid as error:
+            reject_final_model_request(error)
         await freeze_final_model_request(
             route=self.route,
             raw=raw,
@@ -144,6 +156,7 @@ class ModelHttpClients:
             expected_endpoint=str(self.endpoint),
             headers=request.headers.multi_items(),
         )
+        claim_usage_request(request, self.route)
 
     async def _close(self) -> None:
         errors: list[BaseException] = []

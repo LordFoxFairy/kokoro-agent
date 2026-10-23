@@ -15,6 +15,18 @@ from pydantic import SecretStr, TypeAdapter
 
 from kokoro_agent.clients.model_budget import BffModelBudgetClient, ModelBudgetError
 
+from dataclasses import dataclass
+from kokoro_agent.domain.run.models import LeasedRun
+from kokoro_agent.model.budget import ModelBudgetAuthorizer
+from kokoro_agent.model.execution import ModelCallExecutor
+from kokoro_agent.model.call_models import ModelCallRepository
+from kokoro_agent.model.financial_reconciliation import ModelFinancialReconciler
+from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner
+from kokoro_agent.execution.execution_proof_supplier import (
+    ExecutionProofLeaseReadPort,
+    create_execution_proof_supplier,
+)
+
 LOGGER = logging.getLogger(__name__)
 _SECRETS = TypeAdapter(dict[str, str])
 
@@ -150,3 +162,27 @@ async def active_model_financial_recovery(
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class WorkerModelExecutionFactory:
+    repository: ModelCallRepository
+    budget: BffModelBudgetClient
+    financial: ModelFinancialReconciler
+    signer: ExecutionProofSigner
+    lease_reader: ExecutionProofLeaseReadPort
+
+    def __call__(self, leased_run: LeasedRun) -> ModelCallExecutor:
+        proofs = create_execution_proof_supplier(
+            leased_run=leased_run, signer=self.signer, lease_reader=self.lease_reader
+        )
+        return ModelCallExecutor(
+            repository=self.repository,
+            authorizer=ModelBudgetAuthorizer(
+                repository=self.repository,
+                budget=self.budget,
+                proofs=proofs,
+                leased_run=leased_run,
+            ),
+            financial=self.financial,
+        )

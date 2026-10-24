@@ -22,6 +22,31 @@ KOKORO_INTERNAL_SECRET_AGENT=TOKEN uv run kokoro-agent-http
 `kokoro_worker_agent`、应用 schema `kokoro_agent` 和 Redis logical DB `9`；不要在已有依赖时再次
 `docker run`。CI 使用 workflow 显式注入的 service 地址，不使用这组本地默认值。
 
+### 通用聊天的产物交付配置
+
+通用 Agent 声明 `delivery=True` 不等于运行时已有 `deliver`。标准 worker 只有在
+`KOKORO_STORAGE_BASE_URL`、`KOKORO_STORAGE_OBJECT_ORIGIN` 和
+`KOKORO_STORAGE_SERVICE_SECRET` 配对时才构造交付 client 并选择该工具。三项都缺失时，
+worker 仍可启动，但不会挂载交付工具；仅检查 readiness 会漏掉此部署缺口。
+
+- worker 地址指向 Storage 正式 v3 RPC；对象来源必须匹配 Storage 签发 PUT 的来源，
+  不把 RPC 地址、浏览器地址与对象来源混用。
+- 使用 Storage 已登记的独立 `kokoro-agent` 凭据，不复用 `web-bff`、Platform 或用户 token。
+  secret 只通过部署私有配置注入；不写入 Run、工作区、示例或日志。
+- 核查实际启动参数和配置加载方式。Node `--env-file` 载入的值不一定出现在 macOS
+  启动环境快照中；worker 的 `AppConfig.from_env` 只消费显式注入的映射，不推定 sibling
+  的环境文件已自动传入。
+- 配对前保存当前 worker 配置和源码基线，停止新派发并确认没有非终态 Run；验证新配置
+  只增加三项、原工具选择保持并新增 `deliver`，并用原可信 scope 做无写入 Storage 身份检查。
+  优雅替换本方 worker 后核消费循环、其它监听、原 Run/usage/金融事实及数据摘要。
+  观察超时而 PID 仍活着时继续检查该 PID，不重复启动。
+- 交付工具变化会改变新 Run 的静态配方；不修改已冻结配方，也不靠重发旧 Run 验证。
+  撤销此部署配置前，先确认没有依赖交付的新活跃 Run，不以关闭 client 中断已有交付恢复。
+
+产物子链验收使用真实 Agent journal/outbox/Chat、Storage、对象存储和扫描器，核冻结产物、
+原字节下载、重复交付不重复发布、失效 lease 拒绝及 scope/tenant 隔离。
+独立子链不经过模型图，因此不能代替模型驱动工具执行、浏览器产物呈现或真实用量扣分验收。
+
 ## 诊断顺序
 
 1. `GET /healthz`：只确认进程存活。

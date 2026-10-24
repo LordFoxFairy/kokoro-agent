@@ -1,3 +1,13 @@
+## 2026-10-24 AGENT-1：正常 worker 交付配置已补齐，真实产物子链已验
+
+当前有效 worker 配置确实缺少 Storage URL、对象来源和独立 service secret；通用 Agent 虽声明 delivery=True，原 plan 没有 deliver。此问题独立于模型结算，不再用 worker readiness 或工具单元通过推断产品已具备交付能力。
+
+本次从实际 Storage 启动参数的 env-file 与既有 kokoro-agent 身份配对三项；原可信 Run scope 的只读 v3 GetUploadStatus 返回 NOT_FOUND，排除认证失败。新配置仅增加三项，标准 worker composition 构造/关闭交付 client、工具选择仅新增 deliver。确认无非终态 Run 后只优雅替换本方 worker，其余八监听及 Agent/BFF/Storage/Billing 四 owner 行/xmin保持，派发仍 false，无新正常模型、工具或资金命令。最新进程权威记录沿用 Root ignored/private agent-chain-normal-20261024/processes-after.private.json，旧 activation 内的 worker PID 仅历史。
+
+同一现有 Root run_agent_storage_artifact_smoke 已以当前 Agent adcbd37（执行源码8cc975e）和冻结 Storage 4a99061 的独立编译副本运行：真实 PG/Redis/MinIO/ClamAV、claimed Run、durable journal/outbox/Chat、冻结 Artifact 及原字节签名下载通过；重复发布、失效 lease、扫描拒绝、跨 scope/tenant 拒绝均通过。模型和 Billing 未参与，不能称正常付费会话、模型图调用工具、浏览器产物界面或完整 Agent 主链已验。测试数据库94→94、Redis两DB原键保持、自建对象及专用临时 bucket 清除、正常进程和冻结输入保持。没有覆盖正常 dist、reset 资源或放宽断言。
+
+首次隔离副本位于 macOS /var 符号路径，compiled entrypoint 的 import.meta.url 与 argv 路径不同导致进程未监听；收据失败且自身资源已清理。仅对副本根取 resolve 后按原断言重验通过，未修改产品入口、增加重试或延长时限。运行手册补齐该配置缺口的诊断与配对步骤；原始收据留 Root ignored agent-delivery-normal-20261024。尚未 push/PR/merge，不勾整体目标；实际网关计价依据、正常模型驱动工具/产物旅程与扣分仍待完成。
+
 ## 2026-10-24 AGENT-1：精确待核对 ACK 的安全失败码（正常已配对，整链仍未完成）
 
 真实正常页面已有回答却显示“服务暂时不可用”；根因之一是原ModelCallExecutor把所有非captured结果归成授权不可用。现仅在sealed后六元组（admission/run/attempt/event/revision/digest）完全匹配且ACK明确pending_reconciliation时抛具名ModelCallSettlementPending，Failure／ChatFailure正规生成model_settlement_pending、retryable=false。None、错绑定、released和网络异常仍旧分类；原provider primary／取消优先、single-dispatch、后续调用资金围栏、原sealed/ACK与资金保持。不从异常文案推断pending，不改历史generic事件。

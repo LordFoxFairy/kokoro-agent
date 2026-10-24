@@ -2396,6 +2396,9 @@ def _mutable_registry(value: object) -> TypeGuard[dict[object, object]]:
 def isolated_native_registry() -> Generator[None, None, None]:
     """Raw SDK unit probes restore exactly the registry state they inherited."""
     from deepagents.profiles import _builtin_profiles as bootstrap
+    from kokoro_agent.agents import native_profile
+
+    sealed_before = getattr(native_profile, "_sealed")
     from deepagents.profiles.harness import harness_profiles
     from deepagents.profiles.provider import provider_profiles
 
@@ -2414,3 +2417,5 @@ def isolated_native_registry() -> Generator[None, None, None]:
         provider.update(provider_before)
         for name, value in before.items():
             setattr(bootstrap, name, value)
+        # Restore the owner approval snapshot along with the SDK registry it authenticates.
+        setattr(native_profile, "_sealed", sealed_before)

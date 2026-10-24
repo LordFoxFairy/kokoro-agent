@@ -1,3 +1,13 @@
+## 2026-10-24 AGENT-1：普通会话 MCP 精确选择（Agent 候选已验，消费端未配对）
+
+HTTP7.4 在唯一 OpenAPI 增加 optional selected_mcp_connection_ids；严格16项有序唯一 exact IDs，不接URL／凭据或trace别名。Launch→不可变Run→entry Agent副本→prepare/freeze→原当前资格链已接，catalog／其它peer不变，三MCP工具保持。非空选择参与原fence，改选冲突；空字段使用锁定Pydantic原生条件省略，保原字节而非迁移旧行。恢复读原Run，撤权在模型解析前失败；无Schema／依赖／权限owner变化。
+
+主仓真实RED后验：421非MD停写输入下lock/sync、格式、lint、指定venv的Pyright、contract、默认2659 PASS／860按marker未选、标准uv build均0。原927上游warning保留。完整HTTP41项真实PG／Redis通过：重开读取、重放及改选409，专属Redis14前后0，自有库库存94→94，正常原请求行及xmin／全部进程保持。实际正常当前协议的一组dispatch/Run原JSON及原fence逐字核同；另3组更早缺project_ref的历史行在旧／新reader均相同拒绝，未补造字段或称全部历史均可恢复。仓外同锁hash安装、installed contract与选择行为通过；208份runtime Python在wheel/sdist逐字相同。独立只读审查Approved，主仓复核不以审查员退出码代验。
+
+失败如实保留：新增PG回归起初把dict_row按整数索引，修夹具后按原断言通过；两个旧HTTP版本断言配为7.4、原完整父证明保留；离线build／安装缺缓存，随后标准在线build与hash锁定依赖安装通过，没有换版本或关隔离。首次Pyright未指定venv产生环境误报，指定原解释器后0；格式化契约检查器后重新正规生成provenance，不手填摘要。
+
+正常仍运行7.3、派发false；未重启、发模型、改资金或接App选择界面。后续先固定本候选artifact给BFF，再App编辑器／unknown快照，三方配对后验同一次真实模型→工具→产物→重开→积分，不把本片称整链完成。原始材料仅Root ignored agent-mcp-selection-20261024/selection；没有push/PR/merge。
+
 ## 2026-10-24 AGENT-1：正常 worker 交付配置已补齐，真实产物子链已验
 
 当前有效 worker 配置确实缺少 Storage URL、对象来源和独立 service secret；通用 Agent 虽声明 delivery=True，原 plan 没有 deliver。此问题独立于模型结算，不再用 worker readiness 或工具单元通过推断产品已具备交付能力。

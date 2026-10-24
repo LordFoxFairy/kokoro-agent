@@ -2458,8 +2458,10 @@ async def test_r216_repeated_close_cancellation_settles_owned_async_client(
     assert clients.sync.is_closed and clients.async_client.is_closed
 
 
+@pytest.mark.parametrize("request_selection", [False, True])
 async def test_typed_mcp_selection_builds_native_agent_with_current_leased_owner(
     monkeypatch: pytest.MonkeyPatch,
+    request_selection: bool,
 ) -> None:
     from kokoro_agent.clients.mcp import McpConnectionRef
     from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
@@ -2483,13 +2485,25 @@ async def test_typed_mcp_selection_builds_native_agent_with_current_leased_owner
     agent = Agent(
         key="typed",
         prompt="typed",
-        mcp=(McpConnectionRef(connection_id="connection-1"),),
+        mcp=()
+        if request_selection
+        else (McpConnectionRef(connection_id="connection-1"),),
     )
     feature = Feature(key="typed", agents=(agent,), entry_agent="typed")
+    resolver = RouteResolver()
     factory, repository = _factory(
-        monkeypatch, RouteResolver(), FeatureCatalog((feature,)), platform=Platform()
+        monkeypatch, resolver, FeatureCatalog((feature,)), platform=Platform()
     )
-    request = _request("typed")
+    request = RunRequest.model_validate(
+        {
+            **_request("typed").model_dump(),
+            **(
+                {"selected_mcp_connection_ids": ["connection-1"]}
+                if request_selection
+                else {}
+            ),
+        }
+    )
     lease = await repository.try_claim(request)
     assert lease is not None
     handle = await factory.build(
@@ -2499,5 +2513,120 @@ async def test_typed_mcp_selection_builds_native_agent_with_current_leased_owner
         assert leased == [LeasedRun(request=request, lease=lease)]
         assert len(owner.requests) == 3
         assert handle.describe_tool("mcp_call") is not None
+    finally:
+        await handle.aclose()
+
+    if request_selection:
+        # Recovery consumes the original stored request, not a mutable menu/default.
+        frozen = repository.static_recipes[request.run_id]
+        assert await repository.pause(request.run_id, lease)
+        recovered_lease = await repository.adopt(request.run_id, "recovered-worker")
+        assert recovered_lease is not None
+        recovered = RunRequest.model_validate_json(request.model_dump_json())
+        restored = await factory.build(
+            recovered,
+            recovered_lease,
+            await _r93_progress(repository, recovered, recovered_lease),
+        )
+        try:
+            assert repository.static_recipes[request.run_id] is frozen
+            assert leased[-1] == LeasedRun(request=recovered, lease=recovered_lease)
+            assert len(owner.requests) == 6
+        finally:
+            await restored.aclose()
+        # A frozen choice is not a permanent authorization grant.
+        from kokoro_agent.clients.mcp import McpClientError
+
+        owner.revoked = True
+        resolver.calls.clear()
+        with pytest.raises(McpClientError):
+            await factory.build(
+                recovered,
+                recovered_lease,
+                await _r93_progress(repository, recovered, recovered_lease),
+            )
+        assert resolver.calls == []
+        assert feature.agents[0].mcp == ()
+
+
+async def test_request_mcp_choice_is_entry_only_frozen_before_owner_io_without_catalog_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.clients.mcp import McpConnectionRef
+
+    original_entry = Agent(
+        key="entry", prompt="entry", mcp=(McpConnectionRef(connection_id="static"),)
+    )
+    peer = Agent(key="peer", prompt="peer")
+    feature = Feature(
+        key="selection",
+        agents=(peer, original_entry),
+        entry_agent="entry",
+        handoffs=(("entry", "peer"),),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    request = RunRequest.model_validate(
+        {
+            **_request("selection").model_dump(),
+            "selected_mcp_connection_ids": ["dynamic", "static"],
+        }
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+
+    async def verify_frozen(*args: object) -> None:
+        frozen = repository.static_recipes[request.run_id]
+        assert b'"dynamic"' in frozen.canonical_bytes
+        assert b'"static"' in frozen.canonical_bytes
+        raise RuntimeError("stop after verified freeze, before owner IO")
+
+    prepare = agent_factory_module.prepare_feature
+
+    def verify_entry(*args: Any, **kwargs: Any):
+        plan = prepare(*args, **kwargs)
+        refs = {
+            p.agent.key: tuple(ref.connection_id for ref in p.agent.mcp)
+            for p in plan.peers
+        }
+        assert refs == {"peer": (), "entry": ("static", "dynamic")}
+        return plan
+
+    monkeypatch.setattr(agent_factory_module, "prepare_feature", verify_entry)
+    monkeypatch.setattr(agent_factory_module, "_preflight", verify_frozen)
+    with pytest.raises(RuntimeError, match="stop after verified freeze"):
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
+    assert factory.feature("selection") is feature
+    assert feature.agents == (peer, original_entry)
+    assert original_entry.mcp == (McpConnectionRef(connection_id="static"),)
+
+
+async def test_trace_does_not_select_connections_and_empty_run_keeps_stable_mcp_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factory, repository = _factory(monkeypatch, RouteResolver())
+    request = RunRequest.model_validate(
+        {
+            **_request("chat").model_dump(),
+            "trace": {
+                "mcp_servers": ["connection-1"],
+                "selected_mcp_connection_ids": ["connection-1"],
+            },
+        }
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    try:
+        for name in ("mcp_list_tools", "mcp_describe_tool", "mcp_call"):
+            assert handle.describe_tool(name) is not None
+        assert factory.feature("chat").agents[0].mcp == ()
     finally:
         await handle.aclose()

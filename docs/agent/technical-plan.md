@@ -140,21 +140,16 @@ LangChain native message/checkpoint ID 与 GA `chat_messages`/`chat_events` ID �
 
 ## 6. 能力和外部服务
 
-- Agent 声明 Skill 名称；Capability 解析当前 Run 可见引用，DeepAgents 原生 SkillsMiddleware 负责元数据和渐进读取。
-- Agent/Feature 只声明 Skill/MCP 名称，不携带授权 grant 或版本快照。Factory 将可信的
-  `ExecutionIdentity` 与内部 `RuntimeNamespace` 交给 `clients/skills.py:SkillClient` 和
-  `clients/mcp.py:McpClient`；client 返回本次构造的读取/连接结果，正文和包体再由
-  `SkillReader` 读取。GA 将获准包体暴露为 `/.skills/` 只读逻辑 route；用户、项目、会话 Skill 的 CRUD/path 仍由 Capability public contract负责。
+- Run 携带冻结 exact Skill source refs；Platform 当前授权解析，包体每次读取重验后经原生 backend 暴露为 `/.skills/` 只读 route。空选择不查 Skill；非空依赖缺失／读取失败停止，绝不默默删去选择。
+- MCP 静态声明使用 `McpConnectionRef`，不是名称或端点。HTTP7.4 候选将 Run 选中 Connection IDs 在 prepare/freeze 前稳定合并至入口 Agent 的不可变副本；catalog 和其它 peer 不变。client 每次按原可信身份、lease/proof 和 Platform 当前资格解析，不携带持久 grant。三件 MCP 工具始终存在，空 refs 不调用 owner。
 - 产物由 Agent 显式声明 `delivery=True`。Factory 只在 Storage `DeliveryClient`
   已注入时装配 deliver；工具经同一 DeepAgents backend 读取工作区，由 client
   闭环 upload/asset/artifact，GA 不直写 Storage 内部 key。
 - `S3Workspace` 只是 GA Workbench 的 S3-compatible adapter；MinIO 是当前实现，后续可替换。
-- 标准 CLI 不直读 Capability/Storage 私库；部署通过 `serve(config, WorkerClients(...))` 注入 public client。未注入时 Skill 为空、MCP 只用 deployment YAML、deliver 不挂载，但基础 Agent 仍能执行和恢复。
-- 开发环境可以不启动 Capability/Storage/Model/Billing；生产按需注入对应 public client。缺少可选 client 只关闭该旁路能力，不拆掉基础 Agent。
+- CLI 不直读 Platform/Storage 私库；worker 只组装正式 owner client。没有显式选择的可选能力不要求其 client；已有非空选择时缺 client 必须失败，不回退 deployment YAML 或名称猜测。
+- 开发可单独验证无外部选择的装配；正式模型执行仍需原 System 路由及 Billing 派发许可，不把缺 client 当免费运行旁路。
 - MCP egress 是 worker 级连接策略：`worker.main` 从已校验的 `AppConfig.mcp_egress_mode` 初始化一次，连接层只读取该进程快照，不自行读取环境变量；默认 `strict`，测试 fixture 仅在 `tests/support` 显式使用 `off`。
-- Capability Skill 查询失败时，Agent 以空 Skill 清单继续。MCP 查询失败时保留部署配置，
-  Capability-only 名称显式标记 unavailable。两者都不拆掉
-  DeepAgents 基础对话循环，也不把失败状态写入 Session/native state。
+- 已选择的 Skill/MCP 查询失败会沿原错误与恢复边界终止；不以空集合或另一连接继续，不重写 Session/native checkpoint 或历史请求。
 
 ## 7. 事件、聊天与计费
 

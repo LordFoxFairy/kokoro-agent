@@ -1,3 +1,9 @@
+## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
+
+无DDL、表、列、canonical SQL或owner变化。仅在现RunRequest的非空JSON业务输入中持久化精确selected_mcp_connection_ids，原dispatch/Run/lease/checkpoint/journal仍为唯一写入边界。新增字段不存token、URL、工具结果或Platform镜像。
+
+历史未选择请求必须保持原JSON、canonical fence及持久读取的字节比较；空字段采用原生条件省略，不补写旧行、不批量规范化。非空选择进入原请求身份和prepare前构造的静态recipe；原recipe冲突、权限退休、未知调用恢复均保留失败关闭及journal重放。旧活跃profile不因默认空字段自动兼容新源码，部署drain与已接纳请求的可读回退见TECHNICAL_DESIGN。
+
 ## 2026-10-24 主链用量待核对的具名失败（实施中）
 
 沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。

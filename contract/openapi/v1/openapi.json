@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "7.3.0"
+    "version": "7.4.0"
   },
   "servers": [
     {
@@ -391,6 +391,19 @@
                 "type": "null"
               }
             ]
+          },
+          "selected_mcp_connection_ids": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "x-kokoro-json-byte-limit": 4096,
+            "description": "Exact Platform MCP Connection IDs selected for this Run, in caller order. Omission or [] selects no additional connections; selection is intent, not authorization. JSON ASCII encoding is limited to 4096 bytes.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 191,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+            }
           }
         },
         "additionalProperties": false

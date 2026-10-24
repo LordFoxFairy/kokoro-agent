@@ -1,3 +1,15 @@
+## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
+
+**基线/问题。** 当前 Agent `4bfb5cc`（运行源码8cc975e）通用 CHAT_FEATURE 的 GENERAL_AGENT.mcp 为空；AgentFactory 只消费 Feature 静态声明。BFF `674fed3` 的 mcp_servers 仅写 trace，App `f0740f3` 没有可发送的连接器选择。因此原生 ToolNode 直接调用成功，不证明普通产品聊天会挂载它。本稿承接原 AGENT-1/SKILLS-MCP-1，不另起目标；作用域问题已异步征询；本轮按最小合理默认采用当前会话草稿，不新增账号全局偏好，未把未观察的账号默认语义当 Manus 事实。
+
+**取舍与 owner。** 不把测试 Connection 固定进通用 Agent，不从 trace/名称恢复业务选择，也不默认枚举并启用整个账号。采用正式选中 Connection ID：App 呈现选择，BFF冻结用户业务输入并运输，Agent冻结/恢复执行及每次动态重验，Platform仍唯一拥有连接/授权，Storage/Billing/IAM边界不变。无需新服务、顶层模块、表或跨 owner SQL。
+
+**Agent 写区和顺序。** 唯一HTTP机器源先发行 optional selected_mcp_connection_ids，再沿现 ingress→RunRequest→dispatch/journal 的原装配链传递。AgentFactory在prepare_feature之前以不可变副本将选择加入entry Agent的已有mcp声明；稳定去重，不突变全局Feature，不将选择授予其它peer，也不接收prompt、policy、URL或工具图配置。当前通用Agent的空选择不增加Connection引用、不解析Platform MCP；保留现有恒定mcp_list_tools/mcp_describe_tool/mcp_call三工具及其空集合行为。准备后的精确refs进入原静态recipe/fingerprint；先冻结，再原resolve_declared_mcp/current proof检查及make_mcp_tools。重建/恢复只读原Run选择；连接退休、tenant/subject/scope不符按现McpClientError失败，不自动删去失效项继续执行或替换同名连接。
+
+**身份与恢复。** selected IDs是用户意图，不是授权；每次仍沿现run lease/proof/IAM/Platform gate。trace.mcp_servers即使存在也不启用任何能力。Run请求/fence、未知提交、工具journal和原授权幂等键必须一致；已发送unknown MCP不自动重发。空选择的Run序列化必须保留旧字节：使用当前锁定Pydantic原生exclude_if只省略新增空字段，不能修改旧字段、历史JSON或摘要。非空选择序列化并纳入原canonical fence；相同Run改变ID/顺序拒绝。必须先用旧真实JSON、旧fence及持久读取回归验证，不通过则停在设计面，不以重写旧数据迁就新模型。
+
+**失败/部署/验收。** body ID错误在admission前拒绝；当前资格失败在模型/工具派发前失败。新字段须由固定Agent artifact生成BFF消费者，再同步App公共pin；Agent/BFF/App完整配对前不正常激活producer。代码源hash本来参与冻结recipe，旧活跃Run的profile不可改写；切换前drain，若存在未完成恢复先沿原二进制完成，不宣称新空字段能使旧profile兼容。回退须保留可读已接纳新请求的consumer，不把旧Agent直接重载到有新非空请求的队列。真实验收走浏览器选择→正式消息→不可变Run→实际模型工具→原journal重放/产物/积分；独立真实MCP只供前置证据。
+
 ## 2026-10-24 主链用量待核对的具名失败（实施中）
 
 沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。

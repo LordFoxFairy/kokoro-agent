@@ -2968,3 +2968,74 @@ async def test_expired_notifications_do_not_republish_and_http_chat_survives_run
     finally:
         assert await supervisor.drain(timeout_s=2)
         await stream.aclose()
+
+
+@pytest.mark.parametrize("selection", [None, [], ["connection-b", "connection-a"]])
+async def test_http_mcp_choice_survives_repository_reopen_and_exact_replay(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+    selection: list[str] | None,
+) -> None:
+    """The same frozen choice reaches Redis/PG; a retry cannot change execution scope."""
+    run_id = f"mcp-selection-{uuid.uuid4().hex}"
+    acceptance_state.register_run(run_id)
+    body = _launch_body(run_id)
+    if selection is not None:
+        body["selected_mcp_connection_ids"] = list[JsonValue](selection)
+    response = await http_client.post("/v1/runs", headers=_headers(), json=body)
+    assert response.status_code == 202
+    expected = RunRequest.model_validate(
+        {
+            **_request(run_id).model_dump(),
+            "selected_mcp_connection_ids": selection or [],
+        }
+    )
+    settings = acceptance_state.config.run_repository
+    async with make_run_repository(settings) as repository:
+        assert expected in await repository.list_pending_dispatches()
+        assert await repository.claim_dispatch(expected, "mcp-acceptance") is not None
+    async with make_run_repository(settings) as reopened:
+        assert await reopened.get_request(run_id) == expected
+        assert await reopened.claim_dispatch(expected, "duplicate-worker") is None
+    retry_body = dict(body)
+    if not selection:
+        # The additive empty field must not alter a pre-7.4 request identity.
+        retry_body["selected_mcp_connection_ids"] = []
+    replay = await http_client.post("/v1/runs", headers=_headers(), json=retry_body)
+    assert replay.status_code == 202
+    assert _nested(_json_object(replay.json()), "data")["replayed"] is True
+    changed = ["connection-a", "connection-b"] if selection else ["connection-a"]
+    conflict = await http_client.post(
+        "/v1/runs",
+        headers=_headers(),
+        json={**body, "selected_mcp_connection_ids": changed},
+    )
+    assert conflict.status_code == 409
+    assert (
+        _nested(_json_object(conflict.json()), "error")["code"]
+        == "run_identity_conflict"
+    )
+    published = await _read_matching(acceptance_state, REQUESTS_STREAM, run_id)
+    assert len(published) == 1
+    if selection:
+        assert published[0]["selected_mcp_connection_ids"] == selection
+    else:
+        assert "selected_mcp_connection_ids" not in published[0]
+    async with connect_pg(acceptance_state.config.database_url) as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                sql.SQL(
+                    "SELECT request_json, fence FROM {}.kokoro_agent_run_dispatch WHERE run_id=%s"
+                ).format(sql.Identifier(settings.schema_name)),
+                (run_id,),
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row["request_json"] == expected.model_dump_json()
+            canonical = json.dumps(
+                json.loads(row["request_json"]),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            assert row["fence"] == "sha256:" + hashlib.sha256(canonical).hexdigest()

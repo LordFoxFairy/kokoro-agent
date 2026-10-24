@@ -1,3 +1,7 @@
+## HTTP 7.4 MCP 选择候选（2026-10-24）
+
+唯一 OpenAPI 在 LaunchRequest 增加 optional selected_mcp_connection_ids，缺省／空选择保持旧 Run 字节和 fence，非空冻结 exact Connection IDs；这不是授权或 Agent 图配置。完整7.3父 SHA 逆证，再沿原7.2／7.1证明链保留全部旧边界。BFF/App 固定 artifact 与配对前不激活正常 producer；没有新Schema。
+
 ## 当前历史 sealed 读取发行（2026-10-23）
 
 HTTP7.2 原件 SHA256 `4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db`。

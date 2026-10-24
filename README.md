@@ -60,7 +60,7 @@ Redis LaunchRunRequest
   -> Agent Chat HTTP query boundary -> kokoro-bff Chat API/AG-UI
 ```
 
-- 外部请求携带 `ExecutionIdentity`，只通过 selected_skill_source_refs 携带冻结 exact Skill 选择，不携带 caller namespace、thread、Agent、MCP 或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
+- 外部请求携带 `ExecutionIdentity`，通过 selected_skill_source_refs 与 optional selected_mcp_connection_ids 携带冻结 exact Skill／MCP Connection 选择，不携带 caller namespace、thread、Agent、端点／凭据或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
 - DeepAgents 的 native state 与 official `SwarmState` 都由框架拥有；GA 不定义自己的 State 包装。
 - Run 显式选择的 Skill exact refs 由 Platform current authorization 解析；每次文件读取重验批准引用与 Storage signed GET/ZIP，再暴露只读 backend。Agent 不声明静态Skill名称，空选择无Skill依赖；安装/启用仍由Platform拥有。
 - `chat_events` 是 GA 安全事件事实和 replay 游标；它不写入 BFF 已有的

@@ -1,7 +1,7 @@
 """GA control frames.
 
 The public launch frame carries a product ``feature_key``, a trusted execution
-identity, and an explicit exact skill source selection. Agent configuration
+identity, and explicit exact Skill and MCP Connection selections. Agent configuration
 belongs to the worker-local Feature catalog; it is never supplied by a caller
 or persisted as request ``runtime`` data.
 """
@@ -37,6 +37,10 @@ _MAX_SKILL_SELECTION_BYTES = 4096
 _SKILL_SOURCE_REFS_ADAPTER: TypeAdapter[list[str] | tuple[str, ...]] = TypeAdapter(
     list[str] | tuple[str, ...]
 )
+_MCP_CONNECTION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,190}\Z")
+_MCP_CONNECTION_IDS_ADAPTER: TypeAdapter[list[str] | tuple[str, ...]] = TypeAdapter(
+    list[str] | tuple[str, ...]
+)
 
 
 class IdentityRef(StrictModel):
@@ -61,7 +65,7 @@ class RunInput(StrictModel):
 
 
 class RunRequest(StrictModel):
-    """Worker launch intent; Feature supplies every Agent/runtime decision."""
+    """Frozen business selections; the trusted Feature still owns the runtime graph."""
 
     kind: Literal["run.request"]
     # HTTP ingress supplies request_id. Direct worker callers may omit it;
@@ -76,6 +80,30 @@ class RunRequest(StrictModel):
     input: RunInput
     requested_model_label: NonEmptyStr | None = None
     trace: dict[str, JsonValue] | None = None
+    # Omit only the new empty field: persisted pre-7.4 request JSON and fences
+    # must remain byte-identical. Nonempty choices participate in both as usual.
+    selected_mcp_connection_ids: tuple[str, ...] = Field(
+        default=(), exclude_if=lambda refs: not refs
+    )
+
+    @field_validator("selected_mcp_connection_ids", mode="before")
+    @classmethod
+    def _parse_mcp_connection_ids(cls, value: object) -> tuple[str, ...]:
+        return tuple(_MCP_CONNECTION_IDS_ADAPTER.validate_python(value, strict=True))
+
+    @field_validator("selected_mcp_connection_ids")
+    @classmethod
+    def _validate_mcp_connection_ids(cls, refs: tuple[str, ...]) -> tuple[str, ...]:
+        if len(refs) > 16 or len(set(refs)) != len(refs):
+            raise ValueError("invalid selected_mcp_connection_ids")
+        if any(_MCP_CONNECTION_ID.fullmatch(ref) is None for ref in refs):
+            raise ValueError("invalid selected_mcp_connection_ids")
+        if (
+            len(json.dumps(refs, ensure_ascii=True, separators=(",", ":")).encode())
+            > 4096
+        ):
+            raise ValueError("selected_mcp_connection_ids exceeds byte limit")
+        return refs
 
     @field_validator("project_ref")
     @classmethod

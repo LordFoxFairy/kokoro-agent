@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from pathlib import Path
 
 from pydantic import TypeAdapter, ValidationError
@@ -66,13 +69,53 @@ def _object(value: object, *, source: str) -> dict[str, object]:
         ) from error
 
 
+def http73_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the optional Run selection and prove the complete published parent."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "7.4.0":
+        raise ValueError("MCP selection requires HTTP 7.4.0")
+    info["version"] = "7.3.0"
+    parent["info"] = info
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
+    properties = _object(launch.get("properties"), source="LaunchRequest properties")
+    selection = properties.pop("selected_mcp_connection_ids", None)
+    if selection != {
+        "type": "array",
+        "maxItems": 16,
+        "uniqueItems": True,
+        "x-kokoro-json-byte-limit": 4096,
+        "description": "Exact Platform MCP Connection IDs selected for this Run, in caller order. Omission or [] selects no additional connections; selection is intent, not authorization. JSON ASCII encoding is limited to 4096 bytes.",
+        "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 191,
+            "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\s\S])",
+        },
+    }:
+        raise ValueError("MCP selection extension is not exact")
+    launch["properties"] = properties
+    schemas["LaunchRequest"] = launch
+    components["schemas"] = schemas
+    parent["components"] = components
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "c096eab9f2aa392215351a106a670692d5f58f945980a5e028b3a83d17509731"
+    ):
+        raise ValueError("complete HTTP 7.3 parent differs")
+    return raw
+
+
 def validate_openapi_document(document: dict[str, object]) -> None:
     openapi = document.get("openapi")
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "7.3.0":
-        raise ValueError("Agent HTTP contract version must be 7.3.0")
+    if info.get("version") != "7.4.0":
+        raise ValueError("Agent HTTP contract version must be 7.4.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")
@@ -95,7 +138,9 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     validate_execution_proof_jwk_set_component(document)
     validate_chat_response_contract(document, paths)
     failure_model_bytes(document)
-    http72_parent_bytes(document)
+    http72_parent_bytes(
+        _object(json.loads(http73_parent_bytes(document)), source="HTTP 7.3 parent")
+    )
 
 
 def _validate_jwks(paths: dict[str, object]) -> None:

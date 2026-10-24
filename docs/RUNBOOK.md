@@ -1,3 +1,9 @@
+## 2026-10-24 普通会话 MCP 选择配对
+
+Agent HTTP7.4 的 selected_mcp_connection_ids 是不可变业务输入；只有BFF/App消费固定候选且整片验证后才正常启用。先drain旧worker／核无活跃Run；源码hash本来属于冻结recipe，不能凭空字段字节兼容就宣称旧profile可在新代码恢复。正常旧JSON不批量补字段，空选择保原序列化/fence；非空请求已接纳后，回退仍须保留能消费该字段的reader，不将7.3回灌新队列。精确ID不是授权，资格失效按原失败关闭，不删项或改同名连接；trace.mcp_servers仅旧诊断，不能启用MCP。
+
+排查主路径必须查看浏览器正式消息→BFF outbox→Agent持久Run中的同一选择；独立SDK/ToolNode成功及日志出现连接名不证明普通会话已接。关联恢复用原Run字段，不用当前菜单状态；已经派发但unknown的远端调用不自动重发。
+
 # kokoro-agent 运行手册
 
 ## 启动

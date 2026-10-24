@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 from kokoro_agent.chat_contract_check import http72_parent_bytes
+from kokoro_agent.contract_check import http73_parent_bytes
 
 from jsonschema import Draft202012Validator
 
@@ -17,7 +18,9 @@ OLD_SHA = "ed0f5fc400f3307a4c50213a39859f2d5aacf8b4eecd11c1e50f53032d0fffd3"
 
 def test_prepared_is_the_only_addition_to_complete_http7_parent() -> None:
     document = json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
-    document = json.loads(http72_parent_bytes(document))
+    document = json.loads(
+        http72_parent_bytes(json.loads(http73_parent_bytes(document)))
+    )
     assert document["info"]["version"] == "7.2.0"
     operation = document["paths"][PATH]["get"]
     assert operation["operationId"] == "getPreparedModelCall"

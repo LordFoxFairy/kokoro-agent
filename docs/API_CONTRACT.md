@@ -1,3 +1,11 @@
+## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
+
+本节目标已在 Agent 候选唯一机器源 contract/openapi/v1/openapi.json 7.4.0 实施；BFF/App 尚未配对，正常服务仍运行7.3，不冒整链已发行。
+
+现POST /v1/runs的LaunchRequest新增selected_mcp_connection_ids：optional array<string>，省略/[]均表示没有额外的用户选中MCP；最多16项，唯一且保持调用者顺序，每项^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$，JSON ASCII编码至多4096 bytes。类型、重复、超长、URL、空白、嵌套对象或secret字段错误均为原400 invalid_launch_request。不从trace或mcp_servers读取该字段，不引入新RPC或错误码。
+
+LaunchBody→RunRequest保持同一精确列表；空值由唯一Run序列化规则省略新增字段，使既存request_json/fence原字节可保持，非空必含且同Run变更拒绝。恢复/重试继承原选择，不重新读取账号开关；请求不接受credential、endpoint、tool list或policy。固定artifact及parent完整证明先交付给BFF，消费者不得先手写wire。
+
 ## 2026-10-24 主链用量待核对的具名失败（实施中）
 
 沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。

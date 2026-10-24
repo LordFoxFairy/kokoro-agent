@@ -59,7 +59,7 @@ Session detail、title、share、delete 和 public snapshot 属于 BFF，不通�
 ### Run admission
 
 `POST /v1/runs` 接受 `request_id`、`run_id`、`session_id`、`feature_key`、顶层 `message_id`、`content`，以及可选的
-`requested_model_label`、`trace`。tenant/actor/subject/assertion identity 只来自 trusted headers；body 使用 `extra=forbid`，
+`requested_model_label`、`trace`。另有必填 nullable `project_ref`、必填 `selected_skill_source_refs`；HTTP7.4 候选新增 optional `selected_mcp_connection_ids`（正常配对尚待）。后者缺省／[]不增加连接，非空最多16个有序唯一 exact Connection ID；不含URL／凭据，不作为授权。tenant/actor/subject/assertion identity 只来自 trusted headers；body 使用 `extra=forbid`，
 不得包含 identity 字段。HTTP ingress 将请求映射为本仓内部 `RunRequest`，其中消息放在 `input` 对象。两种 transport shape
 不形成两个业务 owner。
 
@@ -100,7 +100,7 @@ Agent v1 HTTP request
 ```
 
 `ExecutionIdentity.tenant_ref + subject` 派生内部 `RuntimeNamespace`；actor/assertion 不参与隔离 key。
-caller 不提交 namespace、thread、Agent、Skill、MCP、Tool、provider 或 Feature 配方。
+caller 只提交正式业务选择（Skill exact refs、HTTP7.4候选的MCP exact Connection IDs及模型标签），不提交 namespace、thread、Agent、工具定义、provider 凭据或 Feature/graph 配方。
 `feature_key` 只索引 worker-local Feature，不是用户可写的 Agent selector。
 
 ## 5. 安全 Chat 事件

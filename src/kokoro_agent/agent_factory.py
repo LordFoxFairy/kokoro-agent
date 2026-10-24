@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from time import monotonic
 from uuid import uuid4
@@ -30,7 +30,7 @@ from deepagents.backends.state import StateBackend
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
-from kokoro_agent.clients.mcp import McpClient
+from kokoro_agent.clients.mcp import McpClient, McpConnectionRef
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.protocol import (
@@ -430,9 +430,28 @@ class AgentFactory:
         self, request: RunRequest, lease: LeaseFence, progress: SkillProgressSink
     ) -> AgentHandle:
         """按受信 Feature key 构造；请求本身不携带 Agent/图配方。"""
-        return await self._build_feature(
-            self.feature(request.feature_key), request, lease, progress
-        )
+        feature = self.feature(request.feature_key)
+        if request.selected_mcp_connection_ids:
+            # A Run's choice augments only its entry Agent, before recipe freeze.
+            # Never mutate the catalog or grant these refs to unrelated peers.
+            agents: list[Agent] = []
+            for agent in feature.agents:
+                if agent.key == feature.entry_agent:
+                    refs = tuple(
+                        dict.fromkeys(
+                            (
+                                *agent.mcp,
+                                *(
+                                    McpConnectionRef(connection_id=value)
+                                    for value in request.selected_mcp_connection_ids
+                                ),
+                            )
+                        )
+                    )
+                    agent = agent.configured(mcp=refs)
+                agents.append(agent)
+            feature = replace(feature, agents=tuple(agents))
+        return await self._build_feature(feature, request, lease, progress)
 
     async def _build_feature(
         self,

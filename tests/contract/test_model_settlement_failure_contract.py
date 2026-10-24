@@ -6,6 +6,7 @@ import hashlib
 import json
 import pytest
 from kokoro_agent.chat_contract_check import http72_parent_bytes
+from kokoro_agent.contract_check import http73_parent_bytes
 from jsonschema import validate, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -13,7 +14,11 @@ PARENT_SHA = "4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db"
 
 
 def test_pending_code_is_nonretryable_and_only_http72_change():
-    document = json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+    document = json.loads(
+        http73_parent_bytes(
+            json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+        )
+    )
     assert document["info"]["version"] == "7.3.0"
     failure = document["components"]["schemas"]["Failure"]
     validate({"code": "model_settlement_pending", "retryable": False}, failure)
@@ -39,7 +44,11 @@ def test_pending_code_is_nonretryable_and_only_http72_change():
     "mutation", ["other_schema", "retryable", "duplicate_code", "path"]
 )
 def test_pending_extension_proof_rejects_other_owner_changes(mutation: str) -> None:
-    document = json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+    document = json.loads(
+        http73_parent_bytes(
+            json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+        )
+    )
     failure = document["components"]["schemas"]["Failure"]
     if mutation == "other_schema":
         document["components"]["schemas"]["Meta"]["additionalProperties"] = True

@@ -1,3 +1,13 @@
+## 2026-10-24 正常7.4已配对；生产Factory跨owner预检通过
+
+正常Agent HTTP/worker现已加载4c46ec6，BFFf71a179与App0d19bfd/a96c4a6已配对，派发仍false；下方“7.3／未配对”仅历史。普通会话已实际选择原QA Connection并验显式管理/新建清退。
+
+本轮以正常worker原配置、当前本人可信scope和原QA Connection，在独占Agent库中运行完整生产AgentFactory.build：采用原prepare/freeze、当前MCP资格、真实正常Platform/System模型resolve及credential reader、Storage delivery transport、PG checkpoint/memory、原金融执行factory与原生DeepAgents构造。构造同一handle中确有mcp_list_tools/mcp_describe_tool/mcp_call/deliver，未替换模型或金融端口，且没有调用graph/model；实际model-call attempts为0。本预检只证运行装配，不称真实模型/工具/产物联合Run完成。
+
+资源与正常态核验：自身库已删除，库库存94→94；全部正常进程、Agent/BFF/Billing原行与xmin及原usage保持。Platform既有transaction_admission_slot因正式读取准入更新，其余表保持；不称全库零写。首次诊断断言误写不存在的mcp_get_tool而失败，实际产品名称一直是mcp_describe_tool；纠正观察器后预检通过，未改产品或放宽权限。正常源码/配置/Schema/资金不变，原始两次收据仅Root ignored agent-mcp-selection-20261024/factory-preflight。
+
+准确结算仍缺当前转接网关采购与缓存计量规则：当前冻结价格显式包含input_cache_read，真实usage该桶unreported；Billing据其冻结快照保持pending是正确行为，不补0、不改旧10积分。已异步询问计价说明，不发送新付费请求或以构造成功冒联合链完成。完整目标继续active，未push/PR/merge。
+
 ## 2026-10-24 AGENT-1：普通会话 MCP 精确选择（Agent 候选已验，消费端未配对）
 
 HTTP7.4 在唯一 OpenAPI 增加 optional selected_mcp_connection_ids；严格16项有序唯一 exact IDs，不接URL／凭据或trace别名。Launch→不可变Run→entry Agent副本→prepare/freeze→原当前资格链已接，catalog／其它peer不变，三MCP工具保持。非空选择参与原fence，改选冲突；空字段使用锁定Pydantic原生条件省略，保原字节而非迁移旧行。恢复读原Run，撤权在模型解析前失败；无Schema／依赖／权限owner变化。

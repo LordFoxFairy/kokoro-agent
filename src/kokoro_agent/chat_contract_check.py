@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 from pathlib import Path
 
@@ -258,6 +259,44 @@ def read_contract_document(path: Path) -> dict[str, object]:
         raise ValueError(f"{path} must contain a JSON object") from error
 
 
+def http72_parent_bytes(document: dict[str, object]) -> bytes:
+    """Prove the complete published parent; remove only this release's named extension."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "7.3.0":
+        raise ValueError("pending settlement failure requires HTTP 7.3.0")
+    info["version"] = "7.2.0"
+    parent["info"] = info
+    schemas = _object(
+        _object(parent.get("components"), source="components").get("schemas"),
+        source="schemas",
+    )
+    failure = _object(schemas.get("Failure"), source="Failure")
+    props = _object(failure.get("properties"), source="properties")
+    code = _object(props.get("code"), source="code")
+    codes = TypeAdapter(list[str]).validate_python(code.get("enum"), strict=True)
+    if (
+        not codes
+        or codes[-1] != "model_settlement_pending"
+        or codes.count("model_settlement_pending") != 1
+    ):
+        raise ValueError("pending settlement failure extension is not exact")
+    code["enum"] = codes[:-1]
+    props["code"] = code
+    failure["properties"] = props
+    schemas["Failure"] = failure
+    components = _object(parent.get("components"), source="components")
+    components["schemas"] = schemas
+    parent["components"] = components
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db"
+    ):
+        raise ValueError("complete HTTP 7.2 parent differs")
+    return raw
+
+
 GENERATED_FAILURE_RELATIVE = "src/kokoro_agent/protocol/run_failure_generated.py"
 
 
@@ -267,8 +306,8 @@ def failure_model_bytes(
     """Compile only the approved two failure profiles; reject unsupported shapes."""
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
-    if _object(document.get("info"), source="info").get("version") != "7.2.0":
-        raise ValueError("failure profiles require HTTP 7.2.0")
+    if _object(document.get("info"), source="info").get("version") != "7.3.0":
+        raise ValueError("failure profiles require HTTP 7.3.0")
     schemas = _object(
         _object(document.get("components"), source="components").get("schemas"),
         source="schemas",
@@ -396,7 +435,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "7.2.0",
+        "version": "7.3.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }

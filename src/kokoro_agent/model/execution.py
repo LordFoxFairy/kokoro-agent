@@ -14,6 +14,7 @@ from kokoro_agent.model.call_models import (
     StartModelCallDispatch,
     SealModelCallObservation,
     ModelCallAuthorizationUnavailable,
+    ModelCallSettlementPending,
 )
 from kokoro_agent.model.usage_observation import PhysicalUsageObservation
 from kokoro_agent.model.usage_producer import (
@@ -123,26 +124,29 @@ class ModelCallExecutor:
             )
         )
         receipt = await self._financial.reconcile(p.tenant_id, p.attempt_id)
-        if (
-            receipt is None
-            or receipt.status != "captured"
-            or (
-                receipt.admission_ref,
-                receipt.run_id,
-                receipt.attempt_id,
-                receipt.event_id,
-                receipt.revision,
-                receipt.digest,
-            )
-            != (
-                call.authorization.admission_ref,
-                p.run_id,
-                p.attempt_id,
-                sealed.event_id,
-                str(sealed.revision),
-                sealed.evidence_digest,
-            )
+        if receipt is None or (
+            receipt.admission_ref,
+            receipt.run_id,
+            receipt.attempt_id,
+            receipt.event_id,
+            receipt.revision,
+            receipt.digest,
+        ) != (
+            call.authorization.admission_ref,
+            p.run_id,
+            p.attempt_id,
+            sealed.event_id,
+            str(sealed.revision),
+            sealed.evidence_digest,
         ):
+            raise ModelCallAuthorizationUnavailable(
+                "model-call financial result requires reconciliation"
+            )
+        if receipt.status == "pending_reconciliation":
+            raise ModelCallSettlementPending(
+                "model-call financial result requires reconciliation"
+            )
+        if receipt.status != "captured":
             raise ModelCallAuthorizationUnavailable(
                 "model-call financial result requires reconciliation"
             )

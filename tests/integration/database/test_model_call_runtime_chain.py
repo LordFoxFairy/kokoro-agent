@@ -38,6 +38,7 @@ from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution import publish_agent_events
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
@@ -2339,6 +2340,10 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
                     primary
                 ).__name__
                 assert "reconciliation" in str(primary)
+                assert run_failed_payload(primary).model_dump() == {
+                    "code": "model_settlement_pending",
+                    "retryable": False,
+                }
         finally:
             provider_release.set()
             await handle.aclose()

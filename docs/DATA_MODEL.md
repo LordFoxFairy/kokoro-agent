@@ -1,3 +1,7 @@
+## 2026-10-24 主链用量待核对的具名失败（实施中）
+
+沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。
+
 ## AGENT-1：原 attempt 保存供应商响应编号（2026-10-23）
 
 唯一 canonical database/schema.sql 在 kokoro_agent_model_call_attempt 新增 provider_response_id TEXT NULL，无默认/回填。NULL表示原响应没有有效编号，不是兼容分支。CHECK限定可见 ASCII 1–256字符，非NULL必须已派发且封口；schema verifier 同步精确列/空值/约束。编号与首次封口同事务保存，重放只读核相等，不更新旧行；现 evidence bytes/digest 与已知计量不变。暂不新增查询 API、补证表或通用恢复状态。正常数据仍保留，实施与隔离 fresh schema 验证不自动授权丢弃 pending 资金事实。

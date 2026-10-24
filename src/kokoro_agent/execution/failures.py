@@ -8,6 +8,7 @@ from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
+    ModelCallSettlementPending,
     ModelCallInputInvalid,
 )
 from kokoro_agent.protocol import RunErrorCode, RunFailedPayload
@@ -36,6 +37,8 @@ def failure_code(error: BaseException) -> RunErrorCode:
         return "contract_incompatible"
     if isinstance(error, ModelCallInputInvalid):
         return "contract_incompatible"
+    if isinstance(error, ModelCallSettlementPending):
+        return "model_settlement_pending"
     if isinstance(error, ModelCallAuthorizationUnavailable):
         return "dependency_unavailable"
     if isinstance(error, ModelResolutionError):
@@ -54,6 +57,8 @@ def run_failed_payload(
     # retain their verified classification on both initial build and resume.
     if isinstance(error, StaticRecipeIncompatible | ModelCallInputInvalid):
         return RunFailedPayload(code="contract_incompatible", retryable=False)
+    if isinstance(error, ModelCallSettlementPending):
+        return RunFailedPayload(code="model_settlement_pending", retryable=False)
     if isinstance(error, ModelCallAuthorizationUnavailable):
         return RunFailedPayload(code="dependency_unavailable", retryable=False)
     typed = isinstance(error, ModelResolutionError)

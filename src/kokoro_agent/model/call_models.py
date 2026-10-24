@@ -276,6 +276,10 @@ class ModelCallAuthorizationUnavailable(RuntimeError):
     """No published Billing admission consumer can authorize this attempt."""
 
 
+class ModelCallSettlementPending(ModelCallAuthorizationUnavailable):
+    """The exact sealed event has an authenticated pending financial ACK. Never retry dispatch."""
+
+
 class ModelCallRepository(Protocol):
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall: ...
 
@@ -317,6 +321,7 @@ __all__ = [
     "ModelCallOrdinalExhausted",
     "ModelCallAuthorizationReceipt",
     "ModelCallAuthorizationUnavailable",
+    "ModelCallSettlementPending",
     "ModelCallDispatchPermit",
     "ModelCallEvidenceReceipt",
     "ModelCallEvidenceInvariantFailed",

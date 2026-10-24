@@ -9,6 +9,7 @@ from pydantic import TypeAdapter, ValidationError
 from kokoro_agent import model_usage_contract, model_usage_v2_contract
 from kokoro_agent.chat_contract_check import (
     failure_model_bytes,
+    http72_parent_bytes,
     generate_failure_models,
     read_contract_document as read_document,
     validate_chat_response_contract,
@@ -70,8 +71,8 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "7.2.0":
-        raise ValueError("Agent HTTP contract version must be 7.2.0")
+    if info.get("version") != "7.3.0":
+        raise ValueError("Agent HTTP contract version must be 7.3.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")
@@ -94,6 +95,7 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     validate_execution_proof_jwk_set_component(document)
     validate_chat_response_contract(document, paths)
     failure_model_bytes(document)
+    http72_parent_bytes(document)
 
 
 def _validate_jwks(paths: dict[str, object]) -> None:

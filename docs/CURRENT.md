@@ -1,3 +1,15 @@
+## 2026-10-24 AGENT-1：精确待核对 ACK 的安全失败码（候选，未正常激活）
+
+真实正常页面已有回答却显示“服务暂时不可用”；根因之一是原ModelCallExecutor把所有非captured结果归成授权不可用。现仅在sealed后六元组（admission/run/attempt/event/revision/digest）完全匹配且ACK明确pending_reconciliation时抛具名ModelCallSettlementPending，Failure／ChatFailure正规生成model_settlement_pending、retryable=false。None、错绑定、released和网络异常仍旧分类；原provider primary／取消优先、single-dispatch、后续调用资金围栏、原sealed/ACK与资金保持。不从异常文案推断pending，不改历史generic事件。
+
+HTTP7.3只有版本和新增安全码，完整7.2原SHA逐字逆证；旧7.1／7.0逆证链继续核同父，原路由／proof／usage2及Billing reader wire保持。没有新Schema、资金规则或依赖；BFF尚须固定新发行物、扩原Message CHECK并以具名方式演进非空库，公开profile与App再接，不先正常重启新producer。原12项SDK/HTTP/PG旅程保正文、唯一派发、持久ACK与取消，实际金融／供应商peer是受控fixture，不冒真实模型／扣分或用户页面已修好。
+
+主方最终419非MD输入冻结无漂移：lock/frozen offline sync、Ruff全格式/lint、锁定Pyright1.1.409、contract和默认2628 PASS／857按marker未选均通过。原12项真实隔离PG全部通过，库清单94→94；原使用量/Schema/资金不改。canonical uv build wheel+sdist通过，208份runtime Python与两包逐字一致，SQL原字节同；仓外新noneditable venv按原lock离线装依赖，安装后contract通过。只读审查边界见Root收据，源码与证据Root ignored agent-chain-focus-20261024。
+
+踩坑保留：首次新断言缺import不是业务RED；修fixture后SSE/JSON两例实际依旧dependency_unavailable的业务RED，再变新码。旧enum oracle承接新增值、父proof先运行遮蔽原HITL错误诊断、旧测试JSON遍历类型和is_valid stub问题均已纠正，不删旧负控。focused invoke原3个FAIL来自隔离SDK注册表却未恢复owner _sealed；测试helper同步恢复双方继承快照后66项通过，生产注册/安全校验无改动。自写门额外强加offline build且选旧UV缓存格式，失败未当产品缺陷；改回owner原canonical build成功，依赖lock不变，不反复洗全套绿。
+
+当前仍执行完整Agent主链：此片仅owner发行，正常generic历史不重写；BFF持久化/公开契约/App消费/正常页面、新调用准确结算、低风险工具/产物与集中PR均未完成。已向用户询问当前网关实际计价依据，旧调用价格/预占不改，也不让旧pending一概阻塞其它新Run准备；未新增正常模型/工具/资金动作、未push/PR/merge或提升Root gitlink。
+
 ## AGENT-1：响应编号与解析修复已配对正常服务（2026-10-23）
 
 正常 Agent HTTP/worker 已加载 `b71e972` 的源码；按 RUNBOOK 完成本地显式配对，canonical 新增 nullable 响应编号与 CHECK，未回填原记录。先备份本 owner 并恢复到临时库：23表185行的原列及xmin摘要一致，事务回滚和目标schema verifier通过，测试库回收、库存94保持；旧 `d20f608` 源码和hash锁定离线依赖回退副本已验contract。

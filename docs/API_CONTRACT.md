@@ -1,3 +1,7 @@
+## 2026-10-24 主链用量待核对的具名失败（实施中）
+
+沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。
+
 ## AGENT-1：供应商响应编号的内部观察（2026-10-23）
 
 HTTP7.2、usage2、BFF settle wire 不变。内部 PhysicalUsageObservation 与 SealModelCallObservation 增加可空 provider_response_id，限1–256个可见 ASCII 字符，来自同次已消费响应的 id；不接受 SDK 后合成编号。流式所有出现的 id 必须有效且一致，缺失保持未知。该编号不进入日志/公开事件/usage wire，不改变原 raw_usage_digest；只作 Agent 后续核查索引，不能用于签发权限或自报新用量。原 first-seal replay 同时比较编号，禁止替换或丢弃。

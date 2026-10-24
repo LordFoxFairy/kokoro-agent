@@ -68,7 +68,10 @@ from support.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.execution.failures import run_failed_payload
-from kokoro_agent.model.call_models import ModelCallAuthorizationUnavailable
+from kokoro_agent.model.call_models import (
+    ModelCallAuthorizationUnavailable,
+    ModelCallSettlementPending,
+)
 from kokoro_agent.protocol.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
@@ -78,10 +81,24 @@ def _runtime_custom(_name: str) -> SubagentSource:
     return "runtime-custom"
 
 
-def test_missing_model_authorization_uses_existing_safe_failure_tuple() -> None:
+@pytest.mark.parametrize(
+    "detail", ["consumer absent", "model-call financial result requires reconciliation"]
+)
+def test_missing_model_authorization_uses_existing_safe_failure_tuple(
+    detail: str,
+) -> None:
     assert run_failed_payload(
-        ModelCallAuthorizationUnavailable("consumer absent")
+        ModelCallAuthorizationUnavailable(detail)
     ) == RunFailedPayload(code="dependency_unavailable", retryable=False)
+
+
+def test_confirmed_pending_ack_is_nonretryable_even_with_a_default_failure_code() -> (
+    None
+):
+    pending = ModelCallSettlementPending("private diagnostic must never be rendered")
+    assert run_failed_payload(pending, code="internal_error") == RunFailedPayload(
+        code="model_settlement_pending", retryable=False
+    )
 
 
 async def _always_claim() -> bool:

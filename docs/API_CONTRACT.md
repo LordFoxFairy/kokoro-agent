@@ -1,3 +1,7 @@
+## 2026-10-25 SDK send 安全cause诊断
+
+仅在既有model-call handler捕获真实SDK `APIConnectionError`／`APITimeoutError` 时写私有诊断：固定SDK类别、最多4层显式 `__cause__` 的白名单类别、complete/cycle/truncated与现call/attempt UUID；截断或循环的root为unknown，不按名称/文字归因。真实 RuntimeError、OS拒绝/重置/中止连接及SSL错误仅映射固定类别，不按文字或errno推断loop关闭/供应商故障。无异常text/repr、URL/header/body、traceback或凭据，无新事件/Schema/wire。日志失败不替换primary；原denial还原、secondary settlement、pending ACK／hold、single-dispatch、零自动重试和摘要语义保持。此诊断不证明供应商故障或当前可用性。
+
 ## 2026-10-25 SDK 连接失败的安全分类
 
 仅真实 OpenAI SDK `APIConnectionError`／`APITimeoutError`（`isinstance`）归为既有 `model_unavailable`、`retryable=false`，优先于装配调用点提供的缺省码；同名普通异常或错误文字不参与归类。此为安全失败分类，不证明供应商 TCP/DNS/TLS 子因或可用性，不增加 wire／重试。原 API 主异常、secondary settlement 处理、pending financial ACK／hold、single-dispatch、历史终态和 preflight/start 顺序保持，不释放资金或重派模型。

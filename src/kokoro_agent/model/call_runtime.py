@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import socket
+import ssl
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Never
 from uuid import UUID, uuid5
 
+import httpx
 import rfc8785
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from openai import APIConnectionError, APITimeoutError
 
 from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
@@ -39,6 +44,71 @@ from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
 _CALL_NAMESPACE = UUID("a06d00e2-defa-5fe3-8f2c-10ecb19c1161")
 _ATTEMPT_NAMESPACE = UUID("64675e75-8af6-50b4-ade3-d413e5144dc9")
+
+_LOGGER = logging.getLogger(__name__)
+_SDK_CAUSE_CATEGORIES: tuple[tuple[type[BaseException], str], ...] = (
+    (socket.gaierror, "dns_error"),
+    (ssl.SSLCertVerificationError, "tls_certificate_error"),
+    (ssl.SSLError, "tls_error"),
+    (ConnectionRefusedError, "connection_refused"),
+    (ConnectionResetError, "connection_reset"),
+    (ConnectionAbortedError, "connection_aborted"),
+    (RuntimeError, "runtime_error"),
+    (httpx.ConnectTimeout, "connect_timeout"),
+    (httpx.ReadTimeout, "read_timeout"),
+    (httpx.WriteTimeout, "write_timeout"),
+    (httpx.PoolTimeout, "pool_timeout"),
+    (httpx.ConnectError, "connect_error"),
+    (httpx.ReadError, "read_error"),
+    (httpx.WriteError, "write_error"),
+    (httpx.LocalProtocolError, "local_protocol_error"),
+    (httpx.RemoteProtocolError, "remote_protocol_error"),
+    (httpx.UnsupportedProtocol, "unsupported_protocol"),
+)
+
+
+def _sdk_cause_category(error: BaseException) -> str:
+    for error_type, category in _SDK_CAUSE_CATEGORIES:
+        if isinstance(error, error_type):
+            return category
+    return "unknown"
+
+
+def _log_sdk_send_failure(
+    error: APIConnectionError, *, call_id: str, attempt_id: str
+) -> None:
+    """Private finite categories only; diagnostics never replace execution truth."""
+    try:
+        categories: list[str] = []
+        seen = {id(error)}
+        cause = error.__cause__
+        ending = "complete"
+        while cause is not None:
+            if id(cause) in seen:
+                ending = "cycle"
+                break
+            if len(categories) == 4:
+                ending = "truncated"
+                break
+            seen.add(id(cause))
+            categories.append(_sdk_cause_category(cause))
+            cause = cause.__cause__
+        root = categories[-1] if categories and ending == "complete" else "unknown"
+        _LOGGER.warning(
+            "model_sdk_send_failure sdk_category=%s root_cause_category=%s "
+            "cause_categories=%s cause_end=%s call_id=%s attempt_id=%s",
+            "timeout_error"
+            if isinstance(error, APITimeoutError)
+            else "connection_error",
+            root,
+            ",".join(categories) or "unknown",
+            ending,
+            call_id,
+            attempt_id,
+        )
+    except BaseException:
+        # No diagnostic or logging failure may replace the original primary.
+        pass
 
 
 @dataclass(slots=True)
@@ -293,6 +363,8 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
                     capture.mark_sdk_consumption_complete()
             except BaseException as error:
                 primary = error
+                if isinstance(error, APIConnectionError | APITimeoutError):
+                    _log_sdk_send_failure(error, call_id=call_id, attempt_id=attempt_id)
             if scope.call is not None:
                 try:
                     summary: SummarySealInput | None = None

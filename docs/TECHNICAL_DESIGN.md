@@ -1,3 +1,7 @@
+## 2026-10-25 SDK send 安全cause诊断
+
+私有cause诊断只落既有 `model/call_runtime.py` 的handler异常边界；真实SDK类型与真实DNS/TLS证书及SSL、OS拒绝/重置/中止连接、RuntimeError、HTTPX网络/超时/协议类型使用固定白名单，显式cause链最多4层、防环，未见根或未支持类型保unknown。只写闭合枚举及本地call/attempt UUID，不输出异常原文、请求/响应、URL/headers、traceback或任意动态类型名；telemetry失败吞回诊断边界，原API primary、denial还原、seal与secondary pending、资金hold、派发次数、零重试及原生summary行为不变。不建helper模块/协议/持久模型，不由类别自动恢复或重派。
+
 ## 2026-10-25 SDK 连接失败的安全分类
 
 在既有 `execution/failures.py` 安全归码边界，以真实 SDK `APIConnectionError`／`APITimeoutError` 的类型判断输出既有 `model_unavailable/false`，即使 assembly supplied default 也保留该分类；不按类名或文字猜测，不公开原异常。仅修正失败表达，不改变 API 主异常与 secondary settlement 的优先级、pending ACK／hold、single-dispatch、零自动重试、历史终态或 preflight/start。底层连接子因仍未证明，本片不声明外部供应商恢复可用。

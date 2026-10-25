@@ -97,6 +97,24 @@ async def test_profile_schema_catalog_drift_rejected(
 @pytest.mark.parametrize(
     ("table", "mutation"),
     [
+        ("kokoro_agent_model_call_attempt", "DROP COLUMN summary_result_bytes"),
+        ("kokoro_agent_model_call_attempt", "DROP COLUMN summary_result_digest"),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN summary_result_bytes SET NOT NULL",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "ALTER COLUMN summary_result_digest SET DEFAULT repeat('0',64)",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT ck_model_attempt_summary_result",
+        ),
+        (
+            "kokoro_agent_model_call_attempt",
+            "DROP CONSTRAINT ck_model_attempt_summary_result, ADD CONSTRAINT ck_model_attempt_summary_result CHECK (summary_result_bytes IS NULL OR octet_length(summary_result_bytes)>0)",
+        ),
         ("kokoro_agent_model_call_attempt", "DROP COLUMN final_request_digest"),
         (
             "kokoro_agent_model_call_attempt",

@@ -2258,6 +2258,9 @@ async def test_partial_swarm_failure_closes_already_built_s3_client(
 
 
 class _UnusedModelCallRepository:
+    async def read_summary_result(self, command: object):
+        raise AssertionError("unrelated unit scope must not replay summaries")
+
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall:
         raise AssertionError(f"unexpected model-call preparation: {command.call_id}")
 

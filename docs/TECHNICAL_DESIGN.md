@@ -1,3 +1,27 @@
+## 2026-10-25 原生摘要结果的最小持久恢复（设计门，未实施）
+
+**范围/基线。** 候选 HEAD `8639d99078d6ca53863462ee8e7459983afd8c57` 上的 summary adapter/原生 guard 正在独立收口；本节只裁决该后继的最小持久结果，不表示源码、SQL、真实 PostgreSQL 崩溃恢复或正常服务已经通过。DeepAgents 0.6.6 的自动摘要先独立 `ainvoke`，再调用普通模型，后者返回后才产生 `_summarization_event`；现成功摘要的 usage/金融 ACK 可先于 graph checkpoint 提交，但 journal 没有摘要正文，因此原恢复正确停止且不重付，尚非可续跑。只承接已有 Agent model-call owner，不建第二 graph/state、后台摘要服务、通用响应缓存或新的系统权限。
+
+**取舍/数据归属。** 在现 `kokoro_agent_model_call_attempt` 增 nullable `summary_result_bytes` / `summary_result_digest`，具体约束见 DATA_MODEL 本节。复用原 Run→Attempt 锁序、DB 时间、首次 revision1 usage seal 事务、金融 reconciler 和原生 helper。现 StateBackend/offload 只把历史排入 native channel，持久性仍依赖 checkpoint；官方 `@task` 的 RETURN 写同样晚于被包裹的 ACK 且由框架调度持久化，单独包 task 没有关闭此窗口。PgMemoryStore 的可覆写独立事务与 tool journal 的工具/GC 语义均不成为 model-result 旁路。不改 usage2/HTTP wire、跨 owner API、Billing 定价/资金/ACK 事实；无新 API 文档或 contract。
+
+**最小 capsule。** `summary_result_bytes` 是 RFC8785 canonical UTF-8 envelope，SHA-256 由 companion digest 校验；完整 envelope 固定上限 **4,194,304 bytes**，取现 request-profile string-token 资源界且低于总请求 8,388,608 bytes。System 精确 `max_output_tokens`/`context_window` 和最终请求 profile 继续生效，不由 token 数推算字节上界。message 只保留 `{role: "assistant", content: response.text}` 的可见文本（保存未 strip 值，仍由原 helper `.text.strip()`）；不序列化完整 SDK 对象、reasoning/tool calls、usage metadata/callback、headers、credential 或原请求/prompt。超界/非法正文保持真实用量封口和资金语义，按执行失败停止，不截断、补造或重发。
+
+capsule 还绑定版本/domain、tenant/run/call/attempt、peer path、native checkpoint id/ns/task id、`call_kind=summarization`、原 recipe/planned/attempt binding/final request digest、revision1 event id/digest 与原 usage 的已报告 input/output/total 或明确 unknown。稳定 call/attempt UUIDv5 继续由现 locator 算法生成；普通 model 旧 ID 不变。只持久摘要 prompt 的 digest：覆盖送入 SDK 的实际 prompt、stop 与生效参数、调用 profile 版本；当前输入逐值核 locator/peer/recipe/planned route/参数摘要，capsule.final_request_digest 严格等原 attempt.final_request_digest，绝不为命中重跑 SDK 或重建网络请求。摘要仅回到原生 helper 的原文本位置，不变成新的 system instruction、policy、工具清单或授权；控制/身份仍取受信请求与当前 owner。
+
+**首写与一次预算。** 原 SDK 成功且 same-stream consumption/压缩完整性已验证后，在现 `seal_observation` 同 cursor 事务内同时写 revision1 usage/head、两列 capsule 与摘要已报告 total 对现 `Run.token_total` 的一次增量。首次 `latest_revision=0`→1 是唯一累计门；精确重播比较原 bytes/digest/绑定并返回原 receipt，零重复加法，异值冲突；事务未知先读原 attempt，不把超时视为没写。事务提交后才运行原 reconcile，只有 exact captured ACK 才释放摘要文本。原 budget 上限用持久累计判断，超限停止后继，不回滚已经真实发生的 usage/资金事实。
+
+摘要封口/恢复返回最小 typed receipt（原文本、original bindings、当前 lease 校验后的 `token_total`）；摘要 adapter 保留现 Terminal/取消检查，按已冻结 `run_token_budget` 只读核该累计，**不再套摘要的 TokenBudgetMiddleware.add_tokens**。普通 model 的既有 chain 不变，不为读累计新增通用 RunRepository.get_tokens。恢复合成 AIMessage 不带 usage_metadata、且不再次发 SDK/usage callback，不重复预算/segment 增量。`token_total` 是预算累计；原每 invoke/lease 的 callback usage segment 与 Billing evidence 是不同事实，本片不得把恢复文本构造成新的 usage segment，也不从 segment 缺口推定零用量。
+
+最低可续跑门只覆盖 **revision1 已报告 known input/output/total、完整 SDK 响应且 captured** 的摘要。missing/unreported/unknown usage 保留原 pending/unknown，金融端只沿同 event/key reconcile，不补 0、不重派。未来补证才取得 known totals 的场景，在明确“first-known evidence revision 同事务只累计一次”及真实 PG 验证前仍停止；latest ACK 后来 captured 不单独取得重播资格，不把该路径当已关闭。正文读取不改 unknown usage 或旧 bytes。
+
+**恢复/并发。** result lookup 位于 SDK/prepare/authorize/start_dispatch 之前。当前可信 RunRequest、tenant/namespace/recipe、当前 owner/generation/DB lease/非终态及取消决定读权限；旧 attempt 的 lease、authorization、dispatch、usage 和 result 原样保留，不拿新 lease 重做旧 prepare，也不授旧 dispatch 新权限。只接受同 native locator/peer/prompt/route/recipe 的原结果；缺失与损坏分开，异 digest/版本/绑定/超界一律具名失败，不降级网络 cache miss。只有 attempt 真不存在或按现状态证明未派发时，才进入原正常授权流程；已派发无 result 或旧 NULL 停止，绝不换 ID/attempt 重试。
+
+对 original revision1 结果验证原事件链，并核 latest head 全部前驱 ACK 完整、exact `admission/run/attempt/event/revision/digest` 和 `captured`；None/pending/released/错 event 或 digest 均不是完成许可。读 pending 只能调用现 reconciler，再严格重读；read 过程不持 Run 行锁做外部 I/O。持久 reader 在同一有界事务内以当前 Run 锁/fence检查取得一致快照并返回 typed receipt，释放前/交还文本前继续响应取消；失租后不交还摘要或开启后继网络。两个合法重播只读相同结果，首次 seal/重播与 terminal/接管串行于原 Run→Attempt 锁，旧 lease 拒绝写，终态不复活。
+
+**验收与明确非目标。** 原 summary 成功、主模型尚未 dispatch 时可从 exact result 继续；若主模型也已经 dispatch 且其正文尚未 checkpoint，主模型继续保持已有 fail-closed，本片不泛化为所有模型回复持久化。原 native state 已有 `_summarization_event` 时仍由 SDK 正常使用，不扫 latest capsule 强塞新 summary。需真实 PG/AsyncPostgresSaver + child kill + 新 handle/新 lease 验证：seal事务两写间回滚、commit未知、seal→金融通知、资金ACK已发生但本地未记、exact captured ACK→adapter/预算/checkpoint、并发相等/异值、失租/取消、坏 bytes/ACK/旧NULL/超界及 main 已派发负控；物理 summary 1次、token_total 1次、无第二金融效果。原图 StateBackend files/offload 与恢复正文配对验证，不能用纯 in-memory saver 冒真实崩溃证据。
+
+**实施写区/包/运维。** 后续唯一源码 writer 交接现 summary adapter/call runtime/call models/execution、现 model repository 的 seal 委派、canonical `database/schema.sql`/精确 verifier、相邻 unit/真实 PG tests；具名 pure capsule/reader 可用 `model/summary_result.py` / `infrastructure/postgres_model_summary_result.py`，不继续拉长现 repository 或建通用框架。新增可执行源码逐个入现 finite runtime-profile source manifest，并核 wheel/sdist/installed 字节。摘要正文随原 attempt/evidence 恢复/审计保留，不进日志、公开 usage/Chat/trace，不借 Chat/tool GC提前清除；删除与原 owner 生命周期同裁决，无正文副本或回填。只先审本小门，再实施 schema/source；正常库数据、进程、派发与资金无操作，旧冻结 Run 不覆盖 recipe，正常保留数据升级/回滚另走既有门。
+
 ## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
 
 **基线/问题。** 当前 Agent `4bfb5cc`（运行源码8cc975e）通用 CHAT_FEATURE 的 GENERAL_AGENT.mcp 为空；AgentFactory 只消费 Feature 静态声明。BFF `674fed3` 的 mcp_servers 仅写 trace，App `f0740f3` 没有可发送的连接器选择。因此原生 ToolNode 直接调用成功，不证明普通产品聊天会挂载它。本稿承接原 AGENT-1/SKILLS-MCP-1，不另起目标；作用域问题已异步征询；本轮按最小合理默认采用当前会话草稿，不新增账号全局偏好，未把未观察的账号默认语义当 Manus 事实。

@@ -7,21 +7,23 @@ from typing import Literal, Protocol
 
 from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.model.call_models import (
-    ModelCallRepository,
-    PreparedModelCall,
     ModelCallAuthorizationReceipt,
-    ModelCallDispatchPermit,
-    StartModelCallDispatch,
-    SealModelCallObservation,
     ModelCallAuthorizationUnavailable,
+    ModelCallDispatchPermit,
+    ModelCallRepository,
     ModelCallSettlementPending,
-)
-from kokoro_agent.model.usage_observation import PhysicalUsageObservation
-from kokoro_agent.model.usage_producer import (
-    normalize_observed_usage,
-    actual_from_response,
+    PreparedModelCall,
+    ReadSummaryResult,
+    SealModelCallObservation,
+    StartModelCallDispatch,
 )
 from kokoro_agent.model.settlement import ModelSettlementReceipt
+from kokoro_agent.model.summary_result import SummaryReplayReceipt, SummarySealInput
+from kokoro_agent.model.usage_observation import PhysicalUsageObservation
+from kokoro_agent.model.usage_producer import (
+    actual_from_response,
+    normalize_observed_usage,
+)
 
 
 class CallAuthorizer(Protocol):
@@ -44,6 +46,9 @@ class AuthorizedModelCall:
 
 
 class ModelCallExecution(Protocol):
+    async def replay_summary(
+        self, command: ReadSummaryResult
+    ) -> SummaryReplayReceipt | None: ...
     async def authorize(self, prepared: PreparedModelCall) -> AuthorizedModelCall: ...
     async def seal(
         self,
@@ -52,6 +57,7 @@ class ModelCallExecution(Protocol):
         route: ResolvedModel,
         observation: PhysicalUsageObservation,
         outcome: Literal["completed", "failed", "cancelled", "unknown"],
+        summary: SummarySealInput | None = None,
     ) -> ModelSettlementReceipt: ...
 
 
@@ -66,6 +72,27 @@ class ModelCallExecutor:
         self._repository = repository
         self._authorizer = authorizer
         self._financial = financial
+
+    async def replay_summary(
+        self, command: ReadSummaryResult
+    ) -> SummaryReplayReceipt | None:
+        stored = await self._repository.read_summary_result(command)
+        if stored is None:
+            return None
+        if stored.state == "pending":
+            await self._financial.reconcile(
+                command.binding.tenant_ref, command.binding.attempt_id
+            )
+            stored = await self._repository.read_summary_result(command)
+            if stored is None:
+                raise ModelCallAuthorizationUnavailable(
+                    "native summary result disappeared"
+                )
+        if stored.state != "captured":
+            raise ModelCallSettlementPending(
+                "native summary financial result requires reconciliation"
+            )
+        return stored
 
     async def authorize(self, prepared: PreparedModelCall) -> AuthorizedModelCall:
         grant = await self._authorizer.authorize(prepared)
@@ -101,6 +128,7 @@ class ModelCallExecutor:
         route: ResolvedModel,
         observation: PhysicalUsageObservation,
         outcome: Literal["completed", "failed", "cancelled", "unknown"],
+        summary: SummarySealInput | None = None,
     ) -> ModelSettlementReceipt:
         p = call.prepared
         sealed = await self._repository.seal_observation(
@@ -113,6 +141,7 @@ class ModelCallExecutor:
                 planned_digest=p.planned_digest,
                 authorization_digest=call.authorization.authorization_digest,
                 outcome=outcome,
+                summary=summary,
                 actual=actual_from_response(
                     route=route, prepared=p, observation=observation
                 ),

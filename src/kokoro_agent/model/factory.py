@@ -10,10 +10,10 @@ import httpx
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 from kokoro_agent.policy import ModelConfig
+from kokoro_agent.model.summary_adapter import SummaryAuthorizedChatOpenAI
 
 from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.model.credentials import ModelCredential
@@ -301,7 +301,7 @@ def _build_openai_compatible_model(
     settings: ChatModelSettings, model: ModelConfig, clients: ModelHttpClients
 ) -> BaseChatModel:
     """One protocol implementation for direct and optional LiteLLM connections."""
-    return ChatOpenAI(
+    chat = SummaryAuthorizedChatOpenAI(
         model=model.name,
         api_key=clients.credential,
         base_url=clients.route.connection.base_url,
@@ -318,3 +318,9 @@ def _build_openai_compatible_model(
         stream_usage=True,
         reasoning_effort=_thinking_effort(model, off="minimal"),
     )
+    chat.profile = {
+        **(chat.profile or {}),
+        "max_input_tokens": clients.route.context_window,
+        "max_output_tokens": clients.route.max_output_tokens,
+    }
+    return chat

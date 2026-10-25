@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Protocol
-
 from datetime import datetime
+from typing import Annotated, Literal, Protocol
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
+from kokoro_agent.model.summary_result import (
+    SummaryCallBinding,
+    SummaryReplayReceipt,
+    SummarySealInput,
+)
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_v2_generated import (
+    ActualAttribution,
     Digest,
     IdentityRef,
     Lease,
     Opaque,
     Ordinal,
     PlannedBinding,
-    ActualAttribution,
     UsageObservation,
     Uuid,
 )
@@ -62,6 +66,17 @@ class PrepareModelCall(BaseModel):
     recipe: StaticRecipeBinding
     final_request_binding_version: Annotated[int, Field(strict=True, ge=1, le=1)]
     final_request_digest: Digest
+
+
+class ReadSummaryResult(BaseModel):
+    """Current execution authority for a read of an original summary attempt."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    request: RunRequest
+    lease: LeaseFence
+    planned: PlannedBinding
+    recipe: StaticRecipeBinding
+    binding: SummaryCallBinding
 
 
 class PreparedModelCall(BaseModel):
@@ -219,6 +234,7 @@ class SealModelCallObservation(BaseModel):
     outcome: Literal["completed", "failed", "cancelled", "unknown"]
     actual: ActualAttribution
     usage: UsageObservation
+    summary: SummarySealInput | None = Field(default=None, repr=False)
     provider_response_id: (
         Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[!-~]+$")] | None
     ) = Field(default=None, repr=False)
@@ -281,6 +297,10 @@ class ModelCallSettlementPending(ModelCallAuthorizationUnavailable):
 
 
 class ModelCallRepository(Protocol):
+    async def read_summary_result(
+        self, command: ReadSummaryResult
+    ) -> SummaryReplayReceipt | None: ...
+
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall: ...
 
     async def begin_authorization(

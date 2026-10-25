@@ -23,6 +23,7 @@ from typing import Any
 
 import deepagents
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.language_models import BaseChatModel
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.backends.state import StateBackend
@@ -52,6 +53,7 @@ from kokoro_agent.model.factory import (
     model_from_route,
 )
 from kokoro_agent.model.call_runtime import ModelCallRuntimeMiddleware
+from kokoro_agent.model.summary_adapter import SummaryAuthorizedChatOpenAI
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin
@@ -62,7 +64,7 @@ from kokoro_agent.skills.backend import (
     SKILLS_ROOT,
 )
 from kokoro_agent.skills.middleware import RunSkillsMiddleware
-from kokoro_agent.tools.middleware import ToolPolicyMiddleware
+from kokoro_agent.tools.middleware import ToolPolicyMiddleware, TerminalGuardMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.features.catalog import FEATURE_CATALOG, FeatureCatalog
@@ -291,7 +293,9 @@ async def build_deep_agent(
             checkpoint_file_writes=agent.backend == "state",
         )
 
-        def model_guard(peer_path: tuple[str, ...]) -> ModelCallRuntimeMiddleware:
+        def model_guard(
+            peer_path: tuple[str, ...], *, logical_call_kind: str = "model"
+        ) -> ModelCallRuntimeMiddleware:
             return ModelCallRuntimeMiddleware(
                 repository=dependencies.model_call_repository,
                 execution=dependencies.model_execution(
@@ -303,6 +307,7 @@ async def build_deep_agent(
                 planned=planned,
                 recipe=recipe,
                 peer_path=peer_path,
+                logical_call_kind=logical_call_kind,
             )
 
         def subagent_chain(name: str) -> tuple[AgentMiddleware, ...]:
@@ -313,7 +318,24 @@ async def build_deep_agent(
                 *chains.subagent[offset:],
             )
 
+        chat_model = make_chat_model(dependencies.model, model, model_clients=clients)
+
+        def bind_summary(peer_path: tuple[str, ...]) -> BaseChatModel:
+            if isinstance(chat_model, SummaryAuthorizedChatOpenAI):
+                return chat_model.with_summary_gate(
+                    model_guard(peer_path, logical_call_kind="summarization"),
+                    tuple(
+                        guard
+                        for guard in chains.guards
+                        if isinstance(guard, TerminalGuardMiddleware)
+                    ),
+                    dependencies.runtime_policy.run_token_budget,
+                )
+            return chat_model
+
         subagent_bundle = build_subagent_bundle(toolset, plan.subagents, subagent_chain)
+        for subagent in subagent_bundle.subagents:
+            subagent["model"] = bind_summary((*plan.peer_path, subagent["name"]))
         base_main_chain = chains.main(
             ToolPolicyMiddleware(
                 toolset.authorized,
@@ -338,7 +360,7 @@ async def build_deep_agent(
         native_constructor: Any = getattr(deepagents, "create_deep_agent")
         validate_native_registry()
         candidate: object = native_constructor(
-            model=make_chat_model(dependencies.model, model, model_clients=clients),
+            model=bind_summary(plan.peer_path),
             tools=toolset.tools,
             system_prompt=agent.prompt,
             skills=None,

@@ -6,28 +6,33 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
-
-from kokoro_agent.clients.system import ResolvedModel
-from kokoro_agent.model.call_artifacts import (
-    encode_final_request_digest,
-    encode_planned_artifact,
-)
-from kokoro_agent.model.request_profile import validate_request_profile
-from uuid import UUID, uuid5
 from typing import Never
+from uuid import UUID, uuid5
 
 import rfc8785
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 
+from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
+from kokoro_agent.model.call_artifacts import (
+    encode_final_request_digest,
+    encode_planned_artifact,
+)
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
     ModelCallInputInvalid,
     ModelCallRepository,
     PrepareModelCall,
+    ReadSummaryResult,
 )
 from kokoro_agent.model.call_scope import register_current_model_call_task
-from kokoro_agent.model.execution import ModelCallExecution, AuthorizedModelCall
+from kokoro_agent.model.execution import AuthorizedModelCall, ModelCallExecution
+from kokoro_agent.model.request_profile import validate_request_profile
+from kokoro_agent.model.summary_result import (
+    SummaryCallBinding,
+    SummaryReplayReceipt,
+    SummarySealInput,
+)
 from kokoro_agent.model.usage_observation import capture_model_usage
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
@@ -189,6 +194,7 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
         planned: PlannedBinding,
         recipe: StaticRecipeBinding,
         peer_path: tuple[str, ...],
+        logical_call_kind: str = "model",
     ) -> None:
         super().__init__()
         self._repository = repository
@@ -199,6 +205,51 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
         self._planned = planned
         self._recipe = recipe
         self._peer_path = peer_path
+        if logical_call_kind not in {"model", "summarization"}:
+            raise ValueError("model-call logical kind is invalid")
+        self._logical_call_kind = logical_call_kind
+
+    def _summary_binding(self, request: ModelRequest) -> SummaryCallBinding:
+        if self._logical_call_kind != "summarization":
+            raise ModelCallInputInvalid("native summary gate kind conflicts")
+        info = request.runtime.execution_info
+        if info is None:
+            raise ModelCallInputInvalid(
+                "native summary execution locator is unavailable"
+            )
+        prompt_digest = request.model_settings.get("kokoro_summary_prompt_digest")
+        if type(prompt_digest) is not str:
+            raise ModelCallInputInvalid("native summary input digest is unavailable")
+        call_id, attempt_id = _logical_identity(
+            request, self._request, self._peer_path, "summarization"
+        )
+        return SummaryCallBinding(
+            tenant_ref=self._request.execution_identity.tenant_ref,
+            run_id=self._request.run_id,
+            call_id=call_id,
+            attempt_id=attempt_id,
+            peer_path=self._peer_path,
+            checkpoint_id=info.checkpoint_id,
+            checkpoint_ns=info.checkpoint_ns,
+            task_id=info.task_id,
+            recipe_digest=self._recipe.fingerprint,
+            planned_digest=encode_planned_artifact(self._planned)[1],
+            prompt_digest=prompt_digest,
+        )
+
+    async def areplay_summary(
+        self, request: ModelRequest
+    ) -> SummaryReplayReceipt | None:
+        register_current_model_call_task()
+        return await self._execution.replay_summary(
+            ReadSummaryResult(
+                request=self._request,
+                lease=self._lease,
+                planned=self._planned,
+                recipe=self._recipe,
+                binding=self._summary_binding(request),
+            )
+        )
 
     async def awrap_model_call(
         self,
@@ -209,7 +260,9 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
         owner = asyncio.current_task()
         if owner is None:
             raise ModelCallInputInvalid("model-call lifecycle owner is unavailable")
-        call_id, attempt_id = _logical_identity(request, self._request, self._peer_path)
+        call_id, attempt_id = _logical_identity(
+            request, self._request, self._peer_path, self._logical_call_kind
+        )
         scope = _FinalRequestScope(
             owner=owner,
             repository=self._repository,
@@ -242,8 +295,19 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
                 primary = error
             if scope.call is not None:
                 try:
+                    summary: SummarySealInput | None = None
+                    if self._logical_call_kind == "summarization":
+                        summary = SummarySealInput(
+                            binding=self._summary_binding(request),
+                            text=response.result[0].text
+                            if primary is None
+                            and response is not None
+                            and response.result
+                            else None,
+                        )
                     await scope.execution.seal(
                         call=scope.call,
+                        summary=summary,
                         route=self._route,
                         observation=capture.snapshot(),
                         outcome="completed"
@@ -283,6 +347,7 @@ def _logical_identity(
     model_request: ModelRequest,
     run_request: RunRequest,
     peer_path: tuple[str, ...],
+    logical_call_kind: str = "model",
 ) -> tuple[str, str]:
     execution = model_request.runtime.execution_info
     if execution is None:
@@ -307,6 +372,10 @@ def _logical_identity(
         "checkpoint_ns": checkpoint_ns,
         "task_id": task_id,
     }
+    # Keep ordinary model call locators byte-identical. A summary is a distinct
+    # physical call in the same graph task/peer, not a new execution identity.
+    if logical_call_kind == "summarization":
+        locator["call_kind"] = "summarization"
     try:
         name = rfc8785.dumps(locator).decode("utf-8")
     except (TypeError, ValueError, UnicodeError) as error:

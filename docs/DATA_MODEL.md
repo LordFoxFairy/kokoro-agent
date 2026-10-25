@@ -1,3 +1,22 @@
+## 2026-10-25 原 attempt 的摘要结果 capsule（设计门，未实施）
+
+**唯一 owner/范围。** Agent 现 `kokoro_agent_model_call_attempt` 保存同一次 native summarization 返回的最小执行结果；Run、lease、usage evidence、Billing 资金与原生 checkpoint owner 不变。基线 `8639d99078d6ca53863462ee8e7459983afd8c57`；本节没有执行 DDL、fresh install、正常库升级或数据回填，不表示摘要崩溃恢复已通过。行为与取舍见 TECHNICAL_DESIGN 同日期小门。
+
+| 现表新增字段 | 类型/默认 | 不变量 |
+| --- | --- | --- |
+| `summary_result_bytes` | `BYTEA NULL`，无默认 | RFC8785 canonical UTF-8 summary capsule；完整 bytes 长度 1–4,194,304，严格版本/domain/message/绑定；摘要文本只取原 SDK `response.text`，无完整 SDK 对象/原请求/密钥 |
+| `summary_result_digest` | `TEXT NULL`，无默认 | 两列全空或全非空；非空为 64 位小写 hex SHA-256；应用按原 bytes 重算核同，不以格式 CHECK 代替完整性验证 |
+
+canonical SQL 仅在本表加具名 CHECK：`both NULL OR (both NOT NULL AND octet_length(summary_result_bytes) BETWEEN 1 AND 4194304 AND summary_result_digest ~ '^[0-9a-f]{64}$' AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL AND latest_revision > 0)`。沿原 PK/identity/唯一性、无 FK，不增 result 表、lookup index、状态列或第二可编辑 schema。`schema.py` 的精确列、nullability/约束 verifier 同步。普通调用及旧摘要缺失事实保持双 NULL；NULL 不代表免费、未派发或可重新请求，不回填/清空旧行。
+
+**capsule 的唯一语义。** 版本/domain、tenant/run/call/attempt、peer path、native checkpoint id/ns/task id 和 `call_kind=summarization`；original recipe/planned/attempt_binding/final_request digests、原 revision1 event id/digest；当前实际摘要 prompt+stop+生效参数+调用 profile 的 digest（仅 digest、不保存 raw prompt）；`message={role:"assistant",content:可见文本}`；首次 usage 的 reported input/output/total 或明确 unknown。capsule 使用当前 helper 实际消费的文本，未 strip 值恢复后由原 helper处理。完整 capsule 上限4MiB匹配现 request-profile string-token资源边界；总请求8MiB、System精确token执行界继续检查，不宣称4MiB必然适合任意context。拒绝超界/错误角色/字段、重复JSON键、非canonical bytes、未知版本与非文本/SDK对象；不截断、pickle或保存reasoning/tool calls/credential/headers。摘要不是 system权限/新身份或业务事实。
+
+**原子封口/immutable重播。** 只在原 Run→Attempt锁序、同cursor、DB时间/fence验证之后，第一次 revision1 usage/head与两列result同事务提交；result里的revision1 event/digest绑定实际新建原事件，任一步失败全回滚。同一次首次封口也把该摘要已reported total一次加到原Run.token_total，唯一门为原latest_revision=0→1；typed receipt读出当前lease下持久累计供预算检查。旧TokenBudget的摘要二次add_tokens退役，普通model不改；exact seal replay核全部result/usage/response绑定相等、零累计，异值冲突，不能overwrite或后补旧NULL。未知usage不补0、pending不准重播；原首次unknown而未来补证known后的first-known累计/恢复路径仍在明确事务门和真实PG验收前停止，不因后来的captured跳过预算。
+
+**只读恢复与资金。** result reader用当前可信RunRequest/tenant/recipe和当前有效Run lease检查一致快照，不把旧attempt lease改成新generation，不放宽read_prepared或start_dispatch。stable locator/prompt/参数/route/peer/recipe逐值相同且capsule.final_request_digest等于原attempt字段；result与original revision1 evidence绑定，同时核latest head/全部前驱ACK完整、exact admission/run/attempt/event/revision/digest且captured。None/pending/released/错ACK/坏result/旧NULL/已派发无body均停止；pending只允许现同event/key reconcile，零重新authorize/reserve/provider。恢复只返回无usage_metadata/callback的原文本，不制造第二预算/usage segment/费用。失租/取消/终态不交还正文或开启新调用；并发只读原结果，旧持有者无新写权。
+
+**审计/删除/验证。** 两列与原attempt/evidence同恢复和审计生命周期，不借Chat/tool GC清正文，不进公开usage、Chat、trace或日志；审计只安全ID/digest/状态。未来删除须与原终态/金融收口/恢复保留策略一并裁决，不新建自动TTL或副本。fresh schema精确门与真实PG验证result/usage/token原子回滚、exact重播零写、并发异值、DB commit未知、失租/取消、旧NULL与4MiB边界；真实AsyncPostgresSaver/child kill验证captured ACK到graph checkpoint前恢复、summary请求一次和累计一次。主模型已经dispatch但无持久正文仍沿原fail-closed，不用本摘要字段假称全图可续跑。新增codec/reader源码入finite manifest及wheel/sdist/installed绑定，正常数据保留升级、recipe切换和回滚不在本节执行。
+
 ## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
 
 无DDL、表、列、canonical SQL或owner变化。仅在现RunRequest的非空JSON业务输入中持久化精确selected_mcp_connection_ids，原dispatch/Run/lease/checkpoint/journal仍为唯一写入边界。新增字段不存token、URL、工具结果或Platform镜像。

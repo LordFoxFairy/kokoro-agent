@@ -45,7 +45,7 @@ __init__.py agent_factory.py policy.py agents/definition.py agents/subagent_cata
 agents/subagents.py agents/native_profile.py features/definition.py
 execution/runtime_profile.py execution/runtime_profile_plan.py execution/runtime_profile_sources.py
 execution/protocols.py tools/toolset.py tools/toolbox.py tools/registry.py
-clients/system.py model/credentials.py model/factory.py model/usage_observation.py model/call_runtime.py model/call_scope.py model/call_models.py model/call_artifacts.py model/request_profile.py
+clients/system.py model/credentials.py model/factory.py model/summary_adapter.py model/summary_result.py model/usage_observation.py model/call_runtime.py model/call_scope.py model/call_models.py model/call_artifacts.py model/request_profile.py
 clients/model_budget.py clients/bff_admission_generated.py model/budget.py model/settlement.py
 model/financial_receipt.py model/financial_reconciliation.py model/execution.py model/usage_producer.py
 worker/dependencies.py worker/main.py worker/model_financial.py
@@ -147,6 +147,7 @@ infrastructure/postgres_model_financial_repository.py
 infrastructure/postgres_model_financial_guard.py
 infrastructure/postgres_model_call_prepared.py
 infrastructure/postgres_model_call_repository.py
+infrastructure/postgres_model_summary_result.py
 infrastructure/postgres_run_admission.py
 infrastructure/postgres_run_context.py
 infrastructure/postgres_run_dispatch.py

@@ -449,6 +449,8 @@ async def _verify_model_evidence_schema(
         "latest_evidence_digest": "text",
         "financial_admission_ref": "uuid",
         "provider_response_id": "text",
+        "summary_result_bytes": "bytea",
+        "summary_result_digest": "text",
         "created_at": "timestamp with time zone",
         "updated_at": "timestamp with time zone",
     }
@@ -481,6 +483,8 @@ async def _verify_model_evidence_schema(
         "latest_evidence_digest",
         "financial_admission_ref",
         "provider_response_id",
+        "summary_result_bytes",
+        "summary_result_digest",
     }
     nullable_evidence = {
         "predecessor_event_id",
@@ -527,6 +531,7 @@ async def _verify_model_evidence_schema(
             "ck_model_attempt_times",
             "ck_model_attempt_financial",
             "ck_model_attempt_response",
+            "ck_model_attempt_summary_result",
         },
         MODEL_USAGE_EVIDENCE_TABLE: {
             "ck_model_evidence_identity",
@@ -537,6 +542,7 @@ async def _verify_model_evidence_schema(
         },
     }
     canonical_checks = {
+        "ck_model_attempt_summary_result": "CHECK (summary_result_bytes IS NULL AND summary_result_digest IS NULL OR summary_result_bytes IS NOT NULL AND summary_result_digest IS NOT NULL AND octet_length(summary_result_bytes) >= 1 AND octet_length(summary_result_bytes) <= 4194304 AND summary_result_digest ~ '^[0-9a-f]{64}$'::text AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL AND latest_revision > 0)",
         "ck_model_attempt_response": "CHECK (provider_response_id IS NULL OR provider_response_id ~ '^[!-~]+$'::text AND octet_length(provider_response_id) >= 1 AND octet_length(provider_response_id) <= 256 AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL)",
         "ck_model_attempt_financial": "CHECK (financial_admission_ref IS NULL OR (authorization_state = ANY (ARRAY['requested_unknown'::text, 'granted'::text])))",
         "ck_model_evidence_financial_ack": "CHECK (financial_ack_bytes IS NULL AND financial_ack_digest IS NULL AND financial_acked_at IS NULL OR financial_ack_bytes IS NOT NULL AND financial_ack_digest IS NOT NULL AND financial_acked_at IS NOT NULL AND octet_length(financial_ack_bytes) >= 1 AND octet_length(financial_ack_bytes) <= 16384 AND financial_ack_digest ~ '^[0-9a-f]{64}$'::text)",

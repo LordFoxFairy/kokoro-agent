@@ -10,50 +10,35 @@ from datetime import datetime
 import rfc8785
 from psycopg.errors import UniqueViolation
 
+from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.infrastructure.postgres import (
     connect_pg,
     qualified,
     utc_to_epoch_millis,
 )
+from kokoro_agent.infrastructure.postgres_model_call_evidence import (
+    append_evidence_locked,
+    recompute_run_completeness,
+)
+from kokoro_agent.infrastructure.postgres_model_call_final import (
+    read_final_evidence,
+    read_final_evidence_in_cursor,
+)
+from kokoro_agent.infrastructure.postgres_model_call_prepared import read_prepared
+from kokoro_agent.infrastructure.postgres_model_financial_guard import (
+    require_run_financial_clear,
+)
+from kokoro_agent.infrastructure.postgres_model_summary_result import (
+    read_summary_result,
+    seal_summary_result_locked,
+)
+from kokoro_agent.infrastructure.postgres_run_profiles import validate_static_recipe
 from kokoro_agent.infrastructure.schema import (
     MODEL_CALL_ATTEMPTS_TABLE,
     MODEL_USAGE_EVIDENCE_TABLE,
     RUN_CLAIMS_TABLE,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
-from kokoro_agent.infrastructure.postgres_model_call_prepared import read_prepared
-from kokoro_agent.infrastructure.postgres_model_financial_guard import (
-    require_run_financial_clear,
-)
-from kokoro_agent.infrastructure.postgres_model_call_final import (
-    read_final_evidence,
-    read_final_evidence_in_cursor,
-)
-from kokoro_agent.infrastructure.postgres_run_profiles import validate_static_recipe
-from kokoro_agent.infrastructure.postgres_model_call_evidence import (
-    append_evidence_locked,
-    recompute_run_completeness,
-)
-from kokoro_agent.model.call_models import (
-    AppendModelCallEvidence,
-    SealModelCallObservation,
-    AuthorizationPendingReceipt,
-    BeginModelCallAuthorization,
-    GrantModelCallAuthorization,
-    FinalModelCallEvidence,
-    ModelCallAuthorityLost,
-    ModelCallAuthorizationReceipt,
-    ModelCallDispatchPermit,
-    ModelCallEvidenceReceipt,
-    ModelCallIdentityConflict,
-    ModelCallInputInvalid,
-    ModelCallOrdinalExhausted,
-    PrepareModelCall,
-    PreparedModelCall,
-    PreparedModelCallSnapshot,
-    StartModelCallDispatch,
-)
-from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.model.call_artifacts import (
     encode_attempt_binding,
     encode_granted_artifact,
@@ -64,10 +49,31 @@ from kokoro_agent.model.call_artifacts import (
     strict_granted_artifact,
 )
 from kokoro_agent.model.call_evidence import (
-    validate_append_evidence,
     build_observed_call_evidence,
+    validate_append_evidence,
     validate_frozen_attempt,
 )
+from kokoro_agent.model.call_models import (
+    AppendModelCallEvidence,
+    AuthorizationPendingReceipt,
+    BeginModelCallAuthorization,
+    FinalModelCallEvidence,
+    GrantModelCallAuthorization,
+    ModelCallAuthorityLost,
+    ModelCallAuthorizationReceipt,
+    ModelCallDispatchPermit,
+    ModelCallEvidenceReceipt,
+    ModelCallIdentityConflict,
+    ModelCallInputInvalid,
+    ModelCallOrdinalExhausted,
+    PreparedModelCall,
+    PreparedModelCallSnapshot,
+    PrepareModelCall,
+    ReadSummaryResult,
+    SealModelCallObservation,
+    StartModelCallDispatch,
+)
+from kokoro_agent.model.summary_result import SummaryReplayReceipt
 from kokoro_agent.model.usage_evidence_v2 import parse_evidence
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
@@ -148,6 +154,18 @@ class PostgresModelCallRepository:
             raise RuntimeError(
                 "unsealed legacy model attempts prevent current producer startup"
             )
+
+    async def read_summary_result(
+        self, command: ReadSummaryResult
+    ) -> SummaryReplayReceipt | None:
+        return await read_summary_result(
+            self._database_url,
+            self._schema,
+            command,
+            total_timeout_seconds=self._total_timeout_seconds,
+            lock_timeout_ms=self._lock_timeout_ms,
+            statement_timeout_ms=self._statement_timeout_ms,
+        )
 
     async def read_prepared(
         self, tenant_id: str, attempt_id: str
@@ -459,6 +477,28 @@ class PostgresModelCallRepository:
                             raise ModelCallIdentityConflict(
                                 "observed response replay conflicts"
                             )
+                        await seal_summary_result_locked(
+                            cursor,
+                            schema=self._schema,
+                            command=command,
+                            attempt=attempt,
+                            artifact=validate_append_evidence(
+                                final.evidence_bytes,
+                                attempt_binding_bytes=_bytes(
+                                    attempt["attempt_binding_bytes"]
+                                ),
+                                planned_bytes=_bytes(attempt["planned_bytes"]),
+                                authorization_bytes=_bytes(
+                                    attempt["authorization_bytes"]
+                                ),
+                                prepared_at=_instant(attempt["prepared_at"]),
+                                dispatch_started_at=_instant(
+                                    attempt["dispatch_started_at"]
+                                ),
+                                database_now=final.observed_at,
+                            ),
+                            replayed=True,
+                        )
                         millis = utc_to_epoch_millis(final.observed_at)
                         if millis is None:
                             raise ModelCallIdentityConflict(
@@ -515,6 +555,14 @@ class PostgresModelCallRepository:
                                 command.attempt_id,
                             ),
                         )
+                    await seal_summary_result_locked(
+                        cursor,
+                        schema=self._schema,
+                        command=command,
+                        attempt=attempt,
+                        artifact=artifact,
+                        replayed=False,
+                    )
                     return receipt
 
     async def _lock_evidence_attempt(

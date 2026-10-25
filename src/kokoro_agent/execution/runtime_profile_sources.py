@@ -77,7 +77,7 @@ execution/mcp_runtime_request_binding.py
     ("web_search", "tools/web_search.py"),
     (
         "mcp",
-        "mcp/tools.py mcp/schema.py mcp/egress.py mcp/package.py mcp/managed_session.py clients/mcp.py clients/mcp_runtime.py clients/mcp_package_transport.py",
+        "mcp/tools.py mcp/schema.py mcp/egress.py mcp/package.py mcp/managed_session.py mcp/sse_transport.py clients/mcp.py clients/mcp_runtime.py clients/mcp_package_transport.py",
     ),
     (
         "delivery",

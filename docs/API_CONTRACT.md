@@ -1,3 +1,19 @@
+## 2026-10-25 Personal MCP SSE runtime 消费（候选已实施，尚未正常激活）
+
+正式 producer 固定 Platform `8cfead647856ef54ec851a3bebe169a3ca14d212`／Runtime1.5。现 `ResolveMcpRuntimeConnection`／`AcquireMcpRuntimeCredential` 两 RPC、operation `mcp.resolve_runtime_connection`／`mcp.acquire_runtime_credential`、当前 E2 与 binding3.0.0 不变。新 resolution `sse=10` 与 credential `sse=5` 必须同 case；exact connector/connection/server/selector/declaration、resolution reference SHA、discovery/invocation purpose、grant/audit/原参数 bytes／approval presence／key、trusted Run/tenant/lease 与最小 expiry 均沿原检查。HTTP／managed STDIO不降级、不兼容错 case，SSE不伪装 HTTP；BFF Public26只运输ID，不授执行权。本仓只消费该已发行 wire，不新增 Agent API/Schema/依赖。
+
+通过现官方 SDK 的 typed `SSEConnection` 与具名 SSE-only factory执行，不新增浏览器事件流或第二 RPC/session 协议。广告 endpoint 原文及解析后的含 query URL均≤8,192 UTF-8 bytes；同 scheme/host/有效 port，无 userinfo/fragment/控制字符/反斜线/redirect/降级，当前 DNS 全集合资格／IP pin／TLS不由已完成 Prepare替代。临时query只在会话内存，GET流累计及单POST ACK各≤4,194,304 bytes；原30秒绝对调用与材料min-expiry覆盖读/EOF/退出，不分步重置。202 Accepted只ACK，有效结果仍取官方流上exact JSON-RPC id。
+
+压缩策略只作用新SSE：未配置accept-encoding时默认identity，已配置 Header原值保持、无覆盖或额外请求值限制；transport原始响应仅接受无Content-Encoding或单一identity，非identity明确失败并关闭，不自动解压或重试。identity表述体字节接受后才按硬限计数，不以压缩wire界代替解码体积界。POST可能已产生效果，压缩／超界／断流失败不证明未执行，原journal unknown/failed与原key恢复、不重派保持。
+
+局部SSE ContextVar＋实际输出handler/caplog端净化按锁定MCP模块`record.pathname`覆盖`mcp.*`及其root/client命名的shared/session/TaskGroup路径；不能只按logger名称。HTTPX/httpcore仅本factory request/read/close来源进入净化；保闭合安全phase与原level/source，剥query/header/原异常及traceback参数，不吞业务错误／日志。其它root/client来源、非SSE及其它并发HTTP记录不变；不调进程全局日志级别、不改RecordFactory或SDK源码、不另建通用日志框架。若有QueueHandler，须在生产task的enqueue handler前净化，不在listener线程依赖ContextVar；锁定SDK离线拓扑为root StreamHandler／相关logger传播且无自身handler，非正常进程探测。所有SDK child teardown完成才释放scope/filter引用，失败／取消／HITL均清材料与连接引用；原HTTP/STDIO生命周期不变。
+
+唯一固定来源仍本仓provenance/vendor Proto/runtime profile及原正规generator。起始Agent Runtime1.1 descriptor不同于producer的1.4父图，不能以1.5→1.4逆证冒完整旧1.1；新current-pin与旧历史父证明分别绑定、原两op/v3向量和独立operation24/service-auth/package pins保持。Root已通过设计门，候选已按正式对象正规生成；本段不声明正常Agent/SSE/同Run已可用，旧Run不重派。
+
+候选另承接锁定SDK会吞POST异常的边界：仅已观测本会话transport失败置latch，managed正常退出前核验；GET exact-id结果先到或后到均不把已拒绝的压缩／超界ACK冒成功。未观察完成的合法ACK、普通close、取消／HITL不置失败、不重派；官方SDK实际loopback与先后序负控证据由最终候选收据绑定。
+
+SSE SDK入场要求root已配置实际handler；缺失时静态MCP_SESSION_FAILED且零SDK/网络调用，不自行basicConfig或加handler。原worker入口先basicConfig再装配执行；HTTP入口不执行MCP。现handler与lastResort的自身filter引用按并发会话释放，运行期间其它组件整体重配logging不在本片支持范围；不以被level抑制的info/debug来发现懒创建sink。
+
 ## 2026-10-25 原生摘要的对话流隔离
 
 框架标记 `metadata.lc_source=summarization` 的内部摘要仅在现 summary adapter 的调用 config 追加锁定 SDK 原生 `TAG_NOSTREAM`，不作为公开 assistant delta/completed；不按标题或正文过滤，普通主回答即使含相同标题仍正常流式发布。实际 provider stream、真实用量、摘要 capsule、原生 `_summarization_event`、seal/金融 ACK、失败与取消语义保持；没有新增 wire/Schema，也不改写既存 Chat 投影。

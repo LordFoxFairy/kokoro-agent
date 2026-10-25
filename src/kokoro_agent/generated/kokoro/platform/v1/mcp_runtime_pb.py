@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from .platform_runtime_pb import McpConnectionId, McpConnectorId, McpInvocationGrant, McpServerId
 
 
-_McpRuntimeResolutionFields: TypeAlias = Literal["connector_id", "connection_id", "server_id", "tool_selector", "declaration_digest", "resolution_ref", "expires_at_unix_seconds", "streamable_http", "stdio"]
+_McpRuntimeResolutionFields: TypeAlias = Literal["connector_id", "connection_id", "server_id", "tool_selector", "declaration_digest", "resolution_ref", "expires_at_unix_seconds", "streamable_http", "stdio", "sse"]
 
 class McpRuntimeResolution(Message[_McpRuntimeResolutionFields]):
     """
@@ -78,7 +78,7 @@ class McpRuntimeResolution(Message[_McpRuntimeResolutionFields]):
             declaration_digest: str = "",
             resolution_ref: str = "",
             expires_at_unix_seconds: int = 0,
-            transport: Oneof[Literal["streamable_http"], McpRuntimeHttpConnection] | Oneof[Literal["stdio"], McpRuntimeStdioConnection] | None = None,
+            transport: Oneof[Literal["streamable_http"], McpRuntimeHttpConnection] | Oneof[Literal["stdio"], McpRuntimeStdioConnection] | Oneof[Literal["sse"], McpRuntimeSseConnection] | None = None,
         ) -> None:
             pass
 
@@ -89,7 +89,7 @@ class McpRuntimeResolution(Message[_McpRuntimeResolutionFields]):
         declaration_digest: str
         resolution_ref: str
         expires_at_unix_seconds: int
-        transport: Oneof[Literal["streamable_http"], McpRuntimeHttpConnection] | Oneof[Literal["stdio"], McpRuntimeStdioConnection] | None
+        transport: Oneof[Literal["streamable_http"], McpRuntimeHttpConnection] | Oneof[Literal["stdio"], McpRuntimeStdioConnection] | Oneof[Literal["sse"], McpRuntimeSseConnection] | None
 
 _McpRuntimeHttpConnectionFields: TypeAlias = Literal["canonical_endpoint", "header_slots"]
 
@@ -604,7 +604,7 @@ class McpRuntimeStdioCredential(Message[_McpRuntimeStdioCredentialFields]):
         environment: list[McpRuntimeSecretValue]
         package_download: McpRuntimePackageDownload | None
 
-_AcquireMcpRuntimeCredentialResponseFields: TypeAlias = Literal["resolution_ref_sha256", "expires_at_unix_seconds", "streamable_http", "stdio"]
+_AcquireMcpRuntimeCredentialResponseFields: TypeAlias = Literal["resolution_ref_sha256", "expires_at_unix_seconds", "streamable_http", "stdio", "sse"]
 
 class AcquireMcpRuntimeCredentialResponse(Message[_AcquireMcpRuntimeCredentialResponseFields]):
     """
@@ -638,17 +638,79 @@ class AcquireMcpRuntimeCredentialResponse(Message[_AcquireMcpRuntimeCredentialRe
             *,
             resolution_ref_sha256: str = "",
             expires_at_unix_seconds: int = 0,
-            transport: Oneof[Literal["streamable_http"], McpRuntimeHttpCredential] | Oneof[Literal["stdio"], McpRuntimeStdioCredential] | None = None,
+            transport: Oneof[Literal["streamable_http"], McpRuntimeHttpCredential] | Oneof[Literal["stdio"], McpRuntimeStdioCredential] | Oneof[Literal["sse"], McpRuntimeSseCredential] | None = None,
         ) -> None:
             pass
 
         resolution_ref_sha256: str
         expires_at_unix_seconds: int
-        transport: Oneof[Literal["streamable_http"], McpRuntimeHttpCredential] | Oneof[Literal["stdio"], McpRuntimeStdioCredential] | None
+        transport: Oneof[Literal["streamable_http"], McpRuntimeHttpCredential] | Oneof[Literal["stdio"], McpRuntimeStdioCredential] | Oneof[Literal["sse"], McpRuntimeSseCredential] | None
+
+_McpRuntimeSseConnectionFields: TypeAlias = Literal["canonical_endpoint", "header_slots"]
+
+class McpRuntimeSseConnection(Message[_McpRuntimeSseConnectionFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.McpRuntimeSseConnection
+    ```
+
+    Attributes:
+        canonical_endpoint:
+            ```proto
+            string canonical_endpoint = 1;
+            ```
+        header_slots:
+            ```proto
+            repeated string header_slots = 2;
+            ```
+    """
+
+    __slots__ = ("canonical_endpoint", "header_slots")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            canonical_endpoint: str = "",
+            header_slots: list[str] | None = None,
+        ) -> None:
+            pass
+
+        canonical_endpoint: str
+        header_slots: list[str]
+
+_McpRuntimeSseCredentialFields: TypeAlias = Literal["headers"]
+
+class McpRuntimeSseCredential(Message[_McpRuntimeSseCredentialFields]):
+    """
+    ```proto
+    message kokoro.platform.v1.McpRuntimeSseCredential
+    ```
+
+    Attributes:
+        headers:
+            ```proto
+            repeated kokoro.platform.v1.McpRuntimeSecretValue headers = 1;
+            ```
+    """
+
+    __slots__ = ("headers",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            headers: list[McpRuntimeSecretValue] | None = None,
+        ) -> None:
+            pass
+
+        headers: list[McpRuntimeSecretValue]
 
 
 _DESC = file_desc(
-    b'\n$kokoro/platform/v1/mcp_runtime.proto\x12\x12kokoro.platform.v1\x1a)kokoro/platform/v1/platform_runtime.proto"\xc4\x04\n\x14McpRuntimeResolution\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12H\n\rconnection_id\x18\x02 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12#\n\rtool_selector\x18\x04 \x01(\tR\x0ctoolSelector\x12-\n\x12declaration_digest\x18\x05 \x01(\tR\x11declarationDigest\x12%\n\x0eresolution_ref\x18\x06 \x01(\tR\rresolutionRef\x125\n\x17expires_at_unix_seconds\x18\x07 \x01(\x03R\x14expiresAtUnixSeconds\x12W\n\x0fstreamable_http\x18\x08 \x01(\x0b2,.kokoro.platform.v1.McpRuntimeHttpConnectionH\x00R\x0estreamableHttp\x12E\n\x05stdio\x18\t \x01(\x0b2-.kokoro.platform.v1.McpRuntimeStdioConnectionH\x00R\x05stdioB\x0b\n\ttransport"l\n\x18McpRuntimeHttpConnection\x12-\n\x12canonical_endpoint\x18\x01 \x01(\tR\x11canonicalEndpoint\x12!\n\x0cheader_slots\x18\x02 \x03(\tR\x0bheaderSlots"_\n\x19McpRuntimeEnvironmentSlot\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12.\n\x13credential_slot_ref\x18\x02 \x01(\tR\x11credentialSlotRef"\x9e\x02\n\x19McpRuntimeStdioConnection\x120\n\x14runtime_artifact_ref\x18\x01 \x01(\tR\x12runtimeArtifactRef\x12*\n\x11source_version_id\x18\x02 \x01(\tR\x0fsourceVersionId\x12\'\n\x0fartifact_sha256\x18\x03 \x01(\tR\x0eartifactSha256\x12\x1e\n\nentrypoint\x18\x04 \x01(\tR\nentrypoint\x12Z\n\x11environment_slots\x18\x05 \x03(\x0b2-.kokoro.platform.v1.McpRuntimeEnvironmentSlotR\x10environmentSlots"\xe8\x03\n"ResolveMcpRuntimeConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12#\n\rtool_selector\x18\x05 \x01(\tR\x0ctoolSelector\x12>\n\x1bexpected_declaration_digest\x18\x06 \x01(\tR\x19expectedDeclarationDigest\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofR\ttenant_idR\nsubject_idR\x08actor_idR\x06run_idR\nsession_idR\x07commandR\x03urlR\x03env"o\n#ResolveMcpRuntimeConnectionResponse\x12H\n\nresolution\x18\x01 \x01(\x0b2(.kokoro.platform.v1.McpRuntimeResolutionR\nresolution""\n McpRuntimeDiscoveryCredentialUse"\xa7\x02\n!McpRuntimeInvocationCredentialUse\x12Q\n\x10invocation_grant\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpInvocationGrantR\x0finvocationGrant\x12\x1b\n\taudit_ref\x18\x02 \x01(\tR\x08auditRef\x120\n\x14typed_arguments_json\x18\x03 \x01(\x0cR\x12typedArgumentsJson\x12&\n\x0capproval_ref\x18\x04 \x01(\tH\x00R\x0bapprovalRef\x88\x01\x01\x12\'\n\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKeyB\x0f\n\r_approval_ref"\xd0\x05\n"AcquireMcpRuntimeCredentialRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12#\n\rtool_selector\x18\x05 \x01(\tR\x0ctoolSelector\x12>\n\x1bexpected_declaration_digest\x18\x06 \x01(\tR\x19expectedDeclarationDigest\x12%\n\x0eresolution_ref\x18\x07 \x01(\tR\rresolutionRef\x12T\n\tdiscovery\x18\x08 \x01(\x0b24.kokoro.platform.v1.McpRuntimeDiscoveryCredentialUseH\x00R\tdiscovery\x12W\n\ninvocation\x18\t \x01(\x0b25.kokoro.platform.v1.McpRuntimeInvocationCredentialUseH\x00R\ninvocation\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\x10\n\x0ecredential_useR\ttenant_idR\nsubject_idR\x08actor_idR\x06run_idR\nsession_idR\x07commandR\x03urlR\x03env"A\n\x15McpRuntimeSecretValue\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n\x05value\x18\x02 \x01(\x0cR\x05value"_\n\x18McpRuntimeHttpCredential\x12C\n\x07headers\x18\x01 \x03(\x0b2).kokoro.platform.v1.McpRuntimeSecretValueR\x07headers"\xe2\x01\n\x19McpRuntimePackageDownload\x12\x19\n\x08url_utf8\x18\x01 \x01(\x0cR\x07urlUtf8\x12T\n\x10required_headers\x18\x02 \x03(\x0b2).kokoro.platform.v1.McpRuntimeSecretValueR\x0frequiredHeaders\x12\x1d\n\nsize_bytes\x18\x03 \x01(\x04R\tsizeBytes\x125\n\x17expires_at_unix_seconds\x18\x04 \x01(\x03R\x14expiresAtUnixSeconds"\xc2\x01\n\x19McpRuntimeStdioCredential\x12K\n\x0benvironment\x18\x01 \x03(\x0b2).kokoro.platform.v1.McpRuntimeSecretValueR\x0benvironment\x12X\n\x10package_download\x18\x02 \x01(\x0b2-.kokoro.platform.v1.McpRuntimePackageDownloadR\x0fpackageDownload"\xbd\x02\n#AcquireMcpRuntimeCredentialResponse\x122\n\x15resolution_ref_sha256\x18\x01 \x01(\tR\x13resolutionRefSha256\x125\n\x17expires_at_unix_seconds\x18\x02 \x01(\x03R\x14expiresAtUnixSeconds\x12W\n\x0fstreamable_http\x18\x03 \x01(\x0b2,.kokoro.platform.v1.McpRuntimeHttpCredentialH\x00R\x0estreamableHttp\x12E\n\x05stdio\x18\x04 \x01(\x0b2-.kokoro.platform.v1.McpRuntimeStdioCredentialH\x00R\x05stdioB\x0b\n\ttransport2\xb5\x02\n\x11McpRuntimeService\x12\x8e\x01\n\x1bResolveMcpRuntimeConnection\x126.kokoro.platform.v1.ResolveMcpRuntimeConnectionRequest\x1a7.kokoro.platform.v1.ResolveMcpRuntimeConnectionResponse\x12\x8e\x01\n\x1bAcquireMcpRuntimeCredential\x126.kokoro.platform.v1.AcquireMcpRuntimeCredentialRequest\x1a7.kokoro.platform.v1.AcquireMcpRuntimeCredentialResponseb\x06proto3',
+    b'\n$kokoro/platform/v1/mcp_runtime.proto\x12\x12kokoro.platform.v1\x1a)kokoro/platform/v1/platform_runtime.proto"\x85\x05\n\x14McpRuntimeResolution\x12E\n\x0cconnector_id\x18\x01 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12H\n\rconnection_id\x18\x02 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12<\n\tserver_id\x18\x03 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12#\n\rtool_selector\x18\x04 \x01(\tR\x0ctoolSelector\x12-\n\x12declaration_digest\x18\x05 \x01(\tR\x11declarationDigest\x12%\n\x0eresolution_ref\x18\x06 \x01(\tR\rresolutionRef\x125\n\x17expires_at_unix_seconds\x18\x07 \x01(\x03R\x14expiresAtUnixSeconds\x12W\n\x0fstreamable_http\x18\x08 \x01(\x0b2,.kokoro.platform.v1.McpRuntimeHttpConnectionH\x00R\x0estreamableHttp\x12E\n\x05stdio\x18\t \x01(\x0b2-.kokoro.platform.v1.McpRuntimeStdioConnectionH\x00R\x05stdio\x12?\n\x03sse\x18\n \x01(\x0b2+.kokoro.platform.v1.McpRuntimeSseConnectionH\x00R\x03sseB\x0b\n\ttransport"l\n\x18McpRuntimeHttpConnection\x12-\n\x12canonical_endpoint\x18\x01 \x01(\tR\x11canonicalEndpoint\x12!\n\x0cheader_slots\x18\x02 \x03(\tR\x0bheaderSlots"_\n\x19McpRuntimeEnvironmentSlot\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12.\n\x13credential_slot_ref\x18\x02 \x01(\tR\x11credentialSlotRef"\x9e\x02\n\x19McpRuntimeStdioConnection\x120\n\x14runtime_artifact_ref\x18\x01 \x01(\tR\x12runtimeArtifactRef\x12*\n\x11source_version_id\x18\x02 \x01(\tR\x0fsourceVersionId\x12\'\n\x0fartifact_sha256\x18\x03 \x01(\tR\x0eartifactSha256\x12\x1e\n\nentrypoint\x18\x04 \x01(\tR\nentrypoint\x12Z\n\x11environment_slots\x18\x05 \x03(\x0b2-.kokoro.platform.v1.McpRuntimeEnvironmentSlotR\x10environmentSlots"\xe8\x03\n"ResolveMcpRuntimeConnectionRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12#\n\rtool_selector\x18\x05 \x01(\tR\x0ctoolSelector\x12>\n\x1bexpected_declaration_digest\x18\x06 \x01(\tR\x19expectedDeclarationDigest\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofR\ttenant_idR\nsubject_idR\x08actor_idR\x06run_idR\nsession_idR\x07commandR\x03urlR\x03env"o\n#ResolveMcpRuntimeConnectionResponse\x12H\n\nresolution\x18\x01 \x01(\x0b2(.kokoro.platform.v1.McpRuntimeResolutionR\nresolution""\n McpRuntimeDiscoveryCredentialUse"\xa7\x02\n!McpRuntimeInvocationCredentialUse\x12Q\n\x10invocation_grant\x18\x01 \x01(\x0b2&.kokoro.platform.v1.McpInvocationGrantR\x0finvocationGrant\x12\x1b\n\taudit_ref\x18\x02 \x01(\tR\x08auditRef\x120\n\x14typed_arguments_json\x18\x03 \x01(\x0cR\x12typedArgumentsJson\x12&\n\x0capproval_ref\x18\x04 \x01(\tH\x00R\x0bapprovalRef\x88\x01\x01\x12\'\n\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKeyB\x0f\n\r_approval_ref"\xd0\x05\n"AcquireMcpRuntimeCredentialRequest\x12\x1d\n\nrequest_id\x18\x01 \x01(\tR\trequestId\x12E\n\x0cconnector_id\x18\x02 \x01(\x0b2".kokoro.platform.v1.McpConnectorIdR\x0bconnectorId\x12H\n\rconnection_id\x18\x03 \x01(\x0b2#.kokoro.platform.v1.McpConnectionIdR\x0cconnectionId\x12<\n\tserver_id\x18\x04 \x01(\x0b2\x1f.kokoro.platform.v1.McpServerIdR\x08serverId\x12#\n\rtool_selector\x18\x05 \x01(\tR\x0ctoolSelector\x12>\n\x1bexpected_declaration_digest\x18\x06 \x01(\tR\x19expectedDeclarationDigest\x12%\n\x0eresolution_ref\x18\x07 \x01(\tR\rresolutionRef\x12T\n\tdiscovery\x18\x08 \x01(\x0b24.kokoro.platform.v1.McpRuntimeDiscoveryCredentialUseH\x00R\tdiscovery\x12W\n\ninvocation\x18\t \x01(\x0b25.kokoro.platform.v1.McpRuntimeInvocationCredentialUseH\x00R\ninvocation\x12\'\n\x0fexecution_proof\x18d \x01(\tR\x0eexecutionProofB\x10\n\x0ecredential_useR\ttenant_idR\nsubject_idR\x08actor_idR\x06run_idR\nsession_idR\x07commandR\x03urlR\x03env"A\n\x15McpRuntimeSecretValue\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n\x05value\x18\x02 \x01(\x0cR\x05value"_\n\x18McpRuntimeHttpCredential\x12C\n\x07headers\x18\x01 \x03(\x0b2).kokoro.platform.v1.McpRuntimeSecretValueR\x07headers"\xe2\x01\n\x19McpRuntimePackageDownload\x12\x19\n\x08url_utf8\x18\x01 \x01(\x0cR\x07urlUtf8\x12T\n\x10required_headers\x18\x02 \x03(\x0b2).kokoro.platform.v1.McpRuntimeSecretValueR\x0frequiredHeaders\x12\x1d\n\nsize_bytes\x18\x03 \x01(\x04R\tsizeBytes\x125\n\x17expires_at_unix_seconds\x18\x04 \x01(\x03R\x14expiresAtUnixSeconds"\xc2\x01\n\x19McpRuntimeStdioCredential\x12K\n\x0benvironment\x18\x01 \x03(\x0b2).kokoro.platform.v1.McpRuntimeSecretValueR\x0benvironment\x12X\n\x10package_download\x18\x02 \x01(\x0b2-.kokoro.platform.v1.McpRuntimePackageDownloadR\x0fpackageDownload"\xfe\x02\n#AcquireMcpRuntimeCredentialResponse\x122\n\x15resolution_ref_sha256\x18\x01 \x01(\tR\x13resolutionRefSha256\x125\n\x17expires_at_unix_seconds\x18\x02 \x01(\x03R\x14expiresAtUnixSeconds\x12W\n\x0fstreamable_http\x18\x03 \x01(\x0b2,.kokoro.platform.v1.McpRuntimeHttpCredentialH\x00R\x0estreamableHttp\x12E\n\x05stdio\x18\x04 \x01(\x0b2-.kokoro.platform.v1.McpRuntimeStdioCredentialH\x00R\x05stdio\x12?\n\x03sse\x18\x05 \x01(\x0b2+.kokoro.platform.v1.McpRuntimeSseCredentialH\x00R\x03sseB\x0b\n\ttransport"k\n\x17McpRuntimeSseConnection\x12-\n\x12canonical_endpoint\x18\x01 \x01(\tR\x11canonicalEndpoint\x12!\n\x0cheader_slots\x18\x02 \x03(\tR\x0bheaderSlots"^\n\x17McpRuntimeSseCredential\x12C\n\x07headers\x18\x01 \x03(\x0b2).kokoro.platform.v1.McpRuntimeSecretValueR\x07headers2\xb5\x02\n\x11McpRuntimeService\x12\x8e\x01\n\x1bResolveMcpRuntimeConnection\x126.kokoro.platform.v1.ResolveMcpRuntimeConnectionRequest\x1a7.kokoro.platform.v1.ResolveMcpRuntimeConnectionResponse\x12\x8e\x01\n\x1bAcquireMcpRuntimeCredential\x126.kokoro.platform.v1.AcquireMcpRuntimeCredentialRequest\x1a7.kokoro.platform.v1.AcquireMcpRuntimeCredentialResponseb\x06proto3',
     [
         platform_runtime_pb.desc(),
     ],
@@ -667,6 +729,8 @@ _DESC = file_desc(
         "McpRuntimePackageDownload": McpRuntimePackageDownload,
         "McpRuntimeStdioCredential": McpRuntimeStdioCredential,
         "AcquireMcpRuntimeCredentialResponse": AcquireMcpRuntimeCredentialResponse,
+        "McpRuntimeSseConnection": McpRuntimeSseConnection,
+        "McpRuntimeSseCredential": McpRuntimeSseCredential,
     },
 )
 

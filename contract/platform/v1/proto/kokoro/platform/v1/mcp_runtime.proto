@@ -17,6 +17,7 @@ message McpRuntimeResolution {
   oneof transport {
     McpRuntimeHttpConnection streamable_http = 8;
     McpRuntimeStdioConnection stdio = 9;
+    McpRuntimeSseConnection sse = 10;
   }
 }
 
@@ -114,10 +115,20 @@ message AcquireMcpRuntimeCredentialResponse {
   oneof transport {
     McpRuntimeHttpCredential streamable_http = 3;
     McpRuntimeStdioCredential stdio = 4;
+    McpRuntimeSseCredential sse = 5;
   }
 }
 
 service McpRuntimeService {
   rpc ResolveMcpRuntimeConnection(ResolveMcpRuntimeConnectionRequest) returns (ResolveMcpRuntimeConnectionResponse);
   rpc AcquireMcpRuntimeCredential(AcquireMcpRuntimeCredentialRequest) returns (AcquireMcpRuntimeCredentialResponse);
+}
+
+message McpRuntimeSseConnection {
+  string canonical_endpoint = 1;
+  repeated string header_slots = 2;
+}
+
+message McpRuntimeSseCredential {
+  repeated McpRuntimeSecretValue headers = 1;
 }

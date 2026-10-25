@@ -242,14 +242,12 @@ class PlatformMcpClient:
             or resolution.tool_selector != selector
             or resolution.declaration_digest != binding.server.declaration_digest
             or resolution.transport is None
-            or binding.server.transport
-            not in {p.McpTransport.STDIO, p.McpTransport.STREAMABLE_HTTP}
             or resolution.transport.field
-            != (
-                "stdio"
-                if binding.server.transport == p.McpTransport.STDIO
-                else "streamable_http"
-            )
+            != {
+                p.McpTransport.STDIO: "stdio",
+                p.McpTransport.STREAMABLE_HTTP: "streamable_http",
+                p.McpTransport.SSE_COMPAT: "sse",
+            }.get(binding.server.transport)
             or not 0 < resolution.expires_at_unix_seconds - time.time() <= 30
         ):
             raise McpClientError("MCP_RESOLUTION_INVALID")

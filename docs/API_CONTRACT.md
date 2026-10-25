@@ -1,3 +1,7 @@
+## 2026-10-25 原生摘要的对话流隔离
+
+框架标记 `metadata.lc_source=summarization` 的内部摘要仅在现 summary adapter 的调用 config 追加锁定 SDK 原生 `TAG_NOSTREAM`，不作为公开 assistant delta/completed；不按标题或正文过滤，普通主回答即使含相同标题仍正常流式发布。实际 provider stream、真实用量、摘要 capsule、原生 `_summarization_event`、seal/金融 ACK、失败与取消语义保持；没有新增 wire/Schema，也不改写既存 Chat 投影。
+
 ## 2026-10-25 SDK send 安全cause诊断
 
 仅在既有model-call handler捕获真实SDK `APIConnectionError`／`APITimeoutError` 时写私有诊断：固定SDK类别、最多4层显式 `__cause__` 的白名单类别、complete/cycle/truncated与现call/attempt UUID；截断或循环的root为unknown，不按名称/文字归因。真实 RuntimeError、OS拒绝/重置/中止连接及SSL错误仅映射固定类别，不按文字或errno推断loop关闭/供应商故障。无异常text/repr、URL/header/body、traceback或凭据，无新事件/Schema/wire。日志失败不替换primary；原denial还原、secondary settlement、pending ACK／hold、single-dispatch、零自动重试和摘要语义保持。此诊断不证明供应商故障或当前可用性。

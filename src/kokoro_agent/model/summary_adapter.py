@@ -17,6 +17,7 @@ from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
+from langgraph.constants import TAG_NOSTREAM
 from langgraph.runtime import get_runtime
 from pydantic import JsonValue, PrivateAttr, TypeAdapter
 
@@ -124,10 +125,16 @@ class SummaryAuthorizedChatOpenAI(ChatOpenAI):
                 runtime=runtime,
                 model_settings={"kokoro_summary_prompt_digest": digest},
             )
+            # Native summaries run under the same "model" node as the answer.
+            # Hide only their messages projection, not provider streaming/usage.
+            summary_config: RunnableConfig = {
+                **(config or {}),
+                "tags": [*(config or {}).get("tags", []), TAG_NOSTREAM],
+            }
 
             async def invoke(_request: ModelRequest) -> ModelResponse:
                 answer = await super(SummaryAuthorizedChatOpenAI, self).ainvoke(
-                    input, config, stop=stop, **kwargs
+                    input, summary_config, stop=stop, **kwargs
                 )
                 return ModelResponse(result=[answer])
 

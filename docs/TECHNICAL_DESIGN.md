@@ -1,3 +1,6 @@
+## 2026-10-25 原生摘要消息投影边界
+DeepAgents 的原生摘要在同一 `model` 节点内调用，现 publisher 仅按 node 的保护不足以区分；锁定 LangGraph v3 的 messages transformer 不把 `lc_source` 传至 typed model stream。唯一 summary adapter 已识别 `metadata.lc_source=summarization` 并绑定独立 `call_kind`，故在此复制原 config、保留 tags/metadata/callback，再追加公开常量 `TAG_NOSTREAM`。SDK messages handler 只跳过该摘要调用的消息投影；不关闭 provider 流、不删除 usage callback，不影响 capsule/预算/ACK/原生状态或工具过程。普通回答与子代理回答仍走既有 publisher，不以内容判断可见性；恢复/失败/取消保持原边界，不回填历史投影。
+
 ## 2026-10-25 SDK send 安全cause诊断
 
 私有cause诊断只落既有 `model/call_runtime.py` 的handler异常边界；真实SDK类型与真实DNS/TLS证书及SSL、OS拒绝/重置/中止连接、RuntimeError、HTTPX网络/超时/协议类型使用固定白名单，显式cause链最多4层、防环，未见根或未支持类型保unknown。只写闭合枚举及本地call/attempt UUID，不输出异常原文、请求/响应、URL/headers、traceback或任意动态类型名；telemetry失败吞回诊断边界，原API primary、denial还原、seal与secondary pending、资金hold、派发次数、零重试及原生summary行为不变。不建helper模块/协议/持久模型，不由类别自动恢复或重派。

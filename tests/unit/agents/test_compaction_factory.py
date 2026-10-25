@@ -26,7 +26,7 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.stream import CustomTransformer
 from mcp.types import CallToolResult, TextContent
 from pydantic import JsonValue, SecretStr, TypeAdapter
-from support.fakes import FakeRunRepository
+from support.fakes import FakeBus, FakeRunRepository
 from support.local_fake import LocalFakeChatModel
 
 import kokoro_agent.agent_factory as assembly
@@ -43,6 +43,8 @@ from kokoro_agent.clients.storage import (
 from kokoro_agent.clients.system import ModelConnection, ResolvedModel
 from kokoro_agent.config import AppConfig
 from kokoro_agent.domain.run.models import LeasedRun
+from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.execution.publish_agent_events import pump_run
 from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
 from kokoro_agent.execution.runtime_profile_sources import production_manifest
 from kokoro_agent.model.call_artifacts import (
@@ -80,6 +82,8 @@ from kokoro_agent.model.usage_observation import PhysicalUsageObservation
 from kokoro_agent.protocol import (
     ExecutionIdentity,
     IdentityRef,
+    MessageCompleted,
+    MessageDelta,
     RunInput,
     RunRequest,
     SkillProgressCommitted,
@@ -480,6 +484,7 @@ async def _invoke(
     resume: bool = False,
     seed_words: int | None = None,
     v3: bool = False,
+    emitter: RunEmitter | None = None,
 ) -> dict[str, Any]:
     seed: list[HumanMessage | AIMessage] = []
     for index in range(7):
@@ -535,12 +540,15 @@ async def _invoke(
             transformers=[CustomTransformer],
         )
         async with run:
-            await asyncio.gather(
-                drain_messages(run.messages),
-                drain(run.tool_calls),
-                drain(run.subagents),
-                drain(run.custom),
-            )
+            if emitter is not None:
+                await pump_run(emitter, run, source_for=lambda _name: "runtime-custom")
+            else:
+                await asyncio.gather(
+                    drain_messages(run.messages),
+                    drain(run.tool_calls),
+                    drain(run.subagents),
+                    drain(run.custom),
+                )
         return dict((await handle.runnable.aget_state(config)).values)
 
 
@@ -1104,6 +1112,48 @@ async def test_native_v3_streams_summary_and_main_with_same_stream_usage(
             for o in execution.observations
         )
         assert execution.repository.token_totals[request.run_id] == 48
+    finally:
+        await handle.aclose()
+
+
+@pytest.mark.parametrize(
+    "main_text", ["continued", "SESSION INTENT\nSUMMARY\nARTIFACTS\nNEXT STEPS"]
+)
+async def test_native_summary_is_private_but_main_text_keeps_streaming_and_usage(
+    monkeypatch: pytest.MonkeyPatch, main_text: str
+) -> None:
+    handle, request, journal, execution, bodies = await _handle(
+        monkeypatch,
+        resolver=_Resolver(),
+        streaming=True,
+        scripted_message=lambda _body: {"role": "assistant", "content": main_text},
+    )
+    bus = FakeBus()
+    emitter = RunEmitter(bus, request.run_id)
+    try:
+        result = await _invoke(handle, request, huge=False, v3=True, emitter=emitter)
+        events = bus.run_events(request.run_id)
+        public_deltas = "".join(
+            event.payload.delta for event in events if isinstance(event, MessageDelta)
+        )
+        public_completions = [
+            event.payload.content
+            for event in events
+            if isinstance(event, MessageCompleted)
+        ]
+        assert public_deltas == main_text
+        assert public_completions == [main_text]
+        assert result["messages"][-1].text == main_text
+        assert result.get("_summarization_event") is not None
+        assert len(execution.summaries) == 1
+        assert len(bodies) == len(journal.commands) == len(execution.observations) == 2
+        assert all(body.get("stream") is True for body in bodies)
+        assert all(
+            observation.status == "complete"
+            and observation.compression_integrity == "validated"
+            for observation in execution.observations
+        )
+        assert execution.repository.token_totals[request.run_id] == 4
     finally:
         await handle.aclose()
 

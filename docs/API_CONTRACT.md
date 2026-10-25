@@ -1,3 +1,7 @@
+## 2026-10-25 SDK 连接失败的安全分类
+
+仅真实 OpenAI SDK `APIConnectionError`／`APITimeoutError`（`isinstance`）归为既有 `model_unavailable`、`retryable=false`，优先于装配调用点提供的缺省码；同名普通异常或错误文字不参与归类。此为安全失败分类，不证明供应商 TCP/DNS/TLS 子因或可用性，不增加 wire／重试。原 API 主异常、secondary settlement 处理、pending financial ACK／hold、single-dispatch、历史终态和 preflight/start 顺序保持，不释放资金或重派模型。
+
 ## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
 
 本节目标已在 Agent 候选唯一机器源 contract/openapi/v1/openapi.json 7.4.0 实施；BFF/App 尚未配对，正常服务仍运行7.3，不冒整链已发行。

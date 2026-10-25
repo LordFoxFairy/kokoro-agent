@@ -10,6 +10,7 @@ from support.fakes import settled_state_callback
 from support.fakes import terminal_emitter
 
 import asyncio
+import httpx
 import pytest
 import ast
 import json
@@ -27,6 +28,7 @@ from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langgraph.types import Interrupt
 from langgraph.checkpoint.memory import InMemorySaver
+from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel as PydanticBaseModel
 
 from support.fakes import (
@@ -67,7 +69,7 @@ from support.deepagents import create_test_deep_agent
 from support.local_fake import LocalFakeChatModel
 from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.execution.failures import run_failed_payload
+from kokoro_agent.execution.failures import failure_code, run_failed_payload
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
     ModelCallSettlementPending,
@@ -98,6 +100,58 @@ def test_confirmed_pending_ack_is_nonretryable_even_with_a_default_failure_code(
     pending = ModelCallSettlementPending("private diagnostic must never be rendered")
     assert run_failed_payload(pending, code="internal_error") == RunFailedPayload(
         code="model_settlement_pending", retryable=False
+    )
+
+
+@pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
+def test_sdk_transport_failure_is_nonretryable_model_unavailable(
+    error_type: type[APIConnectionError],
+) -> None:
+    error = error_type(request=httpx.Request("POST", "https://model.invalid/"))
+    assert failure_code(error) == "model_unavailable"
+    assert run_failed_payload(error) == RunFailedPayload(
+        code="model_unavailable", retryable=False
+    )
+
+
+@pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
+@pytest.mark.parametrize("default_code", ["assembly_failed", "internal_error"])
+def test_sdk_transport_classification_takes_precedence_over_assembly_default(
+    error_type: type[APIConnectionError],
+    default_code: Literal["assembly_failed", "internal_error"],
+) -> None:
+    error = error_type(request=httpx.Request("POST", "https://model.invalid/"))
+    assert run_failed_payload(error, code=default_code) == RunFailedPayload(
+        code="model_unavailable", retryable=False
+    )
+
+
+@pytest.mark.parametrize("error_name", ["APIConnectionError", "APITimeoutError"])
+def test_same_named_ordinary_exception_is_not_an_sdk_transport_failure(
+    error_name: str,
+) -> None:
+    error_type = type(error_name, (Exception,), {})
+    error = error_type("Connection error.")
+    assert failure_code(error) == "internal_error"
+    assert run_failed_payload(error) == RunFailedPayload(
+        code="internal_error", retryable=False
+    )
+    assert run_failed_payload(error, code="assembly_failed") == RunFailedPayload(
+        code="assembly_failed", retryable=False
+    )
+
+
+@pytest.mark.parametrize("error_type", [ValueError, asyncio.CancelledError])
+def test_unknown_and_cancelled_classifications_keep_existing_defaults(
+    error_type: type[BaseException],
+) -> None:
+    error = error_type("private diagnostic")
+    assert failure_code(error) == "internal_error"
+    assert run_failed_payload(error) == RunFailedPayload(
+        code="internal_error", retryable=False
+    )
+    assert run_failed_payload(error, code="assembly_failed") == RunFailedPayload(
+        code="assembly_failed", retryable=False
     )
 
 

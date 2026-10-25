@@ -1,3 +1,7 @@
+## 2026-10-25 SDK 连接失败的安全分类
+
+在既有 `execution/failures.py` 安全归码边界，以真实 SDK `APIConnectionError`／`APITimeoutError` 的类型判断输出既有 `model_unavailable/false`，即使 assembly supplied default 也保留该分类；不按类名或文字猜测，不公开原异常。仅修正失败表达，不改变 API 主异常与 secondary settlement 的优先级、pending ACK／hold、single-dispatch、零自动重试、历史终态或 preflight/start。底层连接子因仍未证明，本片不声明外部供应商恢复可用。
+
 ## 2026-10-25 原生摘要结果的最小持久恢复（设计门，未实施）
 
 **范围/基线。** 候选 HEAD `8639d99078d6ca53863462ee8e7459983afd8c57` 上的 summary adapter/原生 guard 正在独立收口；本节只裁决该后继的最小持久结果，不表示源码、SQL、真实 PostgreSQL 崩溃恢复或正常服务已经通过。DeepAgents 0.6.6 的自动摘要先独立 `ainvoke`，再调用普通模型，后者返回后才产生 `_summarization_event`；现成功摘要的 usage/金融 ACK 可先于 graph checkpoint 提交，但 journal 没有摘要正文，因此原恢复正确停止且不重付，尚非可续跑。只承接已有 Agent model-call owner，不建第二 graph/state、后台摘要服务、通用响应缓存或新的系统权限。

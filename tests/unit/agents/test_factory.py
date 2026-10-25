@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from pydantic import SecretStr
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.outputs import ChatResult
@@ -168,6 +168,7 @@ def _factory(
     config: AppConfig | None = None,
     delivery: DeliveryClient | None = None,
     platform: WorkerPlatformRuntime | None = None,
+    checkpointer: InMemorySaver | None = None,
     isolate_model_call_gate_for_unrelated_unit_scope: bool = False,
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
@@ -209,7 +210,7 @@ def _factory(
             manifest=production_manifest(),
             subagent_catalog=build_subagent_catalog(None),
             toolbox=build_toolbox(fetch_allow_private=False, search=None),
-            checkpointer=InMemorySaver(),
+            checkpointer=checkpointer if checkpointer is not None else InMemorySaver(),
             run_repository=repository,
             model_call_repository=_UnusedModelCallRepository(),
             memory_store=InMemoryStore(),
@@ -2630,3 +2631,211 @@ async def test_trace_does_not_select_connections_and_empty_run_keeps_stable_mcp_
         assert factory.feature("chat").agents[0].mcp == ()
     finally:
         await handle.aclose()
+
+
+@pytest.mark.parametrize("backend", ["state", "local_shell"])
+@pytest.mark.parametrize("operation", ["write_file", "edit_file"])
+async def test_native_file_recovery_owns_state_changes_without_repeating_external_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    backend: Literal["state", "local_shell"],
+    operation: str,
+) -> None:
+    """A journal ACK may survive while the native tool node's checkpoint does not."""
+    from copy import deepcopy
+
+    from langchain.agents.middleware.types import ToolCallRequest
+    from langgraph.checkpoint.base import CheckpointTuple
+    from langgraph.types import Command
+
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.execution.protocols import AgentRunnable
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.policy import Permissions
+    from kokoro_agent.tools.middleware import ToolEffectJournalMiddleware
+
+    class BeforeToolCheckpoint(RuntimeError):
+        pass
+
+    saver = InMemorySaver()
+    agent = Agent(
+        key="file_recovery",
+        prompt="Write and read the owned file.",
+        backend=backend,
+        permissions=Permissions(filesystem="workspace_write"),
+    )
+    feature = Feature(key="file_recovery", agents=(agent,), entry_agent=agent.key)
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        FeatureCatalog((feature,)),
+        config=AppConfig.from_env({"KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path)}),
+        checkpointer=saver,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    config: RunnableConfig = {
+        "configurable": {"thread_id": "owned-file-checkpoint", "checkpoint_ns": ""},
+        "recursion_limit": 40,
+    }
+    turns = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": "/report.txt", "content": "owned before\n"},
+                    "id": "owned-write",
+                    "type": "tool_call",
+                }
+            ],
+        )
+    ]
+    if operation == "edit_file":
+        turns.append(
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "edit_file",
+                        "args": {
+                            "file_path": "/report.txt",
+                            "old_string": "before",
+                            "new_string": "after",
+                        },
+                        "id": "owned-edit",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        )
+    turns.extend(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read_file",
+                        "args": {"file_path": "/report.txt"},
+                        "id": "owned-read",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="Owned file read."),
+        ]
+    )
+    model = LocalFakeChatModel.with_script(turns)
+
+    def scripted_model(
+        _settings: ChatModelSettings,
+        _model: ModelConfig,
+        *,
+        model_clients: ModelHttpClients,
+    ) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", scripted_model)
+    durable: list[CheckpointTuple] = []
+    physical_calls = 0
+    original = ToolEffectJournalMiddleware.awrap_tool_call
+
+    async def crash_after_result(
+        middleware: ToolEffectJournalMiddleware,
+        call: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        async def observed_handler(
+            current: ToolCallRequest,
+        ) -> ToolMessage | Command[Any]:
+            nonlocal physical_calls
+            if current.tool_call["name"] == operation:
+                physical_calls += 1
+            return await handler(current)
+
+        result = await original(middleware, call, observed_handler)
+        if call.tool_call["name"] == operation and not durable:
+            # Capture only the public saver's already-durable records. A real
+            # abrupt exit cannot flush this task's pending files channel later.
+            durable.extend(deepcopy(list(saver.list(config))))
+            raise BeforeToolCheckpoint("owned crash boundary before tool checkpoint")
+        return result
+
+    monkeypatch.setattr(
+        ToolEffectJournalMiddleware, "awrap_tool_call", crash_after_result
+    )
+
+    async def invoke_native(runnable: AgentRunnable, payload: object) -> None:
+        run = await runnable.astream_events(
+            payload,
+            version="v3",
+            config=config,
+            transformers=[CustomTransformer],
+        )
+        async with run:
+            await asyncio.gather(
+                _collect_messages(run.messages),
+                _drain(run.tool_calls),
+                _drain(run.subagents),
+                _drain(run.custom),
+            )
+            assert await run.interrupted() is False
+
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    try:
+        with pytest.raises(BeforeToolCheckpoint):
+            await invoke_native(
+                handle.runnable,
+                {
+                    "messages": [
+                        HumanMessage(content="Write, then read the owned file.")
+                    ]
+                },
+            )
+    finally:
+        await handle.aclose()
+
+    assert durable
+    # Restore those actual durable records through the public saver API; do not
+    # retain later checkpoint writes made by graceful exception cleanup.
+    saver.delete_thread("owned-file-checkpoint")
+    for saved in reversed(durable):
+        saver.put(
+            saved.parent_config or config,
+            saved.checkpoint,
+            saved.metadata,
+            saved.checkpoint["channel_versions"],
+        )
+        task_writes: dict[str, list[tuple[str, Any]]] = {}
+        for task_id, channel, value in saved.pending_writes or ():
+            task_writes.setdefault(task_id, []).append((channel, value))
+        for task_id, writes in task_writes.items():
+            saver.put_writes(saved.config, writes, task_id)
+    restored = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    try:
+        pending = await restored.runnable.aget_state(config)
+        pending_messages: list[BaseMessage] = pending.values["messages"]
+        assert isinstance(pending_messages[-1], AIMessage)
+        assert pending_messages[-1].tool_calls[0]["name"] == operation
+        await invoke_native(restored.runnable, None)
+        result = await restored.runnable.aget_state(config)
+        native_messages: list[BaseMessage] = result.values["messages"]
+        messages = [
+            message for message in native_messages if isinstance(message, ToolMessage)
+        ]
+        read = next(message for message in messages if message.name == "read_file")
+        assert read.status == "success", read.text
+        assert (
+            "owned before" if operation == "write_file" else "owned after"
+        ) in read.text
+        # Native state writes must run again against the restored checkpoint.
+        # External workspace writes have already happened and must run only once.
+        assert physical_calls == (2 if backend == "state" else 1)
+    finally:
+        await restored.aclose()

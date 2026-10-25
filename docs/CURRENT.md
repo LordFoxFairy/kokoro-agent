@@ -1,3 +1,13 @@
+## 2026-10-25 StateBackend 原生文件 checkpoint 恢复修复（候选，正常未激活）
+
+实际生产 Factory 图在 tool journal 已确认而 files channel 尚未 checkpoint 的边界恢复时，write_file/edit_file 可能仅重放文本 ACK、丢失文件状态。现由受信 backend 装配仅为 StateBackend 原生文件写使用 checkpoint 重放，不将该类纯 channel 更新当外部副作用；MCP/deliver/外部 backend journal、lease、权限、审批与预算保持。真实缺陷 RED 2，完整生产图/持久 journal 边界及外部 effect-once 负控承接于现 factory/tool-journal 回归。ToolResultReview 独立文本缓存的恢复缺口仍存在（当前通用默认无 review_tools），未据此称全部策略恢复。
+
+Root 在真实独立 Git worktree、独立 frozen 依赖环境复核：lock、contract、标准 wheel/sdist build、全 Ruff 格式/lint、指定本环境 Pyright、相关131及默认2666项通过；860资源marker未选，1357既有上游warning保留，非MD停写输入无漂移。原始实测在 Root ignored agent-chain-normal-20261024/parallel-closure/recovery-probe/root-final-reviewed；尚未跑本次真实PG/进程终止恢复，不把 durable-saver 边界夹具称真实崩溃集成。无API、Schema、锁文件或资金变更。
+
+隔离环境踩坑如实保留：首次把候选 .venv 软链到正常环境，随后 frozen sync 曾短暂重绑正常 editable source；已删除仅候选软链、用原 frozen 配置恢复正常 binding，正常源码/进程未替换，再为候选建立真实独立 .venv。错误与恢复收据未覆盖；后续冻结环境必须先验证绝对路径非软链并以 set-e 阻断失败。未声称正常环境始终零变更。
+
+此修复改变原 recipe 输入；现正常 d64a46e 不加载本候选，dispatch=false、旧冻结 Run/10积分不变；不得把新源码用于旧冻结 permit 恢复。提交只表示候选已收口，正常新 Run、工具/产物/恢复与结算联合旅程仍待完成，未 push/PR/merge 或提升 Root gitlink。
+
 ## 2026-10-24 正常7.4已配对；生产Factory跨owner预检通过
 
 正常Agent HTTP/worker现已加载4c46ec6，BFFf71a179与App0d19bfd/a96c4a6已配对，派发仍false；下方“7.3／未配对”仅历史。普通会话已实际选择原QA Connection并验显式管理/新建清退。

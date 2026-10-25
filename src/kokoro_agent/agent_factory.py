@@ -288,6 +288,7 @@ async def build_deep_agent(
             request,
             lease,
             policy,
+            checkpoint_file_writes=agent.backend == "state",
         )
 
         def model_guard(peer_path: tuple[str, ...]) -> ModelCallRuntimeMiddleware:

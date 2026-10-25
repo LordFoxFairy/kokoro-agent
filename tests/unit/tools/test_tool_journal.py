@@ -13,6 +13,8 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from support.fakes import FakeRunRepository, request
 from kokoro_agent.clients.storage import StorageClientError
 from kokoro_agent.domain.run.repository import LeaseFence
+from kokoro_agent.policy import Permissions
+from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.middleware import (
     RunSupersededError,
     ToolEffectJournalMiddleware,
@@ -346,19 +348,53 @@ async def test_mcp_interrupt_keeps_unknown_outcome_and_never_reissues_call() -> 
     assert "unknown_outcome" in result.text and handler.calls == 0
 
 
-async def test_stale_generation_never_enters_tool_handler() -> None:
+@pytest.mark.parametrize("checkpoint_file_writes", [False, True])
+async def test_stale_generation_never_enters_tool_handler(
+    checkpoint_file_writes: bool,
+) -> None:
     store = FakeRunRepository()
     stale = await store.try_claim(request("rn"), "same-worker")
     assert stale is not None
     store.expired = [request("rn")]
     current = (await store.reclaim_expired("same-worker"))[0].lease
     assert current.generation > stale.generation
-    middleware = ToolEffectJournalMiddleware(
-        run_repository=store, run_id="rn", lease=stale
-    )
+    middleware = build_guard_chains(
+        store,
+        0,
+        request("rn"),
+        stale,
+        Permissions(),
+        checkpoint_file_writes=checkpoint_file_writes,
+    ).journal
     handler = _Handler("MUST NOT RUN")
 
     with pytest.raises(RunSupersededError):
         await middleware.awrap_tool_call(_request(), handler)
 
     assert handler.calls == 0
+
+
+@pytest.mark.parametrize("name", ["mcp_call", "deliver"])
+async def test_state_file_assembly_keeps_external_effect_journal(name: str) -> None:
+    store = FakeRunRepository()
+    run = request("rn")
+    lease = await store.try_claim(run)
+    assert lease is not None
+    middleware = build_guard_chains(
+        store, 0, run, lease, Permissions(), checkpoint_file_writes=True
+    ).journal
+    content = (
+        '{"status":"delivered","artifact_id":"artifact-1","asset_id":"asset-1",'
+        '"artifact_kind":"document","path":"/report.pdf","title":"Report",'
+        '"mime":"application/pdf","size":12,"content_hash":"abc123","note":""}'
+        if name == "deliver"
+        else "owned MCP result"
+    )
+    handler = _Handler(content)
+    first = await middleware.awrap_tool_call(_request(name), handler)
+    replay = await middleware.awrap_tool_call(_request(name), handler)
+    assert isinstance(first, ToolMessage) and isinstance(replay, ToolMessage)
+    assert first.text == replay.text == content
+    assert first.status == replay.status == "success"
+    assert handler.calls == 1
+    assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"

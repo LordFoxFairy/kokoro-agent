@@ -3663,3 +3663,10 @@ crypto 前拒绝，且不截断或转成 string。
 A2b separates three lifetimes: `execution_proof_keys.py` owns worker-only private PKCS#8 loading and signer construction; `interfaces/http/execution_proof_jwks.py` owns an anchored immutable public-ring snapshot; `interfaces/http/main.py` owns only HTTP business configuration and the public descriptor. The HTTP process never imports worker, private loader, signer, provider, model, sandbox, or MCP configuration. The OpenAPI `1.1.0` JWKS route is dispatched before body/auth/identity/dependency creation. Private parent directories remain a deployment-trusted secret-mount boundary; the public ring performs the stricter anchored parent walk.
 
 A2c adds exactly one production `issue_execution_proof` caller inside the standalone supplier. IAM verification and the inactive Platform owner contract have since shipped in their owner repositories; worker signer gating, Agent Platform transport/call sites, and the real cross-owner transport remain later work.
+## 2026-10-25 模型建连重试与handler绝对期限
+
+沿现 factory/call runtime 最小修复：正式 OpenAI-compatible SDK request_timeout 显式 connect5/read120/write30/pool5；native AsyncHTTPTransport retries=1只包 httpcore TCP/TLS 建立循环，SDK max_retries仍0，HTTP已经write后的失败不重放。transport保 trust_env=false、TLS验证与原HTTP/limits默认；main和原生summary仍共享该peer owned clients，原close/usage tap不变。
+
+现每个 middleware handler 用一个600秒绝对期限，不按chunk、阶段或native connect retry重置；包括handler内最终request hook的prepare/授权，但不包之后的seal/drain。handler可能先调用native summary，故外层覆盖摘要等待（包括其独立seal）而不冒称已经存在main物理attempt；内层拥有独立原身份/usage/capsule，不能给外层续期。专属内部deadline异常只在本期限实际expired转换，经现失败归码为model_unavailable/false；普通TimeoutError、外部取消、失租、denial及secondary金融失败保持原优先。已有未完整usage保unknown/pending，旧R5/账本不改、不重派。
+
+验证用锁定真实SDK、生产final hook/middleware、隔离loopback/受控低层backend证明最终Request.extensions四值、TCP/TLS connect一次重连与唯一POST/准入/封口、read/write/protocol/5xx零重发、共享客户端、绝对总预算及取消/denial/失租/封口边界。低层故障注入不冒真实供应商或正常资金闭环；Root独占Git/正常激活。600秒是新增有限wall策略，不声称等同当前显式None或对全部合法超长推理零影响。

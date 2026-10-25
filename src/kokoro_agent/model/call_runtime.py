@@ -25,6 +25,7 @@ from kokoro_agent.model.call_artifacts import (
 )
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
+    ModelCallDeadlineExceeded,
     ModelCallInputInvalid,
     ModelCallRepository,
     PrepareModelCall,
@@ -44,6 +45,7 @@ from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
 
 _CALL_NAMESPACE = UUID("a06d00e2-defa-5fe3-8f2c-10ecb19c1161")
 _ATTEMPT_NAMESPACE = UUID("64675e75-8af6-50b4-ade3-d413e5144dc9")
+_MODEL_HANDLER_TIMEOUT_SECONDS = 600.0
 
 _LOGGER = logging.getLogger(__name__)
 _SDK_CAUSE_CATEGORIES: tuple[tuple[type[BaseException], str], ...] = (
@@ -352,7 +354,31 @@ class ModelCallRuntimeMiddleware(AgentMiddleware):
         try:
             try:
                 with capture:
-                    response = await handler(request)
+                    deadline = asyncio.timeout(_MODEL_HANDLER_TIMEOUT_SECONDS)
+                    handler_failure: BaseException | None = None
+                    try:
+                        async with deadline:
+                            try:
+                                response = await handler(request)
+                            except BaseException as error:
+                                handler_failure = error
+                                raise
+                    except TimeoutError as error:
+                        if error is handler_failure or not deadline.expired():
+                            raise
+                        if scope.denial is not None:
+                            raise scope.denial from None
+                        raise ModelCallDeadlineExceeded(
+                            "model handler deadline exceeded"
+                        ) from None
+                    # A handler that suppressed its cancellation still cannot
+                    # return a late response as a successful model call.
+                    if deadline.expired():
+                        if scope.denial is not None:
+                            raise scope.denial from None
+                        raise ModelCallDeadlineExceeded(
+                            "model handler deadline exceeded"
+                        )
                     scope.require_active()
                     if scope.denial is not None:
                         raise scope.denial

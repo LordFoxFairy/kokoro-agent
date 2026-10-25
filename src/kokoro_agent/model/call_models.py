@@ -292,6 +292,10 @@ class ModelCallAuthorizationUnavailable(RuntimeError):
     """No published Billing admission consumer can authorize this attempt."""
 
 
+class ModelCallDeadlineExceeded(TimeoutError):
+    """Only this model handler's absolute budget expired; never a retry permit."""
+
+
 class ModelCallSettlementPending(ModelCallAuthorizationUnavailable):
     """The exact sealed event has an authenticated pending financial ACK. Never retry dispatch."""
 

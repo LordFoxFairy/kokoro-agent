@@ -103,6 +103,23 @@ def test_confirmed_pending_ack_is_nonretryable_even_with_a_default_failure_code(
     )
 
 
+def test_only_owned_handler_deadline_is_nonretryable_model_unavailable() -> None:
+    from kokoro_agent.model.call_models import ModelCallDeadlineExceeded
+
+    error = ModelCallDeadlineExceeded()
+    assert failure_code(error) == "model_unavailable"
+    defaults: tuple[Literal["assembly_failed", "internal_error"], ...] = (
+        "assembly_failed",
+        "internal_error",
+    )
+    for default in defaults:
+        assert run_failed_payload(error, code=default) == RunFailedPayload(
+            code="model_unavailable", retryable=False
+        )
+    ordinary = TimeoutError("unrelated operation")
+    assert failure_code(ordinary) == "internal_error"
+
+
 @pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
 def test_sdk_transport_failure_is_nonretryable_model_unavailable(
     error_type: type[APIConnectionError],

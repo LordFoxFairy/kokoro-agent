@@ -96,6 +96,8 @@ class ModelHttpClients:
                 },
                 follow_redirects=False,
                 trust_env=False,
+                # Native connect-only retry, before any HTTP request bytes are sent.
+                transport=httpx.AsyncHTTPTransport(retries=1, trust_env=False),
             )
         except BaseException:
             sync.close()
@@ -308,6 +310,7 @@ def _build_openai_compatible_model(
         disable_streaming=settings.disable_streaming,
         max_retries=0,
         max_completion_tokens=clients.route.max_output_tokens,
+        timeout=httpx.Timeout(connect=5, read=120, write=30, pool=5),
         n=1,
         http_client=clients.sync,
         http_async_client=clients.async_client,

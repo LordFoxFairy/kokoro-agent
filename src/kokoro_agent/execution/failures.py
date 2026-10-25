@@ -9,6 +9,7 @@ from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
+    ModelCallDeadlineExceeded,
     ModelCallSettlementPending,
     ModelCallInputInvalid,
 )
@@ -42,7 +43,9 @@ def failure_code(error: BaseException) -> RunErrorCode:
         return "model_settlement_pending"
     if isinstance(error, ModelCallAuthorizationUnavailable):
         return "dependency_unavailable"
-    if isinstance(error, APIConnectionError | APITimeoutError):
+    if isinstance(
+        error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded
+    ):
         return "model_unavailable"
     if isinstance(error, ModelResolutionError):
         return _MODEL_FAILURE_CODES.get(error.code, "internal_error")
@@ -64,7 +67,9 @@ def run_failed_payload(
         return RunFailedPayload(code="model_settlement_pending", retryable=False)
     if isinstance(error, ModelCallAuthorizationUnavailable):
         return RunFailedPayload(code="dependency_unavailable", retryable=False)
-    if isinstance(error, APIConnectionError | APITimeoutError):
+    if isinstance(
+        error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded
+    ):
         # A transport failure never grants permission to retry dispatched work.
         return RunFailedPayload(code="model_unavailable", retryable=False)
     typed = isinstance(error, ModelResolutionError)

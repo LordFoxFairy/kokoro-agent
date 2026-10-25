@@ -19,6 +19,7 @@ import pytest
 from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
 from kokoro_agent.model.call_models import ModelCallInputInvalid, ModelCallRepository
+import kokoro_agent.model.call_runtime as call_runtime
 from kokoro_agent.model.call_runtime import (
     ModelCallRuntimeMiddleware,
     reject_final_model_request,
@@ -177,6 +178,163 @@ async def _invoke_gate_failure(
             await task
         await scope.settle(cancel_active=False, primary=captured.value)
     return captured.value
+
+
+async def test_handler_uses_one_absolute_budget_not_one_per_progress_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        call_runtime, "_MODEL_HANDLER_TIMEOUT_SECONDS", 0.025, raising=False
+    )
+    steps: list[int] = []
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        for index in range(8):
+            await asyncio.sleep(0.01)
+            steps.append(index)
+        raise AssertionError("handler exceeded its total budget")
+
+    error = await _invoke_gate_failure(handler)
+    assert type(error).__name__ == "ModelCallDeadlineExceeded"
+    assert len(steps) < 8
+
+
+async def test_production_handler_budget_survives_599_seconds_but_expires_at_601(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    offset = 0.0
+    reached_599 = False
+    monkeypatch.setattr(loop, "time", lambda: real_time() + offset)
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        nonlocal offset, reached_599
+        try:
+            offset = 599
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            reached_599 = True
+            offset = 601
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            raise AssertionError("production 600 second budget did not expire")
+        finally:
+            offset = 0
+
+    error = await _invoke_gate_failure(handler)
+    assert reached_599
+    assert type(error).__name__ == "ModelCallDeadlineExceeded"
+
+
+async def test_inner_timeout_error_is_not_the_handler_deadline() -> None:
+    error = TimeoutError("inner operation, not the model handler budget")
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        raise error
+
+    assert await _invoke_gate_failure(handler) is error
+
+
+async def test_handler_own_timeout_during_deadline_cleanup_keeps_its_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(call_runtime, "_MODEL_HANDLER_TIMEOUT_SECONDS", 0.01)
+    error = TimeoutError("handler's own timeout during cleanup")
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        try:
+            await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise error from None
+        raise error
+
+    assert await _invoke_gate_failure(handler) is error
+
+
+async def test_handler_suppressing_deadline_cancel_cannot_return_late_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(call_runtime, "_MODEL_HANDLER_TIMEOUT_SECONDS", 0.01)
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        try:
+            await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            return ModelResponse(result=[])
+        raise AssertionError("deadline did not cancel the handler")
+
+    error = await _invoke_gate_failure(handler)
+    assert type(error).__name__ == "ModelCallDeadlineExceeded"
+
+
+async def test_handler_cancellation_remains_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        call_runtime, "_MODEL_HANDLER_TIMEOUT_SECONDS", 0.01, raising=False
+    )
+    error = asyncio.CancelledError()
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        raise error
+
+    assert isinstance(await _invoke_gate_failure(handler), asyncio.CancelledError)
+
+
+async def test_recorded_denial_keeps_priority_when_handler_deadline_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        call_runtime, "_MODEL_HANDLER_TIMEOUT_SECONDS", 0.01, raising=False
+    )
+    denial = ModelCallInputInvalid("original authority denial")
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        try:
+            reject_final_model_request(denial)
+        except ModelCallInputInvalid:
+            pass
+        await asyncio.sleep(0.05)
+        raise AssertionError("budget did not cancel the handler")
+
+    assert await _invoke_gate_failure(handler) is denial
+
+
+async def test_lost_authority_raised_during_deadline_cleanup_is_not_reclassified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallAuthorityLost
+
+    monkeypatch.setattr(call_runtime, "_MODEL_HANDLER_TIMEOUT_SECONDS", 0.01)
+    lost = ModelCallAuthorityLost("original lease loss")
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        try:
+            await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise lost from None
+        raise AssertionError("deadline did not cancel the handler")
+
+    assert await _invoke_gate_failure(handler) is lost
+
+
+async def test_external_cancel_racing_own_deadline_still_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(call_runtime, "_MODEL_HANDLER_TIMEOUT_SECONDS", 0.01)
+
+    async def handler(_request: ModelRequest) -> ModelResponse:
+        try:
+            await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            owner = asyncio.current_task()
+            assert owner is not None
+            owner.cancel()
+            raise
+        raise AssertionError("deadline did not cancel the handler")
+
+    assert isinstance(await _invoke_gate_failure(handler), asyncio.CancelledError)
 
 
 def _diagnostic(caplog: pytest.LogCaptureFixture) -> str:

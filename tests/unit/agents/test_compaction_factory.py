@@ -430,7 +430,8 @@ async def _handle(
 
     class ControlledAsyncClient(httpx.AsyncClient):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            super().__init__(*args, **kwargs, transport=httpx.MockTransport(respond))
+            kwargs["transport"] = httpx.MockTransport(respond)
+            super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", ControlledAsyncClient)
     config = AppConfig.from_env(

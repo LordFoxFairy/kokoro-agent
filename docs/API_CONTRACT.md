@@ -1866,3 +1866,8 @@ resource/provider/receipt policy；任一依赖失败都不得复用旧 allow/pr
 Exact anonymous `GET|HEAD /v1/execution-proof/jwks` returns the precomputed RFC 8785 JWK set as `application/jwk-set+json`; GET and HEAD share representation status/type/cache/length and HEAD writes no body. Query markers, transfer/expect framing, identity-header presence, and any content length other than one exact OWS-trimmed `0` are `400 execution_proof_jwks_invalid_request`. Other methods are `405 execution_proof_jwks_method_not_allowed` with `Allow: GET, HEAD`; missing/invalid ring is `503 execution_proof_jwks_unavailable`. All responses are `no-store`, without ETag, 304, redirect, bearer, tenant, or database dependency.
 
 Launch identity remains trusted `X-Kokoro-*` headers. It is not accepted from the launch body. The standalone A2c supplier adds no HTTP wire; IAM verifier, Platform proof wire, production composition, and real transport are not part of HTTP `1.1.0`.
+## 2026-10-25 模型网络有限期限（既定实施门）
+
+正式 OpenAI-compatible 路由显式传 SDK `request_timeout=httpx.Timeout(connect=5, read=120, write=30, pool=5)`，最终 HTTPX request extensions 必须保留四值。SDK whole-request `max_retries=0`；owned 异步 HTTPX transport 仅设置 native connect retries=1，最多重建一次未完成 TCP/TLS 的连接，不重放已经开始写入的 POST，也不因 read/write/protocol/HTTP status 重新发送。保持最终请求准入、凭据、证书验证、禁环境代理/重定向和同流 usage hook。
+
+每次现 model-call middleware 的 handler 区间共用一个绝对600秒期限，不含该scope之后的seal/drain。若 handler 包含原生摘要，外层期限包含这段工作及摘要自身seal，内层摘要期限不延长外层；外层尚无最终请求时不冒记主模型已派发，摘要独立 scope/capsule/usage 不合并。只有本期限自身到期才产生专属 typed `model_unavailable/retryable=false`；内层普通 TimeoutError、外部取消、失租和原 denial 保持原分类/优先。超时仍封存实际不完整 usage 为 unknown/pending，不补零、不释放为免费、不重新派发旧 failed attempt。无新 Schema、wire、配置项或依赖；正常激活与新Run验收由Root另控。

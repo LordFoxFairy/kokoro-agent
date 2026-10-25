@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kokoro:agent:model-call-capacity-guarantee:1.0.0",
+  "title": "ModelCallCapacityGuarantee",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_version",
+    "owner",
+    "guarantee_id",
+    "profile_id",
+    "trust_class",
+    "protocol",
+    "connection_type",
+    "endpoint",
+    "request_model",
+    "context_window",
+    "max_output_tokens",
+    "unit",
+    "n",
+    "stream",
+    "service_tier",
+    "store",
+    "roles",
+    "request_fields",
+    "joint_constraints",
+    "unsupported_policy",
+    "uncertain_result_policy",
+    "sunset",
+    "evidence_checked_on",
+    "enforcement_revision",
+    "usage_semantics",
+    "normalization_owner",
+    "normalization_version",
+    "normalization_manifest_aggregate_sha256",
+    "evidence_version",
+    "evidence_sha256"
+  ],
+  "properties": {
+    "artifact_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "minLength": 1,
+      "maxLength": 5
+    },
+    "owner": {
+      "type": "string",
+      "const": "kokoro-agent",
+      "minLength": 1,
+      "maxLength": 12
+    },
+    "guarantee_id": {
+      "type": "string",
+      "const": "openai-gpt4o-20240806-text-standard-v1",
+      "minLength": 1,
+      "maxLength": 38
+    },
+    "profile_id": {
+      "type": "string",
+      "const": "openai_chat_completions_capacity_v1",
+      "minLength": 1,
+      "maxLength": 35
+    },
+    "trust_class": {
+      "type": "string",
+      "const": "provider-documented/Agent-enforced",
+      "minLength": 1,
+      "maxLength": 34
+    },
+    "protocol": {
+      "type": "string",
+      "const": "openai_chat_completions",
+      "minLength": 1,
+      "maxLength": 23
+    },
+    "connection_type": {
+      "type": "string",
+      "const": "direct",
+      "minLength": 1,
+      "maxLength": 6
+    },
+    "endpoint": {
+      "type": "string",
+      "const": "https://api.openai.com/v1/chat/completions",
+      "minLength": 1,
+      "maxLength": 42
+    },
+    "request_model": {
+      "type": "string",
+      "const": "gpt-4o-2024-08-06",
+      "minLength": 1,
+      "maxLength": 17
+    },
+    "context_window": {
+      "type": "integer",
+      "const": 128000
+    },
+    "max_output_tokens": {
+      "type": "integer",
+      "const": 16384
+    },
+    "unit": {
+      "type": "string",
+      "const": "token",
+      "minLength": 1,
+      "maxLength": 5
+    },
+    "n": {
+      "type": "integer",
+      "const": 1
+    },
+    "stream": {
+      "type": "boolean",
+      "const": false
+    },
+    "service_tier": {
+      "type": "string",
+      "const": "default",
+      "minLength": 1,
+      "maxLength": 7
+    },
+    "store": {
+      "type": "boolean",
+      "const": false
+    },
+    "roles": {
+      "type": "array",
+      "const": [
+        "system",
+        "user",
+        "assistant"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "request_fields": {
+      "type": "array",
+      "const": [
+        "model",
+        "messages",
+        "n",
+        "max_completion_tokens",
+        "stream",
+        "service_tier",
+        "store"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "minItems": 7,
+      "maxItems": 7
+    },
+    "joint_constraints": {
+      "type": "array",
+      "const": [
+        "0<=P<=128000",
+        "0<=O<=M<=16384",
+        "total=P+O",
+        "K+U=P",
+        "R+V=O"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "minItems": 5,
+      "maxItems": 5
+    },
+    "unsupported_policy": {
+      "type": "string",
+      "const": "fail_closed_before_prepare",
+      "minLength": 1,
+      "maxLength": 26
+    },
+    "uncertain_result_policy": {
+      "type": "string",
+      "const": "unknown_no_retry_no_automatic_release",
+      "minLength": 1,
+      "maxLength": 37
+    },
+    "sunset": {
+      "type": "string",
+      "const": "2027-01-14T00:00:00Z",
+      "minLength": 1,
+      "maxLength": 20
+    },
+    "evidence_checked_on": {
+      "type": "string",
+      "const": "2026-10-23",
+      "minLength": 1,
+      "maxLength": 10
+    },
+    "enforcement_revision": {
+      "type": "string",
+      "const": "agent-final-wire-text-v1",
+      "minLength": 1,
+      "maxLength": 24
+    },
+    "usage_semantics": {
+      "type": "string",
+      "const": "cached_input_subset_of_prompt;reasoning_subset_of_completion;no_extra_cache_write_fee_for_fixed_4o;unknown_categories_unsupported",
+      "minLength": 1,
+      "maxLength": 129
+    },
+    "normalization_owner": {
+      "type": "string",
+      "const": "kokoro-agent",
+      "minLength": 1,
+      "maxLength": 12
+    },
+    "normalization_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "minLength": 1,
+      "maxLength": 5
+    },
+    "normalization_manifest_aggregate_sha256": {
+      "type": "string",
+      "const": "ecd30d1908f410eed29181c9f52669f824312bf3a2e3874153d990b95fe58b91",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "evidence_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "minLength": 1,
+      "maxLength": 5
+    },
+    "evidence_sha256": {
+      "type": "string",
+      "const": "e8ddcfc7e711d95c5324d319bfe254f7e15008708546616199748c7739d0201f",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  },
+  "$defs": {
+    "ReviewedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_version",
+        "owner",
+        "profile_id",
+        "checked_on",
+        "trust_scope",
+        "official_urls",
+        "facts"
+      ],
+      "properties": {
+        "artifact_version": {
+          "type": "string",
+          "const": "1.0.0",
+          "minLength": 1,
+          "maxLength": 5
+        },
+        "owner": {
+          "type": "string",
+          "const": "kokoro-agent",
+          "minLength": 1,
+          "maxLength": 12
+        },
+        "profile_id": {
+          "type": "string",
+          "const": "openai_chat_completions_capacity_v1",
+          "minLength": 1,
+          "maxLength": 35
+        },
+        "checked_on": {
+          "type": "string",
+          "const": "2026-10-23",
+          "minLength": 1,
+          "maxLength": 10
+        },
+        "trust_scope": {
+          "type": "string",
+          "const": "Documented normal provider usage; not arbitrary provider violation or anomalous invoice guarantee",
+          "minLength": 1,
+          "maxLength": 97
+        },
+        "official_urls": {
+          "type": "array",
+          "const": [
+            "https://developers.openai.com/api/docs/models/gpt-4o",
+            "https://developers.openai.com/api/docs/guides/conversation-state",
+            "https://developers.openai.com/api/docs/guides/token-counting",
+            "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
+            "https://developers.openai.com/api/docs/guides/prompt-caching",
+            "https://developers.openai.com/api/docs/deprecations"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "maxItems": 6
+        },
+        "facts": {
+          "type": "array",
+          "const": [
+            "Fixed snapshot gpt-4o-2024-08-06 documents context window 128000 and maximum output 16384 tokens.",
+            "Context contains input, output and any reasoning; using 128000 input plus the final output cap is a conservative joint bound.",
+            "max_completion_tokens includes visible output and reasoning tokens, not only displayed text.",
+            "Cached prompt tokens are a subset of prompt tokens; reasoning tokens are a subset of completion tokens.",
+            "Only direct text Chat Completions, n=1, nonstream, default tier, store=false and no tools, prediction, multimodal or extra charge categories are admitted.",
+            "The fixed snapshot is scheduled for removal on 2027-01-14; technical validity ends no later than 2027-01-14T00:00:00Z.",
+            "These are reviewed documented normal-provider facts, not account availability, provider violation protection or an absolute anomalous-invoice guarantee."
+          ],
+          "items": {
+            "type": "string"
+          },
+          "minItems": 7,
+          "maxItems": 7
+        }
+      }
+    }
+  }
+}

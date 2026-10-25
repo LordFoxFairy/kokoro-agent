@@ -119,16 +119,35 @@ kokoro_agent = ["prompts/*.md"]
   "contract/usage/v2/vectors.json",
   "contract/usage/v2/manifest.json",
 ]
+"share/kokoro-agent/audit/contract/model-call-bound/v1" = [
+  "contract/model-call-bound/v1/schema.json",
+  "contract/model-call-bound/v1/vectors.json",
+  "contract/model-call-bound/v1/manifest.json",
+]
+"share/kokoro-agent/audit/contract/model-call-capacity-guarantee/v1" = [
+  "contract/model-call-capacity-guarantee/v1/evidence.json",
+  "contract/model-call-capacity-guarantee/v1/schema.json",
+  "contract/model-call-capacity-guarantee/v1/guarantee.json",
+  "contract/model-call-capacity-guarantee/v1/vectors.json",
+  "contract/model-call-capacity-guarantee/v1/manifest.json",
+]
 "share/kokoro-agent/audit/src/kokoro_agent/model" = [
+  "src/kokoro_agent/model/call_bound.py",
+  "src/kokoro_agent/model/capacity_guarantee.py",
+  "src/kokoro_agent/model/factory.py",
   "src/kokoro_agent/model/usage_evidence.py",
   "src/kokoro_agent/model/usage_evidence_v2.py",
 ]
 "share/kokoro-agent/audit/scripts" = [
+  "scripts/generate_model_call_bound.py",
+  "scripts/generate_model_call_capacity_guarantee.py",
   "scripts/generate_model_usage_models.py",
   "scripts/generate_model_usage_v2_models.py",
   "scripts/generate_failure_models.py",
 ]
 "share/kokoro-agent/audit/src/kokoro_agent" = [
+  "src/kokoro_agent/model_call_bound_contract.py",
+  "src/kokoro_agent/model_call_capacity_guarantee_contract.py",
   "src/kokoro_agent/system_consumer_contract.py",
   "src/kokoro_agent/usage_history_contract.py",
   "src/kokoro_agent/model_usage_contract.py",
@@ -138,6 +157,8 @@ kokoro_agent = ["prompts/*.md"]
   "src/kokoro_agent/distribution_assets.py",
 ]
 "share/kokoro-agent/audit/src/kokoro_agent/protocol" = [
+  "src/kokoro_agent/protocol/model_call_bound_generated.py",
+  "src/kokoro_agent/protocol/model_call_capacity_guarantee_generated.py",
   "src/kokoro_agent/protocol/model_usage_generated.py",
   "src/kokoro_agent/protocol/model_usage_v2_generated.py",
   "src/kokoro_agent/protocol/control.py",

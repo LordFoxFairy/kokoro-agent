@@ -1,3 +1,11 @@
+## NEXT-AUTH-D2
+
+当前HTTP为7.1.0，新增独立model-call-bound/v1资源及专用Billing只读GET。正常生成器scripts/generate_model_call_bound.py与现checker/发行资源清单闭合schema、vectors、生成模型和源摘要；旧usage/proof资源保护。该能力不是Billing grant成功或模型执行许可。
+
+## NEXT-AUTH-D1 capacity guarantee（候选）
+
+`model-call-capacity-guarantee/v1/` 是Agent owner的独立1.0.0技术保证，非授权grant。schema/guarantee/evidence/vectors/manifest随发行携带；`scripts/generate_model_call_capacity_guarantee.py --check` 验生成模型、canonical payload与原始source摘要，现contract checker正常调用。未知身份/额外字段/非canonical bytes拒绝。固定4o puretext profile不支持默认工具任务，正常harddeny保持；既有model-call-bound/v1 reader/prepare为D2后继，usage/proof机器面不改。
+
 # kokoro-agent 契约治理
 
 ## Owner

@@ -24,6 +24,12 @@ from kokoro_agent.model.usage_observation import (
 
 
 from kokoro_agent.model.request_profile import validate_request_profile
+from kokoro_agent.model.capacity_guarantee import (
+    CapacityGuaranteeInvalid,
+    matches_capacity_route,
+    load_capacity_guarantee,
+    validate_capacity_request,
+)
 from kokoro_agent.model.call_runtime import (
     freeze_final_model_request,
     reject_final_model_request,
@@ -135,6 +141,22 @@ class ModelHttpClients:
             reject_final_model_request(
                 ModelCallInputInvalid("model request must be materialized")
             )
+        if matches_capacity_route(self.route):
+            try:
+                validate_capacity_request(
+                    route=self.route,
+                    raw=raw,
+                    method=request.method,
+                    endpoint=str(request.url),
+                    headers=request.headers.multi_items(),
+                    guarantee=load_capacity_guarantee(),
+                )
+            except CapacityGuaranteeInvalid:
+                reject_final_model_request(
+                    ModelCallInputInvalid("model capacity guarantee is unavailable")
+                )
+            except ModelCallInputInvalid as error:
+                reject_final_model_request(error)
         await freeze_final_model_request(
             route=self.route,
             raw=raw,
@@ -287,6 +309,23 @@ def _build_openai_compatible_model(
     settings: ChatModelSettings, model: ModelConfig, clients: ModelHttpClients
 ) -> BaseChatModel:
     """One protocol implementation for direct and optional LiteLLM connections."""
+    if matches_capacity_route(clients.route):
+        return ChatOpenAI(
+            model=model.name,
+            api_key=clients.credential,
+            base_url=clients.route.connection.base_url,
+            disable_streaming=True,
+            streaming=False,
+            stream_usage=False,
+            service_tier="default",
+            store=False,
+            max_retries=0,
+            max_completion_tokens=clients.route.max_output_tokens,
+            n=1,
+            http_client=clients.sync,
+            http_async_client=clients.async_client,
+            use_responses_api=False,
+        )
     return ChatOpenAI(
         model=model.name,
         api_key=clients.credential,

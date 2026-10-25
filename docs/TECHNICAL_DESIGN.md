@@ -1,3 +1,21 @@
+## NEXT-AUTH-D2：bound候选实现（2026-10-23）
+
+本片实现既有R252的独立model-call-bound/v1、普通model/call_bound.py、prepare同事务DB毫秒时钟冻结与exact replay，以及专用Billing reader。新增六列均NOT NULL无默认；DB约束将digest绑定原BYTEA的SHA-256，canonical/联合身份由严格codec负责。reader单个有界只读快照校验当前Run/fence；旧receipt不是当前授权。HTTP仅新增7.1.0的具名GET，旧十path/components语义保持。真实host仅本GET按wire真实header存在性投影，显式空身份覆盖仍拒绝，旧route不改。
+
+支持机制测试以真实production middleware、官方SDK闭集、受控零发送transport与真实PG覆盖锁/取消/重放；默认DeepAgents带tools请求明确unsupported、零attempt且Run终态，不冒默认任务可运行。Billing消费、授权grant、正常Agent启用仍OPEN；原D1及下述历史状态不是本片完整链路验收。
+
+## NEXT-AUTH-D1：capacity guarantee 与窄 factory profile（2026-10-23，候选待审）
+
+沿下方R252/D0裁决，本片只实现Agent发布的 `model-call-capacity-guarantee/v1`，不是grant或bound reader。`model/capacity_guarantee.py` 为显式发行资源读取、canonical SHA身份校验及最终wire闭集；`model_call_capacity_guarantee_contract.py` 与具名生成器从schema正常生成protocol模型和source manifest，原usage/proof生成器及bytes不改。五机器文件随wheel分发，checker验证原始文件摘要、canonical payload摘要及原有全部契约；无import-time资源读取、邻仓或网络回退。
+
+唯一profile固定direct OpenAI Chat Completions、gpt-4o-2024-08-06、n=1、非stream、default tier、store=false、字符串system/user/assistant消息。现factory仅精确System route匹配分支配置这些SDK参数、删除该分支不支持的reasoning_effort；非匹配provider构造保持。owned async HTTP hook先验证实际materialized wire，再执行原freeze/claimant/harddeny，不提供新的发送许可。工具、prediction、多模态、额外字段或tier均拒绝。该puretext profile不适用于默认DeepAgents bind_tools，不切换默认模型。
+
+保证另绑定既有usage normalization owner=kokoro-agent/version1.0.0及manifest aggregate ecd30d1908f410eed29181c9f52669f824312bf3a2e3874153d990b95fe58b91，原normalization不编辑。evidence.json为Agent审核事实包（版本/日期/官方URL/有限事实/信任scope），canonical SHA被保证绑定，不宣称网页全文摘要。成本验证/加载失败通过原reject_final_model_request登记scope.denial，SDK包错或handler吞错也保typed denial，零prepare/零send。
+
+技术类为provider-documented/Agent-enforced：128000输入保守上界与16384输出最大cap；cached input是prompt子集，reasoning是completion子集，joint约束不重复计费。官方依据只是来源说明，不是artifact身份或任意异常账单保证。技术有效期不晚于2027-01-14T00:00:00Z；纯clock校验接收显式可信时间，D2 prepare再用同一DB instant限定bound expiry。unknown不得夹断、重发或自动release。
+
+SDK观察stub仅证明锁定SDK最终序列化字段与零transport；另沿原真实production hook/第二claimant/取消测试证明harddeny保留。D2的bound artifact、prepare六列、reader与Billing消费仍OPEN，正常Agent仍false，未运行模型、工具、PG/Redis或资金。
+
 ## 内部通知重试收敛（2026-10-19，本地验证，未激活）
 
 沿已接受ADR-003：PG Run/outbox/Chat是事实，Redis只作可丢失通知，BFF通过HTTP Chat补读。只退休published等待外部ACK的周期重发及其宽限配置/返回字段；queued仍按原identity先恢复Chat再发布、成功才标published。started/delivery保原两事务补偿，terminal保原原子提交；control私有回执不冒公开Chat。
@@ -226,32 +244,42 @@ loader/safe summary与server具名helper，worker不消费。认证先于tenant/
   再过contract/check、Ruff、Pyright、pure、真实PG/HTTP acceptance与build。Mock、直接INSERT或共享BFF secret成功都不算。
 - 本片通过也只发布evidence read；Billing admission/settlement、Agent Billing client、provider、ACK、BFF/Web与实际扣费继续OPEN。
 
-## R252-AGENT-BOUND-D0：逐 attempt 保守执行界（2026-10-05；仅设计）
+## R252-AGENT-BOUND-D0：Agent 技术保证与逐 attempt 执行界（2026-10-23；仅设计）
 
-**当前与目标。** 正式基线为 `fc379da2b09e08ca0349f249902f587d72efbc8f`。现 final HTTPX hook 已冻结 final-request version/digest、`n=1` 与实际 `max_completion_tokens`，System 3.0 同一 immutable revision 已给 `context_window/max_output_tokens`，prepare 已在 own PostgreSQL Run 锁下以 DB clock 核当前 lease；但没有 preauthorization bound artifact、有限 `valid_until`、Billing 可认证读取，也没有证明所绑gateway/model的billable input与inclusive category服从这些数值的可信保证。目标不是精确 tokenizer/count：首版目标为 `openai_chat_completions_capacity_v1` 的 **capacity-derived conservative joint constraints**；System 3.0 provenance只证明目录来源与immutable revision，不能单独把目录cap提升为可收费exposure。缺下述保证或正式 Billing consumer仍在hook后typed failure、0 provider send。
+**当前尚未实施。** 基线为 `9a2679f60f501a3fbe1eee7d0a6bb4f48ec7f243`；本阶段只收敛三设计，不修改源码、SQL、机器 artifact、测试或配置。现最终 HTTPX hook/prepare 已存在，但 bound producer/reader、Billing grant consumer尚未实现，harddeny保留，正常Agent仍false。下方2026-10-05及System3记录为历史，不覆盖本节目标。
 
-唯一 bound 在现 prepare 根事务内与 attempt 首次插入一起生成、sealed且永久不可改；`bound_ref = "mcb_" + lowercase attempt UUID`，不依赖、也不包含后继 Billing `request_ref`。artifact canonical payload闭合 tenant/run/call/attempt/ordinal、原 lease owner/generation、现完整 planned binding及digest、final-request binding version/digest/profile、System 3.0固定provenance、joint constraints、revision=`1`、`sealed=true`、DB `sealed_at`和有限`valid_until`；外部digest为原canonical RFC8785 bytes的SHA-256，不把digest写进自身payload。planned ref同样由attempt确定为`mpb_<attempt UUID>`，复用现planned canonical bytes/digest；reader一次返回planned与bound两份原bytes，不复制第二planned DTO。
+Root已批准Agent现model-call owner发布versioned capacity-and-usage-semantics guarantee，信任类为 **provider-documented/Agent-enforced**：正式provider文档给固定snapshot容量与usage语义，Agent在最终materialized wire与单次dispatch边界执行closed profile。不是provider违约或任意异常账单绝对封顶保证；不需要新外部owner或本地tokenizer。System只选择受信连接/型号/revision，不凭配置整数制造guarantee。Billing仍独占商业mapping、rate/policy、quote、hold/grant与capture/release。
 
-joint constraints目标只允许unit=`token`：`0 <= input_total <= context_window`、`0 <= output_total <= final max_completion_tokens`、`total = input_total + output_total`，`input_cache_read`仅为`input_total`子集、`output_reasoning`仅为`output_total`子集；`input_cache_write`、未知category、未知模态/协议和无法证明的subset一律unsupported并在授权前fail closed。但生产artifact前必须先有**具名、可信、版本固定且绑定exact planned provider/model/gateway的 capacity-and-usage-semantics guarantee**，逐项证明billable input不超过context、output受final cap、cache/reasoning确为inclusive subset且没有未声明收费类别；Agent必须核其owner身份、version/digest与planned binding。当前System 3.0 artifact没有该保证，故当前bound producer与paid Admission正路必须保持不可用；本片不自行新增tokenizer/System合同、抓取浮动provider文档、接受YAML/header自报或编外凭据补洞。8 MiB JSON、字符数和Run budget也不能换算成token。保证正式发布后，Billing仍须在自己的完整tariff上按联合约束求安全上界，禁止把各maxima拼成actual vector；价格、environment、pricing account、model pricing version、汇率、normalization、quote TTL与金额均不进入本artifact。
+首版固定direct `https://api.openai.com/v1/chat/completions`、`gpt-4o-2024-08-06`、`n=1`、`stream=false`、`service_tier=default`、`store=false`；messages仅system/user/assistant角色与字符串content。未知字段、tools/functions/tool_calls/role=tool、多模态、prediction、stream_options、cache options及额外tier拒绝；不允许客户端header或YAML自报保证。实际锁定SDK最终wire允许集需后继真实机制测试固定。当前factory的reasoning_effort与流式选项仅在匹配profile分支窄收敛，不改其他provider，不切默认模型。**首版不支持默认DeepAgents bind_tools任务**；本地function definitions/tool_calls/tool-result的独立token-only扩展及每工具journal授权保持OPEN，不把tools泛开放或宣称默认聊天已运行。
 
-时间只量化一次：prepare事务把DB `clock_timestamp()`向下截断到唯一UTC毫秒值，原样同时用作persisted `prepared_at`与artifact `sealed_at`；`valid_until`把同锁内原始`lease_expires_at`也向下取整到不晚于原expiry的UTC毫秒，且量化后必须严格晚于sealed_at，否则fail closed。续租不延长旧bound。reader以同一向下毫秒规则取得新DB clock，要求Run仍非terminal、owner/generation仍等于artifact、当前lease未过期且向下量化的当前expiry不早于bound valid_until；stale/takeover/pause/expired均不给新授权读取成功。禁止Python/app clock、数据库隐式TIMESTAMPTZ(3)四舍五入或分别取两个now。artifact本身不回写、不按墙钟改状态，已成立的Billing Admission重放/结算语义仍由Billing永久snapshot裁决。
+技术约束unit=`token`：`0<=P<=128000`、`0<=O<=M<=16384`，M必须为最终wire真实cap且不超受信route输出cap；`total=P+O`、`K+U=P`、`R+V=O`，K为cached输入，R为reasoning输出。采用保守矩形，不以`P<=128000-M`缩小输入界，也不把K/R再加到根总量。容量不是actual；8MiB/字符数/预算不是token换算。初始profile技术有效期最晚 `2027-01-14T00:00:00Z`，每attempt expiry不得晚于lease/profile sunset；不是默认模型迁移，后继snapshot另行审查。
 
-### §8 放置表、依赖与停止线
+官方依据为OpenAI模型页、conversation-state、token-counting、Chat create、prompt-caching与deprecations正式文档（https://developers.openai.com/api/docs/models/gpt-4o 、https://developers.openai.com/api/docs/guides/conversation-state 、https://developers.openai.com/api/docs/guides/token-counting 、https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create 、https://developers.openai.com/api/docs/guides/prompt-caching 、https://developers.openai.com/api/docs/deprecations）。网页URL只作为审核证据，不能充当guarantee digest。正式机器身份由Agent固定artifact canonical内容/schema/vector/provenance产生；运行时不抓网页。保证须发布owner/id/version/digest、精确endpoint/snapshot/协议/transport/request闭集、上述根界/子集/category与unsupported规则、normalization引用、执行机制revision、证据版本/日期/摘要与sunset。缺身份/漂移/unsupported在prepare新增attempt之前typed failclosed，零有效bound、零send，禁止placeholder/nullable/default/fallback。
 
-| 项 | R252 目标决定 |
+当前System固定来源采用本仓 `contract/provenance.json::consumer_dependencies` 的唯一System **4.0.0**：commit `7f479f654c535077874d9cf63d1b25437e9420b6`、artifact `c7cda9d09db266cd26dc1b80dfe9bb95c3c9f6a91bdbd6c5d7de4f85295d1dc6`、provenance `37e338939ebecc4a61cf7aff4d14c2e28b5bc34381e66324a2009988e793d2d0`及该收据完整source closure。原System3出处只留历史；新bound必须固定当前4的完整原收据，不从邻仓/网络动态读。保证还须与planned provider/model/direct endpoint、revision/generation及final request digest精确绑定，System出处不代替它。
+
+### §8 放置、实施闭集与消费者
+
+|项|决定|
 |---|---|
-| Owner | Agent model-call唯一写逐attempt planned/final/bound事实与reader；System只发布技术capability；Billing只写price/quote/hold/grant。Root负责Git、审查与资源。 |
-| 当前事实 | `call_runtime`唯一final hook；`call_artifacts/call_models`已有canonical planned/final摘要；`postgres_model_call_repository`已有Run→attempt锁、DB clock与lease；System 3.0没有capacity-and-usage semantics guarantee；HTTP reader与专用credential也尚未实现。 |
-| 目录方案 | **采用**计划中的`contract/model-call-bound/v1/{schema,vectors,manifest}`：preauthorization joint constraints有独立生命周期/version与消费者。**淘汰**复用`contract/usage/v1`：后者是post-call actual evidence，混入bound会把上界冒充观察值并造成breaking双义。计划沿现generator/checker/package模式，不建通用artifact框架。 |
-| 粒度 | 纯schema/codec与内部immutable值归现`model/call_{models,artifacts}.py`，编排归现`call_runtime.py`，事务/read归现repository，route归现HTTP server。只有约束算法确需独立变化原因时才准同package单文件`model/input_bound.py`；不新目录/进程。 |
-| 依赖 | System 3.0 provenance与现final bytes只是输入；正向producer另依赖Root后继批准、owner发布并固定的exact-binding capacity-and-usage guarantee。禁止运行时import System/Billing源码/数据库、SDK private tokenizer、浮动provider文档、YAML/header自报保证或caller body身份。保证不存在时整个bound/paid路径fail closed。 |
-| 数据/API | 只扩现attempt表普通bound字段和tenant+ref唯一访问；不建新表/JSONB/index family。internal-owner GET返回planned/bound canonical bytes+digests，prompt/body/credential/authorization bytes不返回。 |
-| 删除项 | 不留exact-token假profile、usage/v1 alias、可续期bound、health/cache/proof TTL fallback、免费/quantity=1/fake grant路径。现final digest/zero-send guard不删除。 |
-| 验证 | D0后先证明无可信guarantee时0 bound/0 send，再验合法固定guarantee与wrong owner/version/digest/binding/category负例；并验UTC毫秒向下量化、contract/generation/package、真实PG replay/冲突/lease race/rollback、真实HTTP auth+tenant+fence、SDK loopback 0-send及完整工程门。当前均未运行。 |
+|Owner/依赖|Agent现model-call产技术保证与逐attempt bound；interfaces依现application/model边界，infrastructure实现其持久化。System选择连接，Billing消费正式artifact，不跨仓源码/SQL。|
+|目录比较|采用既有 `contract/model-call-bound/v1` 与独立 `contract/model-call-capacity-guarantee/v1`；现model普通codec承载两个明确变化原因。淘汰新模块/服务、平行preauthorization合同、向usage1/2或proof2塞字段、通用artifact框架。|
+|源候选|`model/request_profile.py`、`factory.py`仅profile分支、`call_models.py`、`call_artifacts.py`、`call_runtime.py`及具名新`model/call_bound.py`/`model/capacity_guarantee.py`；现`infrastructure/postgres_model_call_repository.py`、`database/schema.sql`、`interfaces/http/server.py`。最终实施卡才授写。|
+|机器/打包|新增上述两artifact目录schema/vectors/manifest及具名generator/generated protocol；沿`scripts/check_contract.py`→`src/kokoro_agent/contract_check.py`、`distribution_assets.py`、`pyproject.toml` data-files/source aggregate正常校验打包，不复制第二canonical。OpenAPI唯一源添加原定reader，consumer/provenance配对。|
+|SQL/消费者|现attempt六列fresh-only/tenant+ref唯一索引；schema inventory与installer checker、repository prepare/replay/read、PreparedModelCall及所有现调用fixtures同步。usage evidence/terminal recovery不能假定所有负向attempt仍可prepare；unsupported必须先拒绝且由既有Run failure/terminal审计记录，不造有效bound。|
+|测试|现request_profile/factory/HTTP unit与contract/schema/installed-wheel、`tests/integration/database/test_model_call_runtime_chain.py`和evidence_repository、`tests/support/model_http_mechanism.py`及recovery/terminal负控；必要新bound/guarantee codec测试。旧身份/零send/异常断言必须迁移保持，不宽松fixture。|
+|保护|usage1/2/proof2原字节、其他provider、Skills/MCP业务、正常配置/Agentfalse、Billing资金/API与System契约均保护。不能因NOT NULL加入nullable兼容或假免费profile。|
 
-**reader认证已裁决、尚未实现。** Billing→Agent bound reader使用HTTP进程专用 `SecretStr | None` 字段`billing_model_call_reader_secret`，唯一环境名`KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET`；配置缺失/空白时route为503 fail closed。该credential只映射exact caller `kokoro-billing`并只授`model-call-bound.read`与`model-usage-evidence.read`两个具名operation；本bound route只消费`model-call-bound.read`，不复用现全入口`internal_secret_agent`、不接受后者fallback，也不信`x-kokoro-service`、actor/subject/body自报。Bearer以常量时间比较且不日志/持久化；认证后才把必填tenant header作为Billing的受信断言并与row逐值相等。字段只进入现`interfaces/http/main.py::AgentHttpConfig`及其env/file loader、safe summary和`interfaces/http/server.py::AgentConfig` protocol/route；worker `config.py::AppConfig`不消费inbound reader secret，禁止为对称或“统一配置”复制进去。无新auth模块/framework/config容器。
+bound在原prepare Run→Attempt事务与首次attempt insert一起生成，immutable mcb_/mpb_、两份canonical原bytes、同一次DB clock floor毫秒，exact replay不刷新time/profile/期限。reader沿API面既定closed8字段/专用身份，DATA_MODEL六列为唯一骨架，不返回actor/subject/secret/授权bytes/商业account。无Billing grant不得派发，当前harddeny不删。
 
-剩余实现最大范围仍为现`model/call_models.py`、`call_artifacts.py`、`call_runtime.py`、`infrastructure/postgres_model_call_repository.py`、`database/schema.sql`、`interfaces/http/{main.py,server.py}`；计划的新bound schema/vectors/manifest、具名generator/generated model、contract checker/provenance/package清单；现`tests/unit/http/{test_http_main.py,test_server.py}`及对应unit/contract/真实PG/SDK/architecture测试。上述capacity guarantee的owner/source尚未批准，不在本卡擅增文件或合同；它是实现前置，不是TODO fallback。`config.py`、`factory.py`仍排除。源码、SQL、机器artifact、测试当前全部未授权。
+### 分阶段真实验收与停止线
+
+1. 文档门仅本三面；本次无测试、producer或机器发布。后继先独立guarantee/bound schema与canonical/digest/未知字段/错误owner/version/endpoint/tier/category/sunset负控、正常生成/包内checker/wheel closure。没有正式artifact不能用D0文字当positive。
+2. tests-only行为RED针对当前engineering validator接受unsupported final fields/auto tier/stream等，不能missing import冒红；真实锁定SDK owned loopback证明最终raw、n/cap/default/store/nonstream，拒reasoning_effort误注入、重试/redirect/第二claimant，明确不证明provider实现。
+3. fresh schema/真实PG验六列/唯一/check、Run→Attempt并发、same-attempt replay、floor微秒边界、sunset、renew不续、takeover/pause/terminal、取消/rollback/ACK未知；unsupported在INSERT前失败，原负向审计/终态/usage evidence fixtures改成真实受支持前置或保持拒绝，不能伪造bound。真实HTTP专用reader完整身份/tenant/409/410/损坏/预算/零写。
+4. Ruff/Pyright/pure/contract/normal generation/package与原真实PG/HTTP/SDK门由后继卡执行；Root确认正式commit/artifact后Billing独立pin，IAM/商业mapping/rate/policy/hold/grant仍未闭合。Agent consumer与真实provider另卡，不以本片开启默认DeepAgents或支付调用。
+
+unknown/tier/model/category不符不得clamp、重发或自动release；stale/expired reader只阻止新授权，不撤销永久Billing snapshot。已派发费用未知保hold/reconcile，确定未派发才按Billing正式policy释放，未收到ACK不证明零成本。该机制和异常账单信任边界必须在正式guarantee中显式记录。首版工具支持与后继模型是明确OPEN产品范围，不是本D0待用户输入的阻塞；本阶段没有未裁决owner/source门。
 
 **R255 owner 边界澄清（仅 D0 对齐，未实现 reader）。** 本节目标 bound 只证明技术 planned binding 与本次执行界，不声明 actual provider attribution，也不发布 Billing 独占的商业 pricing account；实际 provider 归属由后继 strict sealed evidence 证明。后继 `request_ref` 由 Agent authorization 状态机绑定同一 attempt 与已冻结的 refs/digests，并供 Billing Admission 幂等身份核对，不作为 bound 生成或 reader 的前置。当前 `PlannedBinding` 闭集没有 `provider_account_ref`；若需要该技术账户身份，必须先由具名技术 owner 以固定版本正式发布，不从名称、credential 或商业账户推导。本次只澄清既有 owner 边界，不改变 guarantee 缺失时 fail closed、reader 专用认证或 DB 时钟/lease 规则，不新增机器字段或实现。
 

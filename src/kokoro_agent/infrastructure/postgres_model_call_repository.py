@@ -28,6 +28,10 @@ from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     recompute_run_completeness,
 )
 from kokoro_agent.model.call_models import (
+    AttemptBinding,
+    CurrentModelCallBound,
+    ModelCallBoundStale,
+    ModelCallBoundExpired,
     AppendModelCallEvidence,
     AuthorizationPendingReceipt,
     BeginModelCallAuthorization,
@@ -44,6 +48,12 @@ from kokoro_agent.model.call_models import (
     PrepareModelCall,
     PreparedModelCall,
     StartModelCallDispatch,
+)
+from kokoro_agent.model.call_bound import (
+    build_bound,
+    parse_bound,
+    validate_prepare_bound,
+    utc_millis,
 )
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.model.call_artifacts import (
@@ -242,7 +252,80 @@ class PostgresModelCallRepository:
                 "persisted final model-call evidence violates owner invariants"
             ) from error
 
+    async def read_bound(
+        self, tenant_id: str, bound_ref: str
+    ) -> CurrentModelCallBound | None:
+        """One bounded read-only snapshot closes planned, bound and live fence."""
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction():
+                    async with connection.cursor() as cursor:
+                        await execute_sql(
+                            cursor,
+                            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+                        )
+                        await execute_sql(
+                            cursor,
+                            f"SET LOCAL statement_timeout='{self._statement_timeout_ms}ms'",
+                        )
+                        await execute_sql(
+                            cursor,
+                            f"SET LOCAL lock_timeout='{self._lock_timeout_ms}ms'",
+                        )
+                        await execute_sql(
+                            cursor,
+                            f"""SELECT a.*,r.owner AS current_owner,
+                            r.lease_generation AS current_generation,r.lease_expires_at AS current_expiry,
+                            r.terminal AS current_terminal,
+                            date_trunc('milliseconds',clock_timestamp()) AS db_now
+                            FROM {qualified(self._schema, MODEL_CALL_ATTEMPTS_TABLE)} a
+                            JOIN {qualified(self._schema, RUN_CLAIMS_TABLE)} r
+                              ON r.run_id=a.run_id AND r.tenant_id=a.tenant_id
+                            WHERE a.tenant_id=%s AND a.execution_bound_ref=%s""",
+                            (tenant_id, bound_ref),
+                        )
+                        row = await fetch_one(cursor)
+                        if row is None:
+                            return None
+                        try:
+                            _validate_bound_row(row)
+                            now = _instant(row["db_now"])
+                            expiry = _instant(row["execution_bound_valid_until"])
+                            if (
+                                row["current_terminal"]
+                                or row["current_owner"] != row["lease_owner"]
+                                or row["current_generation"] != row["lease_generation"]
+                                or row["current_expiry"] is None
+                                or _instant(row["current_expiry"]) < expiry
+                            ):
+                                raise ModelCallBoundStale("model-call bound is stale")
+                            if now >= expiry:
+                                raise ModelCallBoundExpired(
+                                    "model-call bound is expired"
+                                )
+                            return CurrentModelCallBound(
+                                planned_binding_ref="mpb_" + str(row["attempt_id"]),
+                                planned_binding_digest=str(row["planned_digest"]),
+                                planned_binding_bytes=_bytes(row["planned_bytes"]),
+                                execution_bound_ref=bound_ref,
+                                execution_bound_digest=str(
+                                    row["execution_bound_digest"]
+                                ),
+                                execution_bound_artifact_version="1.0.0",
+                                execution_bound_revision="1",
+                                execution_bound_bytes=_bytes(
+                                    row["execution_bound_bytes"]
+                                ),
+                            )
+                        except (ModelCallBoundStale, ModelCallBoundExpired):
+                            raise
+                        except (ValueError, TypeError, KeyError):
+                            raise ModelCallEvidenceInvariantFailed(
+                                "persisted model-call bound is invalid"
+                            ) from None
+
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall:
+        validate_prepare_bound(command)
         planned_bytes, planned_digest = encode_planned_artifact(command.planned)
         authorization_bytes, authorization_digest = encode_not_requested_artifact()
         async with asyncio.timeout(self._total_timeout_seconds):
@@ -635,7 +718,9 @@ class PostgresModelCallRepository:
             (command.request.run_id, tenant),
         )
         run = await fetch_one(cursor)
-        await execute_sql(cursor, "SELECT clock_timestamp() AS db_now")
+        await execute_sql(
+            cursor, "SELECT date_trunc('milliseconds', clock_timestamp()) AS db_now"
+        )
         clock = await fetch_one(cursor)
         if (
             run is None
@@ -701,7 +786,13 @@ class PostgresModelCallRepository:
         binding_bytes, binding_digest = encode_attempt_binding(
             command, durable_request, ordinal
         )
-        prepared_at = clock["db_now"]
+        prepared_at = utc_millis(_instant(clock["db_now"]))
+        bound_bytes, bound_digest, bound_expiry = build_bound(
+            command,
+            ordinal=ordinal,
+            prepared_at=prepared_at,
+            lease_expires_at=_instant(run["lease_expires_at"]),
+        )
         await execute_sql(
             cursor,
             f"""INSERT INTO {attempt_table} (
@@ -709,9 +800,11 @@ class PostgresModelCallRepository:
                 lease_generation,attempt_binding_bytes,attempt_binding_digest,
                 planned_bytes,planned_digest,authorization_bytes,authorization_digest,
                 final_request_binding_version,final_request_digest,
+                execution_bound_artifact_version,execution_bound_ref,execution_bound_revision,
+                execution_bound_bytes,execution_bound_digest,execution_bound_valid_until,
                 authorization_state,status,prepared_at,created_at,updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                        %s,%s,'not_requested','prepared',%s,%s,%s) RETURNING prepared_at""",
+                        %s,%s,'1.0.0',%s,1,%s,%s,%s,'not_requested','prepared',%s,%s,%s) RETURNING prepared_at""",
             (
                 command.attempt_id,
                 tenant,
@@ -728,6 +821,10 @@ class PostgresModelCallRepository:
                 authorization_digest,
                 command.final_request_binding_version,
                 command.final_request_digest,
+                "mcb_" + str(command.attempt_id),
+                bound_bytes,
+                bound_digest,
+                bound_expiry,
                 prepared_at,
                 prepared_at,
                 prepared_at,
@@ -753,6 +850,9 @@ class PostgresModelCallRepository:
             planned_bytes,
             planned_digest,
             prepared_at,
+            bound_bytes=bound_bytes,
+            bound_digest=bound_digest,
+            bound_expiry=bound_expiry,
             replayed=False,
         )
 
@@ -807,6 +907,7 @@ def _replay(
     actual = (actual[0], actual[1], str(actual[2]), *actual[3:])
     if actual != expected:
         raise ModelCallIdentityConflict("model-call preparation identity conflicts")
+    _validate_bound_row(row)
     return _receipt(
         command,
         tenant,
@@ -816,8 +917,81 @@ def _replay(
         planned_bytes,
         planned_digest,
         _instant(row["prepared_at"]),
+        bound_bytes=_bytes(row["execution_bound_bytes"]),
+        bound_digest=str(row["execution_bound_digest"]),
+        bound_expiry=_instant(row["execution_bound_valid_until"]),
         replayed=True,
     )
+
+
+def _validate_bound_row(row: Mapping[str, object]) -> None:
+    bound = parse_bound(
+        _bytes(row["execution_bound_bytes"]),
+        planned_bytes=_bytes(row["planned_bytes"]),
+        expected_digest=str(row["execution_bound_digest"]),
+    )
+    expected = (
+        row["tenant_id"],
+        row["run_id"],
+        str(row["call_id"]),
+        str(row["attempt_id"]),
+        str(row["attempt_ordinal"]),
+        row["lease_owner"],
+        str(row["lease_generation"]),
+        row["planned_digest"],
+        row["final_request_binding_version"],
+        row["final_request_digest"],
+        row["execution_bound_ref"],
+        row["execution_bound_artifact_version"],
+        str(row["execution_bound_revision"]),
+        _utc_millis_text(row["prepared_at"]),
+        _utc_millis_text(row["execution_bound_valid_until"]),
+    )
+    actual = (
+        bound.tenant_ref,
+        bound.run_id,
+        bound.call_id,
+        bound.attempt_id,
+        bound.attempt_ordinal,
+        bound.lease_owner,
+        bound.lease_generation,
+        bound.planned_binding_digest,
+        bound.final_request_binding_version,
+        bound.final_request_digest,
+        bound.execution_bound_ref,
+        bound.artifact_version,
+        bound.revision,
+        bound.sealed_at,
+        bound.valid_until,
+    )
+    if actual != expected:
+        raise ModelCallInputInvalid("persisted model-call bound identity differs")
+    # Bound identity is immutable; mutable authorization state is independent.
+    binding_raw = _bytes(row["attempt_binding_bytes"])
+    binding = AttemptBinding.model_validate_json(binding_raw, strict=True)
+    if (
+        hashlib.sha256(binding_raw).hexdigest() != row["attempt_binding_digest"]
+        or rfc8785.dumps(binding.model_dump(mode="json")) != binding_raw
+    ):
+        raise ModelCallInputInvalid("persisted model-call attempt identity differs")
+    if (
+        binding.tenant_ref,
+        binding.run_id,
+        binding.call_id,
+        binding.attempt_id,
+        binding.attempt_ordinal,
+        binding.lease.owner,
+        binding.lease.generation,
+    ) != (
+        bound.tenant_ref,
+        bound.run_id,
+        bound.call_id,
+        bound.attempt_id,
+        bound.attempt_ordinal,
+        bound.lease_owner,
+        bound.lease_generation,
+    ):
+        raise ModelCallInputInvalid("persisted model-call attempt identity differs")
 
 
 def _require_authorization(
@@ -840,6 +1014,9 @@ def _receipt(
     planned_digest: str,
     prepared_at: datetime,
     *,
+    bound_bytes: bytes,
+    bound_digest: str,
+    bound_expiry: datetime,
     replayed: bool,
 ) -> PreparedModelCall:
     millis = utc_to_epoch_millis(prepared_at)
@@ -858,6 +1035,10 @@ def _receipt(
         planned_digest=planned_digest,
         final_request_binding_version=command.final_request_binding_version,
         final_request_digest=command.final_request_digest,
+        execution_bound_ref="mcb_" + str(command.attempt_id),
+        execution_bound_bytes=bound_bytes,
+        execution_bound_digest=bound_digest,
+        execution_bound_valid_until=bound_expiry,
         prepared_at_ms=millis,
         replayed=replayed,
     )

@@ -1,0 +1,14 @@
+{
+  "owner": "kokoro-agent",
+  "artifact_version": "1.0.0",
+  "schema_sha256": "9c27caf925c48037a7c185a0e62a08e00a2c202d3da05bc3d085f25d1bd08815",
+  "source_sha256": {
+    "contract/model-call-bound/v1/schema.json": "9c27caf925c48037a7c185a0e62a08e00a2c202d3da05bc3d085f25d1bd08815",
+    "contract/model-call-bound/v1/vectors.json": "9f9394106fed8dba8dce0de13079b68b0b6bf92b10dae45257016773d758b0dd",
+    "scripts/generate_model_call_bound.py": "3a52d8d1f7754e9eb7a9325354a96e6bb0827ad68de612e4fadc9a897ae3f3ca",
+    "src/kokoro_agent/model_call_bound_contract.py": "7c3e86cd129215302e8fc890818dd804980e909fe7f2e7a7090ba7577d9d221b",
+    "src/kokoro_agent/model/call_bound.py": "6ac9bf2afb0786aa7eecbda9b49c3fd9842fb362862120d6b1d37f25217f93c7",
+    "src/kokoro_agent/protocol/model_call_bound_generated.py": "220fe3bf1a72d149f137794294d32fff665a2f75a5ebc873d7e8cd43121d66ef"
+  },
+  "aggregate_sha256": "983b695e218cbd15815238156859ca3cdfcc0ca56e97d56e8d2465ec00d1f937"
+}

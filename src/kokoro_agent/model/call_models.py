@@ -9,6 +9,7 @@ from datetime import datetime
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
+from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_v2_generated import (
     Digest,
@@ -48,9 +49,21 @@ class AttemptBinding(BaseModel):
     peer_path: Annotated[tuple[str, ...], AfterValidator(_peer_path)]
 
 
+class CapacityRequestMaterial(BaseModel):
+    """Final validated physical wire retained only until immutable prepare."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    route: ResolvedModel
+    raw: bytes = Field(min_length=1, max_length=8_388_608)
+    method: Literal["POST"]
+    endpoint: str
+    headers: tuple[tuple[str, str], ...]
+
+
 class PrepareModelCall(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
+    capacity_request: CapacityRequestMaterial
     request: RunRequest
     lease: LeaseFence
     call_id: Uuid
@@ -79,6 +92,10 @@ class PreparedModelCall(BaseModel):
     planned_digest: Digest
     final_request_binding_version: Annotated[int, Field(strict=True, ge=1, le=1)]
     final_request_digest: Digest
+    execution_bound_ref: str
+    execution_bound_bytes: bytes = Field(min_length=1, max_length=65_536)
+    execution_bound_digest: Digest
+    execution_bound_valid_until: datetime
     prepared_at_ms: int = Field(ge=0)
     initial_authorization_state: str = "not_requested"
     initial_status: str = "prepared"
@@ -210,6 +227,26 @@ class FinalModelCallEvidence(BaseModel):
     observed_at: datetime
 
 
+class CurrentModelCallBound(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    planned_binding_ref: str
+    planned_binding_digest: Digest
+    planned_binding_bytes: bytes = Field(min_length=1, max_length=65_536)
+    execution_bound_ref: str
+    execution_bound_digest: Digest
+    execution_bound_artifact_version: Literal["1.0.0"]
+    execution_bound_revision: Literal["1"]
+    execution_bound_bytes: bytes = Field(min_length=1, max_length=65_536)
+
+
+class ModelCallBoundStale(RuntimeError):
+    pass
+
+
+class ModelCallBoundExpired(RuntimeError):
+    pass
+
+
 class ModelCallAuthorityLost(RuntimeError):
     pass
 
@@ -260,6 +297,10 @@ class ModelCallRepository(Protocol):
 
 __all__ = [
     "AttemptBinding",
+    "CapacityRequestMaterial",
+    "CurrentModelCallBound",
+    "ModelCallBoundStale",
+    "ModelCallBoundExpired",
     "AppendModelCallEvidence",
     "AuthorizationPendingReceipt",
     "BeginModelCallAuthorization",

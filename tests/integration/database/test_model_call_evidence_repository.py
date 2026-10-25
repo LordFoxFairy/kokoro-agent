@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Collection, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 import hashlib
@@ -25,9 +25,20 @@ import json
 import pytest
 import rfc8785
 from psycopg.errors import CheckViolation, UniqueViolation
+from pydantic import TypeAdapter
 
-from support.model_http_mechanism import synthetic_final_digest
+from support.model_call_bound import (
+    supported_final_digest,
+    supported_material,
+    supported_attempt_id,
+)
 
+from kokoro_agent.infrastructure import (
+    postgres_model_call_repository as call_repository,
+)
+from kokoro_agent.model.capacity_guarantee import CapacityGuaranteeInvalid
+from kokoro_agent.model.call_models import ModelCallBoundExpired
+from kokoro_agent.model.call_bound import parse_bound
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
@@ -339,14 +350,14 @@ def _prepare_values() -> tuple[RunRequest, StaticRecipeBinding, PlannedBinding]:
         model="model-a1",
         provider="provider-a1",
         revision_id="revision-a1",
-        provider_model_name="provider-model-a1",
-        request_model="gateway-a1",
+        provider_model_name="gpt-4o-2024-08-06",
+        request_model="gpt-4o-2024-08-06",
         feature_key="chat",
         revision="1",
         generation="1",
         tenant_generation="1",
         digest=_DIGEST,
-        label=None,
+        label="qa",
     )
     return request, recipe, planned
 
@@ -477,12 +488,13 @@ async def test_prepare_freezes_trusted_identity_and_exact_replay(
     )
     repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
     command = PrepareModelCall(
+        capacity_request=supported_material(planned, request.input.content),
         final_request_binding_version=1,
-        final_request_digest=synthetic_final_digest(planned, request.input.content),
+        final_request_digest=supported_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=str(uuid4()),
-        attempt_id=str(uuid4()),
+        attempt_id=supported_attempt_id(),
         planned=planned,
         peer_path=("assistant",),
         recipe=recipe,
@@ -531,12 +543,13 @@ async def _prepared_attempt(
     await _insert_leased_prepare_run(database_url, schema, request, recipe)
     repository = PostgresModelCallRepository(database_url, schema)
     command = PrepareModelCall(
+        capacity_request=supported_material(planned, request.input.content),
         final_request_binding_version=1,
-        final_request_digest=synthetic_final_digest(planned, request.input.content),
+        final_request_digest=supported_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=str(uuid4()),
-        attempt_id=str(uuid4()),
+        attempt_id=supported_attempt_id(),
         planned=planned,
         peer_path=("assistant",),
         recipe=recipe,
@@ -1832,12 +1845,13 @@ async def test_prepare_allocates_contiguous_ordinals(
     call_id = str(uuid4())
     commands = [
         PrepareModelCall(
+            capacity_request=supported_material(planned, request.input.content),
             final_request_binding_version=1,
-            final_request_digest=synthetic_final_digest(planned, request.input.content),
+            final_request_digest=supported_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=call_id,
-            attempt_id=str(uuid4()),
+            attempt_id=supported_attempt_id(),
             planned=planned,
             peer_path=("assistant",),
             recipe=recipe,
@@ -1904,14 +1918,15 @@ async def test_prepare_rejects_peer_outside_locked_recipe(
     with pytest.raises(ModelCallInputInvalid):
         await repository.prepare(
             PrepareModelCall(
+                capacity_request=supported_material(planned, request.input.content),
                 final_request_binding_version=1,
-                final_request_digest=synthetic_final_digest(
+                final_request_digest=supported_final_digest(
                     planned, request.input.content
                 ),
                 request=request,
                 lease=LeaseFence(owner="worker-a1", generation=1),
                 call_id=str(uuid4()),
-                attempt_id=str(uuid4()),
+                attempt_id=supported_attempt_id(),
                 planned=planned,
                 peer_path=("not-declared",),
                 recipe=recipe,
@@ -1952,12 +1967,13 @@ async def test_prepare_accepts_scope_from_real_runtime_recipe(
         run_chat_database_url, run_chat_schema
     ).prepare(
         PrepareModelCall(
+            capacity_request=supported_material(planned, request.input.content),
             final_request_binding_version=1,
-            final_request_digest=synthetic_final_digest(planned, request.input.content),
+            final_request_digest=supported_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=str(uuid4()),
-            attempt_id=str(uuid4()),
+            attempt_id=supported_attempt_id(),
             planned=planned,
             peer_path=("assistant", "helper"),
             recipe=recipe,
@@ -1978,13 +1994,14 @@ async def test_prepare_same_attempt_across_runs_is_typed_conflict(
         run_chat_database_url, run_chat_schema, other, recipe
     )
     repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
-    attempt_id = str(uuid4())
+    attempt_id = supported_attempt_id()
     results = await asyncio.gather(
         *[
             repository.prepare(
                 PrepareModelCall(
+                    capacity_request=supported_material(planned, request.input.content),
                     final_request_binding_version=1,
-                    final_request_digest=synthetic_final_digest(
+                    final_request_digest=supported_final_digest(
                         planned, item.input.content
                     ),
                     request=item,
@@ -2035,14 +2052,15 @@ async def test_prepare_stale_or_terminal_authority_writes_nothing(
     with pytest.raises(ModelCallAuthorityLost):
         await repository.prepare(
             PrepareModelCall(
+                capacity_request=supported_material(planned, request.input.content),
                 final_request_binding_version=1,
-                final_request_digest=synthetic_final_digest(
+                final_request_digest=supported_final_digest(
                     planned, request.input.content
                 ),
                 request=request,
                 lease=LeaseFence(owner="worker-a1", generation=1),
                 call_id=str(uuid4()),
-                attempt_id=str(uuid4()),
+                attempt_id=supported_attempt_id(),
                 planned=planned,
                 peer_path=("assistant",),
                 recipe=recipe,
@@ -2060,12 +2078,13 @@ async def test_prepare_rejects_exhausted_ordinal_without_projection_write(
     repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
     call_id = str(uuid4())
     first = PrepareModelCall(
+        capacity_request=supported_material(planned, request.input.content),
         final_request_binding_version=1,
-        final_request_digest=synthetic_final_digest(planned, request.input.content),
+        final_request_digest=supported_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=call_id,
-        attempt_id=str(uuid4()),
+        attempt_id=supported_attempt_id(),
         planned=planned,
         peer_path=("assistant",),
         recipe=recipe,
@@ -2094,12 +2113,13 @@ async def test_prepare_total_deadline_cancels_run_lock_wait_without_write(
         run_chat_database_url, run_chat_schema, request, recipe
     )
     command = PrepareModelCall(
+        capacity_request=supported_material(planned, request.input.content),
         final_request_binding_version=1,
-        final_request_digest=synthetic_final_digest(planned, request.input.content),
+        final_request_digest=supported_final_digest(planned, request.input.content),
         request=request,
         lease=LeaseFence(owner="worker-a1", generation=1),
         call_id=str(uuid4()),
-        attempt_id=str(uuid4()),
+        attempt_id=supported_attempt_id(),
         planned=planned,
         peer_path=("assistant",),
         recipe=recipe,
@@ -2144,12 +2164,13 @@ async def test_prepare_recompute_excludes_sealed_not_dispatched_from_unknown(
     repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
     first = await repository.prepare(
         PrepareModelCall(
+            capacity_request=supported_material(planned, request.input.content),
             final_request_binding_version=1,
-            final_request_digest=synthetic_final_digest(planned, request.input.content),
+            final_request_digest=supported_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=str(uuid4()),
-            attempt_id=str(uuid4()),
+            attempt_id=supported_attempt_id(),
             planned=planned,
             peer_path=("assistant",),
             recipe=recipe,
@@ -2190,12 +2211,13 @@ async def test_prepare_recompute_excludes_sealed_not_dispatched_from_unknown(
         )
     await repository.prepare(
         PrepareModelCall(
+            capacity_request=supported_material(planned, request.input.content),
             final_request_binding_version=1,
-            final_request_digest=synthetic_final_digest(planned, request.input.content),
+            final_request_digest=supported_final_digest(planned, request.input.content),
             request=request,
             lease=LeaseFence(owner="worker-a1", generation=1),
             call_id=str(uuid4()),
-            attempt_id=str(uuid4()),
+            attempt_id=supported_attempt_id(),
             planned=planned,
             peer_path=("assistant",),
             recipe=recipe,
@@ -2244,8 +2266,9 @@ async def test_attempt_table_accepts_each_approved_state_shape(
     has_latest: bool,
 ) -> None:
     prepared_at = datetime.now(UTC)
+    sql_attempt_id = UUID(supported_attempt_id())
     fixture_request, _, fixture_planned = _prepare_values()
-    final_digest = synthetic_final_digest(
+    final_digest = supported_final_digest(
         fixture_planned, fixture_request.input.content
     )
     async with connect_pg(run_chat_database_url) as connection:
@@ -2259,13 +2282,15 @@ async def test_attempt_table_accepts_each_approved_state_shape(
                     authorization_bytes,authorization_digest,authorization_state,
                     status,prepared_at,dispatch_started_at,sealed_at,
                     latest_revision,latest_event_id,latest_evidence_digest,
-                    final_request_binding_version,final_request_digest
+                    final_request_binding_version,final_request_digest,
+                    execution_bound_artifact_version,execution_bound_ref,execution_bound_revision,
+                    execution_bound_bytes,execution_bound_digest,execution_bound_valid_until
                 ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,1,%s)""".format(
+                    %s,%s,%s,%s,%s,%s,1,%s,'1.0.0',%s,1,%s,%s,%s)""".format(
                     qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
                 ),
                 (
-                    uuid4(),
+                    sql_attempt_id,
                     "tenant-a1",
                     f"run-{uuid4()}",
                     uuid4(),
@@ -2287,6 +2312,10 @@ async def test_attempt_table_accepts_each_approved_state_shape(
                     uuid4() if has_latest else None,
                     _DIGEST if has_latest else None,
                     final_digest,
+                    "mcb_" + str(sql_attempt_id),
+                    b"{}",
+                    hashlib.sha256(b"{}").hexdigest(),
+                    prepared_at + timedelta(seconds=60),
                 ),
             )
 
@@ -2315,12 +2344,13 @@ async def test_attempt_table_rejects_invalid_state_cross_products(
     has_latest: bool,
 ) -> None:
     prepared_at = datetime.now(UTC)
+    sql_attempt_id = UUID(supported_attempt_id())
     fixture_request, _, fixture_planned = _prepare_values()
-    final_digest = synthetic_final_digest(
+    final_digest = supported_final_digest(
         fixture_planned, fixture_request.input.content
     )
     async with connect_pg(run_chat_database_url) as connection:
-        with pytest.raises(CheckViolation):
+        with pytest.raises(CheckViolation) as rejected:
             async with connection.cursor() as cursor:
                 await execute_sql(
                     cursor,
@@ -2331,13 +2361,15 @@ async def test_attempt_table_rejects_invalid_state_cross_products(
                         authorization_bytes,authorization_digest,authorization_state,
                         status,prepared_at,dispatch_started_at,sealed_at,
                         latest_revision,latest_event_id,latest_evidence_digest,
-                        final_request_binding_version,final_request_digest
+                        final_request_binding_version,final_request_digest,
+                    execution_bound_artifact_version,execution_bound_ref,execution_bound_revision,
+                    execution_bound_bytes,execution_bound_digest,execution_bound_valid_until
                     ) VALUES (%s,%s,%s,%s,1,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,
-                        %s,%s,%s,%s,%s,%s,1,%s)""".format(
+                        %s,%s,%s,%s,%s,%s,1,%s,'1.0.0',%s,1,%s,%s,%s)""".format(
                         qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
                     ),
                     (
-                        uuid4(),
+                        sql_attempt_id,
                         "tenant-a1",
                         f"run-{uuid4()}",
                         uuid4(),
@@ -2357,20 +2389,26 @@ async def test_attempt_table_rejects_invalid_state_cross_products(
                         uuid4() if has_latest else None,
                         _DIGEST if has_latest else None,
                         final_digest,
+                        "mcb_" + str(sql_attempt_id),
+                        b"{}",
+                        hashlib.sha256(b"{}").hexdigest(),
+                        prepared_at + timedelta(seconds=60),
                     ),
                 )
+
+    assert rejected.value.diag.constraint_name == "ck_model_attempt_state"
 
 
 async def test_attempt_identity_and_evidence_revision_uniqueness_are_durable(
     run_chat_database_url: str,
     run_chat_schema: str,
 ) -> None:
-    attempt_id = uuid4()
+    attempt_id = UUID(supported_attempt_id())
     call_id = uuid4()
     event_id = uuid4()
     prepared_at = datetime.now(UTC)
     fixture_request, _, fixture_planned = _prepare_values()
-    final_digest = synthetic_final_digest(
+    final_digest = supported_final_digest(
         fixture_planned, fixture_request.input.content
     )
     async with connect_pg(run_chat_database_url) as connection:
@@ -2384,10 +2422,12 @@ async def test_attempt_identity_and_evidence_revision_uniqueness_are_durable(
                     authorization_bytes,authorization_digest,authorization_state,
                     status,prepared_at,sealed_at,latest_revision,
                     latest_event_id,latest_evidence_digest,
-                    final_request_binding_version,final_request_digest
+                    final_request_binding_version,final_request_digest,
+                    execution_bound_artifact_version,execution_bound_ref,execution_bound_revision,
+                    execution_bound_bytes,execution_bound_digest,execution_bound_valid_until
                 ) VALUES (%s,'tenant-a1','run-a1',%s,1,'worker-a1',1,
                     %s,%s,%s,%s,%s,%s,'not_requested','not_dispatched',%s,
-                    %s,1,%s,%s,1,%s)""".format(
+                    %s,1,%s,%s,1,%s,'1.0.0',%s,1,%s,%s,%s)""".format(
                     qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
                 ),
                 (
@@ -2404,6 +2444,10 @@ async def test_attempt_identity_and_evidence_revision_uniqueness_are_durable(
                     event_id,
                     _DIGEST,
                     final_digest,
+                    "mcb_" + str(attempt_id),
+                    b"{}",
+                    hashlib.sha256(b"{}").hexdigest(),
+                    prepared_at + timedelta(seconds=60),
                 ),
             )
             await execute_sql(
@@ -2697,7 +2741,7 @@ async def test_r246_final_request_receipt_exact_replay_and_drift(
         run_chat_database_url, run_chat_schema
     )
     assert created.final_request_binding_version == 1
-    assert created.final_request_digest == synthetic_final_digest(
+    assert created.final_request_digest == supported_final_digest(
         command.planned, command.request.input.content
     )
 
@@ -2720,10 +2764,14 @@ async def test_r246_final_request_receipt_exact_replay_and_drift(
     assert replayed == created.model_copy(update={"replayed": True})
     changed = command.model_copy(
         update={
-            "final_request_digest": synthetic_final_digest(
+            "capacity_request": supported_material(
                 command.planned,
                 command.request.input.content + " changed-final-transform",
-            )
+            ),
+            "final_request_digest": supported_final_digest(
+                command.planned,
+                command.request.input.content + " changed-final-transform",
+            ),
         }
     )
     assert changed.final_request_digest != command.final_request_digest
@@ -2886,3 +2934,337 @@ async def test_sealed_history_reads_exact_version_and_terminal_replay_writes_not
                 allow_create=False,
             )
     assert await snapshot() == before
+
+
+async def test_d2_bound_reader_exact_snapshot_and_live_fence(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    from kokoro_agent.model.call_bound import parse_bound
+    from kokoro_agent.model.call_models import ModelCallBoundStale
+
+    repository, command, created = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    value = await repository.read_bound(created.tenant_id, created.execution_bound_ref)
+    assert value is not None
+    assert value.execution_bound_bytes == created.execution_bound_bytes
+    assert value.execution_bound_digest == created.execution_bound_digest
+    assert value.planned_binding_bytes == created.planned_bytes
+    parsed = parse_bound(
+        value.execution_bound_bytes, planned_bytes=value.planned_binding_bytes
+    )
+    assert (
+        parsed.sealed_at.endswith("Z") and len(parsed.sealed_at.rsplit(".", 1)[1]) == 4
+    )
+    assert (
+        int(
+            datetime.fromisoformat(parsed.sealed_at.replace("Z", "+00:00")).timestamp()
+            * 1000
+        )
+        == created.prepared_at_ms
+    )
+    assert (
+        await repository.read_bound("foreign-tenant", created.execution_bound_ref)
+        is None
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET lease_expires_at=lease_expires_at+INTERVAL '1 hour' WHERE run_id=%s",
+            (created.run_id,),
+        )
+    assert (
+        await repository.read_bound(created.tenant_id, created.execution_bound_ref)
+        == value
+    )
+    assert (
+        await repository.prepare(command)
+    ).execution_bound_bytes == created.execution_bound_bytes
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET lease_generation=lease_generation+1 WHERE run_id=%s",
+            (created.run_id,),
+        )
+    with pytest.raises(ModelCallBoundStale):
+        await repository.read_bound(created.tenant_id, created.execution_bound_ref)
+
+
+@pytest.mark.parametrize("mutation", ["terminal", "shorter", "corrupt"])
+async def test_d2_bound_reader_rejects_stale_or_corrupt_snapshot(
+    run_chat_database_url: str, run_chat_schema: str, mutation: str
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallBoundStale
+
+    repository, _, created = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        if mutation == "corrupt":
+            await execute_sql(
+                cursor,
+                f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} SET execution_bound_bytes=%s, execution_bound_digest=%s WHERE attempt_id=%s",
+                (b"{}", hashlib.sha256(b"{}").hexdigest(), created.attempt_id),
+            )
+        elif mutation == "terminal":
+            await execute_sql(
+                cursor,
+                f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET terminal=TRUE,interaction_phase='terminal' WHERE run_id=%s",
+                (created.run_id,),
+            )
+        else:
+            await execute_sql(
+                cursor,
+                f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET lease_expires_at=%s WHERE run_id=%s",
+                (
+                    created.execution_bound_valid_until - timedelta(milliseconds=1),
+                    created.run_id,
+                ),
+            )
+    with pytest.raises(
+        ModelCallEvidenceInvariantFailed
+        if mutation == "corrupt"
+        else ModelCallBoundStale
+    ):
+        await repository.read_bound(created.tenant_id, created.execution_bound_ref)
+
+
+async def test_d2_database_rejects_bound_digest_not_matching_bytes(
+    run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    _, _, created = await _prepared_attempt(run_chat_database_url, run_chat_schema)
+    with pytest.raises(CheckViolation) as rejected:
+        async with (
+            connect_pg(run_chat_database_url) as connection,
+            connection.cursor() as cursor,
+        ):
+            await execute_sql(
+                cursor,
+                f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} SET execution_bound_digest=%s WHERE attempt_id=%s",
+                ("0" * 64, created.attempt_id),
+            )
+    assert rejected.value.diag.constraint_name == "ck_model_attempt_execution_bound"
+
+
+def _d2_clock_at_database_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    database_clock: list[datetime],
+    observed: list[datetime],
+) -> None:
+    """Control only the SQL clock expression; retain real locks, SQL and rows."""
+
+    async def clock_sql(
+        cursor: object, query: str, params: object | None = None
+    ) -> None:
+        if "clock_timestamp()" in query and "AS db_now" in query:
+            parameters = (
+                ()
+                if params is None
+                else TypeAdapter(tuple[object, ...]).validate_python(
+                    params, strict=True
+                )
+            )
+            await execute_sql(
+                cursor,
+                query.replace("clock_timestamp()", "%s::timestamptz"),
+                (database_clock[0],) + parameters,
+            )
+        else:
+            await execute_sql(cursor, query, params)
+
+    async def observed_fetch(cursor: object) -> dict[str, object] | None:
+        row = await fetch_one(cursor)
+        if row is None:
+            return None
+        if set(row) == {"db_now"}:
+            instant = row["db_now"]
+            assert isinstance(instant, datetime)
+            observed.append(instant)
+        return dict(row)
+
+    monkeypatch.setattr(call_repository, "execute_sql", clock_sql)
+    monkeypatch.setattr(call_repository, "fetch_one", observed_fetch)
+
+
+def _d2_command(
+    request: RunRequest, recipe: StaticRecipeBinding, planned: PlannedBinding
+) -> PrepareModelCall:
+    return PrepareModelCall(
+        capacity_request=supported_material(planned, request.input.content),
+        final_request_binding_version=1,
+        final_request_digest=supported_final_digest(planned, request.input.content),
+        request=request,
+        lease=LeaseFence(owner="worker-a1", generation=1),
+        call_id=str(uuid4()),
+        attempt_id=supported_attempt_id(),
+        planned=planned,
+        peer_path=("assistant",),
+        recipe=recipe,
+    )
+
+
+async def test_d2_database_clock_floors_before_freeze_and_reader_expiry_is_inclusive(
+    run_chat_database_url: str, run_chat_schema: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT date_trunc('second',clock_timestamp()) + interval '0.123999 seconds' AS db_now",
+        )
+        clock_row = await fetch_one(cursor)
+    assert clock_row is not None and isinstance(clock_row["db_now"], datetime)
+    database_clock = [clock_row["db_now"]]
+    assert database_clock[0].microsecond == 123999
+    observed: list[datetime] = []
+    _d2_clock_at_database_boundary(monkeypatch, database_clock, observed)
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    lease_expiry = (database_clock[0] + timedelta(minutes=5)).replace(
+        microsecond=987000
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET lease_expires_at=%s WHERE run_id=%s",
+            (lease_expiry, request.run_id),
+        )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    command = _d2_command(request, recipe, planned)
+    created = await repository.prepare(command)
+    assert observed == [database_clock[0].replace(microsecond=123000)]
+    bound = parse_bound(
+        created.execution_bound_bytes, planned_bytes=created.planned_bytes
+    )
+    assert bound.sealed_at == observed[0].isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )
+    assert created.prepared_at_ms == int(observed[0].timestamp() * 1000)
+    assert created.execution_bound_valid_until == lease_expiry
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"SELECT prepared_at,execution_bound_valid_until FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} WHERE attempt_id=%s",
+            (created.attempt_id,),
+        )
+        persisted = await fetch_one(cursor)
+    assert persisted == {
+        "prepared_at": observed[0],
+        "execution_bound_valid_until": lease_expiry,
+    }
+    database_clock[0] = lease_expiry - timedelta(milliseconds=1)
+    assert (
+        await repository.read_bound(created.tenant_id, created.execution_bound_ref)
+        is not None
+    )
+    for instant in (lease_expiry, lease_expiry + timedelta(milliseconds=1)):
+        database_clock[0] = instant
+        with pytest.raises(ModelCallBoundExpired):
+            await repository.read_bound(created.tenant_id, created.execution_bound_ref)
+
+
+async def test_d2_replay_after_renewal_and_profile_sunset_never_rewrites_receipt(
+    run_chat_database_url: str, run_chat_schema: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # PostgreSQL supplies the controlled boundary instants. The production
+    # profile/guarantee remains unchanged; no caller clock is added to prepare.
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            "SELECT TIMESTAMPTZ '2027-01-14 00:00:00+00' - interval '0.876001 seconds' AS db_now",
+        )
+        row = await fetch_one(cursor)
+    assert row is not None and isinstance(row["db_now"], datetime)
+    database_clock = [row["db_now"]]
+    observed: list[datetime] = []
+    _d2_clock_at_database_boundary(monkeypatch, database_clock, observed)
+    request, recipe, planned = _prepare_values()
+    await _insert_leased_prepare_run(
+        run_chat_database_url, run_chat_schema, request, recipe
+    )
+    sunset = datetime(2027, 1, 14, tzinfo=UTC)
+    run_table = qualified(run_chat_schema, "kokoro_agent_run")
+    attempt_table = qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {run_table} SET lease_expires_at=%s WHERE run_id=%s",
+            (sunset + timedelta(hours=1), request.run_id),
+        )
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    command = _d2_command(request, recipe, planned)
+    created = await repository.prepare(command)
+    assert created.execution_bound_valid_until == sunset
+    assert created.prepared_at_ms == int(
+        (sunset - timedelta(milliseconds=877)).timestamp() * 1000
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {run_table} SET lease_expires_at=%s WHERE run_id=%s",
+            (sunset + timedelta(hours=2), request.run_id),
+        )
+        await execute_sql(
+            cursor,
+            f"SELECT *,xmin::text AS row_xmin,ctid::text AS row_ctid FROM {attempt_table}",
+        )
+        attempt_before = await fetch_one(cursor)
+        await execute_sql(
+            cursor,
+            f"SELECT *,xmin::text AS row_xmin,ctid::text AS row_ctid FROM {run_table}",
+        )
+        run_before = await fetch_one(cursor)
+    database_clock[0] = sunset + timedelta(milliseconds=1)
+    replay = await repository.prepare(command)
+    assert replay == created.model_copy(update={"replayed": True})
+    with pytest.raises(ModelCallBoundExpired):
+        await repository.read_bound(created.tenant_id, created.execution_bound_ref)
+    with pytest.raises(CapacityGuaranteeInvalid):
+        await repository.prepare(
+            command.model_copy(
+                update={"attempt_id": supported_attempt_id(), "call_id": str(uuid4())}
+            )
+        )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"SELECT *,xmin::text AS row_xmin,ctid::text AS row_ctid FROM {attempt_table}",
+        )
+        assert await fetch_one(cursor) == attempt_before
+        assert await fetch_one(cursor) is None
+        await execute_sql(
+            cursor,
+            f"SELECT *,xmin::text AS row_xmin,ctid::text AS row_ctid FROM {run_table}",
+        )
+        assert await fetch_one(cursor) == run_before

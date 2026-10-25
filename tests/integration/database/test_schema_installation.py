@@ -192,3 +192,67 @@ async def test_a1_model_evidence_catalog_drift_rejected(
             )
         with pytest.raises(SchemaNotReadyError):
             await verify_agent_schema(connection, run_chat_schema)
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "execution_bound_artifact_version",
+        "execution_bound_ref",
+        "execution_bound_revision",
+        "execution_bound_bytes",
+        "execution_bound_digest",
+        "execution_bound_valid_until",
+    ],
+)
+@pytest.mark.parametrize("change", ["nullable", "default", "missing"])
+async def test_bound_six_columns_are_clean_slate_required_without_defaults(
+    run_chat_schema: str, run_chat_database_url: str, column: str, change: str
+) -> None:
+    from kokoro_agent.infrastructure.schema import SchemaNotReadyError
+    from kokoro_agent.infrastructure.postgres import qualified
+    from kokoro_agent.infrastructure.sql import execute_sql
+
+    table = qualified(run_chat_schema, "kokoro_agent_model_call_attempt")
+    if change == "nullable":
+        mutation = f"ALTER COLUMN {column} DROP NOT NULL"
+    elif change == "missing":
+        mutation = f"DROP COLUMN {column} CASCADE"
+    else:
+        defaults = {
+            "execution_bound_revision": "1",
+            "execution_bound_bytes": "decode('7b7d','hex')",
+            "execution_bound_valid_until": "CURRENT_TIMESTAMP(3)",
+        }
+        mutation = f"ALTER COLUMN {column} SET DEFAULT {defaults.get(column, chr(39) + 'test' + chr(39))}"
+    async with connect_pg(run_chat_database_url) as connection:
+        await verify_agent_schema(connection, run_chat_schema)
+        async with connection.cursor() as cursor:
+            await execute_sql(cursor, f"ALTER TABLE {table} {mutation}")
+        with pytest.raises(SchemaNotReadyError):
+            await verify_agent_schema(connection, run_chat_schema)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "DROP CONSTRAINT uq_model_attempt_execution_bound",
+        "DROP CONSTRAINT ck_model_attempt_execution_bound",
+        "DROP CONSTRAINT ck_model_attempt_execution_bound, ADD CONSTRAINT ck_model_attempt_execution_bound CHECK (TRUE)",
+    ],
+)
+async def test_bound_identity_unique_and_check_are_verified(
+    run_chat_schema: str, run_chat_database_url: str, mutation: str
+) -> None:
+    from kokoro_agent.infrastructure.schema import SchemaNotReadyError
+    from kokoro_agent.infrastructure.postgres import qualified
+    from kokoro_agent.infrastructure.sql import execute_sql
+
+    async with connect_pg(run_chat_database_url) as connection:
+        async with connection.cursor() as cursor:
+            await execute_sql(
+                cursor,
+                f"ALTER TABLE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} {mutation}",
+            )
+        with pytest.raises(SchemaNotReadyError):
+            await verify_agent_schema(connection, run_chat_schema)

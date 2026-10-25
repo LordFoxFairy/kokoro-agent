@@ -100,7 +100,11 @@ from kokoro_agent.model.call_models import (
     StartModelCallDispatch,
 )
 from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
-from support.model_http_mechanism import synthetic_final_digest
+from support.model_call_bound import (
+    supported_final_digest,
+    supported_material,
+    supported_attempt_id,
+)
 from kokoro_agent.infrastructure.postgres import connect_pg
 from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
@@ -422,14 +426,14 @@ async def _seed_final_model_usage_evidence(
         model="model-acceptance",
         provider="provider-acceptance",
         revision_id="revision-acceptance",
-        provider_model_name="provider-model-acceptance",
-        request_model="gateway-acceptance",
+        provider_model_name="gpt-4o-2024-08-06",
+        request_model="gpt-4o-2024-08-06",
         feature_key="chat",
         revision="1",
         generation="1",
         tenant_generation="1",
         digest="a" * 64,
-        label=None,
+        label="qa",
     )
     async with make_run_repository(state.config.run_repository) as runs:
         await runs.enqueue_dispatch(
@@ -445,12 +449,13 @@ async def _seed_final_model_usage_evidence(
     )
     prepared = await repository.prepare(
         PrepareModelCall(
+            capacity_request=supported_material(planned, request.input.content),
             final_request_binding_version=1,
-            final_request_digest=synthetic_final_digest(planned, request.input.content),
+            final_request_digest=supported_final_digest(planned, request.input.content),
             request=request,
             lease=lease,
             call_id=str(uuid.uuid4()),
-            attempt_id=str(uuid.uuid4()),
+            attempt_id=supported_attempt_id(),
             planned=planned,
             peer_path=("assistant",),
             recipe=recipe,
@@ -694,6 +699,30 @@ async def test_billing_reads_final_model_usage_evidence_by_exact_identity(
                     encoding="iso-8859-1",
                 ),
             )
+            bound_response = await client.get(
+                f"/v1/model-call-bounds/mcb_{attempt_id}",
+                headers={
+                    "Authorization": f"Bearer {_BILLING_READER_SECRET}",
+                    "x-kokoro-tenant-ref": "tenant",
+                    "x-request-id": request_id,
+                },
+            )
+        assert bound_response.status_code == 200
+        assert bound_response.headers["cache-control"] == "no-store"
+        assert bound_response.headers["x-request-id"] == request_id
+        bound_data = _nested(_json_object(bound_response.json()), "data")
+        assert len(bound_data) == 8
+        assert bound_data["execution_bound_ref"] == f"mcb_{attempt_id}"
+        encoded_bound = bound_data["execution_bound_bytes_base64url"]
+        assert isinstance(encoded_bound, str)
+        bound_bytes = base64.urlsafe_b64decode(
+            encoded_bound + "=" * (-len(encoded_bound) % 4)
+        )
+        assert (
+            hashlib.sha256(bound_bytes).hexdigest()
+            == bound_data["execution_bound_digest"]
+        )
+        assert json.loads(bound_bytes)["attempt_id"] == attempt_id
         assert (
             response.status_code,
             service_override.status_code,

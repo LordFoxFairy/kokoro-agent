@@ -1,0 +1,24 @@
+{
+  "artifact_version": "1.0.0",
+  "owner": "kokoro-agent",
+  "profile_id": "openai_chat_completions_capacity_v1",
+  "checked_on": "2026-10-23",
+  "trust_scope": "Documented normal provider usage; not arbitrary provider violation or anomalous invoice guarantee",
+  "official_urls": [
+    "https://developers.openai.com/api/docs/models/gpt-4o",
+    "https://developers.openai.com/api/docs/guides/conversation-state",
+    "https://developers.openai.com/api/docs/guides/token-counting",
+    "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create",
+    "https://developers.openai.com/api/docs/guides/prompt-caching",
+    "https://developers.openai.com/api/docs/deprecations"
+  ],
+  "facts": [
+    "Fixed snapshot gpt-4o-2024-08-06 documents context window 128000 and maximum output 16384 tokens.",
+    "Context contains input, output and any reasoning; using 128000 input plus the final output cap is a conservative joint bound.",
+    "max_completion_tokens includes visible output and reasoning tokens, not only displayed text.",
+    "Cached prompt tokens are a subset of prompt tokens; reasoning tokens are a subset of completion tokens.",
+    "Only direct text Chat Completions, n=1, nonstream, default tier, store=false and no tools, prediction, multimodal or extra charge categories are admitted.",
+    "The fixed snapshot is scheduled for removal on 2027-01-14; technical validity ends no later than 2027-01-14T00:00:00Z.",
+    "These are reviewed documented normal-provider facts, not account availability, provider violation protection or an absolute anomalous-invoice guarantee."
+  ]
+}

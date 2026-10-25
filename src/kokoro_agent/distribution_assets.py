@@ -281,3 +281,53 @@ def contract_audit_root(expected_files: Collection[str]) -> Path:
             if _read_record(runtime_record, runtime_path) != data:
                 raise ValueError("Agent audit copy differs from its installed module")
     return root
+
+
+def read_capacity_guarantee_assets() -> dict[str, bytes]:
+    """Read this named immutable artifact only from this running distribution."""
+    binding = _binding()
+    prefix = "contract/model-call-capacity-guarantee/v1"
+    result: dict[str, bytes] = {}
+    for name in (
+        "schema.json",
+        "guarantee.json",
+        "evidence.json",
+        "vectors.json",
+        "manifest.json",
+        "normalization-manifest.json",
+    ):
+        relative = (
+            "contract/usage/v1/manifest.json"
+            if name == "normalization-manifest.json"
+            else f"{prefix}/{name}"
+        )
+        if binding.source is not None:
+            path = _plain_file(binding.source / relative, binding.source)
+            if not 0 < path.stat().st_size <= 65536:
+                raise ValueError("Agent capacity asset exceeds its byte budget")
+            result[name] = path.read_bytes()
+        else:
+            path, record = _data_record(binding, f"{_AUDIT}/{relative}")
+            if not 0 < path.stat().st_size <= 65536:
+                raise ValueError("Agent capacity asset exceeds its byte budget")
+            result[name] = _read_record(record, path)
+    return result
+
+
+def read_model_call_bound_assets() -> dict[str, bytes]:
+    """Read the three installed execution-bound assets with RECORD validation."""
+    binding = _binding()
+    result: dict[str, bytes] = {}
+    for name in ("schema.json", "vectors.json", "manifest.json"):
+        relative = "contract/model-call-bound/v1/" + name
+        if binding.source is not None:
+            path = _plain_file(binding.source / relative, binding.source)
+            if not 0 < path.stat().st_size <= 65536:
+                raise ValueError("bound asset exceeds budget")
+            result[name] = path.read_bytes()
+        else:
+            path, record = _data_record(binding, f"{_AUDIT}/{relative}")
+            if not 0 < path.stat().st_size <= 65536:
+                raise ValueError("bound asset exceeds budget")
+            result[name] = _read_record(record, path)
+    return result

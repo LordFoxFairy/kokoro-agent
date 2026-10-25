@@ -259,3 +259,110 @@ def test_total_nodes_count_object_keys_not_only_values() -> None:
     _validate(body)  # 9 + 4 + 2*65529 + 1 = 131072
     with pytest.raises(ModelCallInputInvalid):
         _validate(_body(b"[" + b",".join([*objects, b"0", b"0"]) + b"]"))
+
+
+@pytest.mark.asyncio
+async def test_capacity_factory_real_sdk_final_wire_has_standard_text_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real locked SDK serialization; the owned final hook stops before transport."""
+    from kokoro_agent.clients.system import ModelConnection, ResolvedModel
+    from kokoro_agent.model.credentials import ModelCredential
+    from kokoro_agent.model.factory import (
+        ChatModelSettings,
+        ModelHttpClients,
+        make_chat_model,
+    )
+    from kokoro_agent.policy import ModelConfig
+    from pydantic import SecretStr
+    import kokoro_agent.model.factory as factory
+    import httpx
+
+    route = ResolvedModel(
+        model_id="qa",
+        provider_id="openai",
+        revision_id="qa-revision",
+        revision=1,
+        digest="a" * 64,
+        generation="1",
+        tenant_generation="1",
+        provider_model_name="gpt-4o-2024-08-06",
+        request_model="gpt-4o-2024-08-06",
+        feature_key="chat",
+        label_key="qa",
+        context_window=128000,
+        max_output_tokens=128,
+        connection=ModelConnection(
+            protocol="openai_chat_completions",
+            connection_type="direct",
+            base_url="https://api.openai.com/v1",
+            secret_handle_ref="qa-key",
+        ),
+    )
+    settings = ChatModelSettings(
+        disable_streaming=False,
+        openai_api_key=None,
+        openai_base_url=None,
+        openai_reasoning=False,
+        anthropic_api_key=None,
+        anthropic_base_url=None,
+        model_credentials=(
+            ModelCredential(
+                provider_id="openai",
+                secret_handle_ref="qa-key",
+                api_key=SecretStr("qa-not-real"),
+            ),
+        ),
+    )
+    captured: list[dict[str, object]] = []
+    sent: list[httpx.Request] = []
+
+    class Captured(Exception):
+        pass
+
+    async def freeze(**kwargs: object) -> None:
+        assert kwargs["endpoint"] == "https://api.openai.com/v1/chat/completions"
+        raw = kwargs["raw"]
+        assert isinstance(raw, bytes)
+        captured.append(json.loads(raw))
+        raise Captured
+
+    async def peer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        raise AssertionError("final hook must stop before any network")
+
+    monkeypatch.setattr(factory, "freeze_final_model_request", freeze)
+    clients = ModelHttpClients(settings, route)
+    await clients.async_client.aclose()
+    object.__setattr__(
+        clients,
+        "async_client",
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(peer),
+            event_hooks={"request": [getattr(clients, "_validate_async")]},
+            follow_redirects=False,
+            trust_env=False,
+        ),
+    )
+    try:
+        model = make_chat_model(
+            settings,
+            ModelConfig(
+                provider="openai_chat_completions",
+                name=route.request_model,
+                thinking=False,
+            ),
+            model_clients=clients,
+        )
+        with pytest.raises(Exception):
+            await model.ainvoke("hello")
+        assert len(captured) == 1
+        body = captured[0]
+        assert body.get("service_tier") == "default"
+        assert body.get("store") is False
+        assert body.get("stream") is False
+        assert body["n"] == 1 and body["max_completion_tokens"] == 128
+        assert "reasoning_effort" not in body and "stream_options" not in body
+        assert sent == []
+    finally:
+        await clients.aclose()

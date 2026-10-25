@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "7.0.0"
+    assert _object(document["info"])["version"] == "7.1.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -76,7 +76,10 @@ def test_every_operation_declares_governance_metadata() -> None:
     for operation in operations:
         assert operation["x-kokoro-owner"] == "kokoro-agent"
         assert operation["x-kokoro-visibility"] == "internal-owner"
-        if operation["operationId"] == "getFinalModelCallUsageEvidence":
+        if operation["operationId"] in {
+            "getFinalModelCallUsageEvidence",
+            "getModelCallBound",
+        }:
             assert operation["x-kokoro-stability"] == "candidate"
         else:
             assert operation["x-kokoro-stability"] == "stable"
@@ -87,6 +90,7 @@ def test_http_route_set_is_explicit() -> None:
     document = _document()
     paths = _object(document["paths"])
     assert set(paths) == {
+        "/v1/model-call-bounds/{bound_ref}",
         "/healthz",
         "/readyz",
         "/v1/execution-proof/jwks",
@@ -548,7 +552,7 @@ def test_current_http7_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "7.0.0"
+    assert _object(document["info"])["version"] == "7.1.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -665,6 +669,10 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
     import tomllib
 
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_call_bound_contract import AUDIT_FILES as BOUND_AUDIT_FILES
+    from kokoro_agent.model_call_capacity_guarantee_contract import (
+        AUDIT_FILES as CAPACITY_AUDIT_FILES,
+    )
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
     from kokoro_agent.model_usage_v2_contract import (
         USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
@@ -682,6 +690,8 @@ def test_distribution_declares_complete_checker_asset_closure() -> None:
                 declared[key] = path
     required = {
         *OWNER_SOURCE_FILES,
+        *CAPACITY_AUDIT_FILES,
+        *BOUND_AUDIT_FILES,
         *USAGE_AUDIT_FILES,
         *USAGE_V2_AUDIT_FILES,
         "contract/provenance.json",
@@ -723,6 +733,10 @@ def test_explicit_checker_rejects_incomplete_assets_without_repair_or_fallback(
     """Explicit source fixture, not an installation or a patched wheel target."""
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_call_bound_contract import AUDIT_FILES as BOUND_AUDIT_FILES
+    from kokoro_agent.model_call_capacity_guarantee_contract import (
+        AUDIT_FILES as CAPACITY_AUDIT_FILES,
+    )
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
     from kokoro_agent.model_usage_v2_contract import (
         USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
@@ -730,7 +744,13 @@ def test_explicit_checker_rejects_incomplete_assets_without_repair_or_fallback(
 
     root = tmp_path / "explicit-source-fixture"
     shutil.copytree(ROOT / "contract", root / "contract")
-    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES):
+    for source in (
+        *OWNER_SOURCE_FILES,
+        *USAGE_AUDIT_FILES,
+        *USAGE_V2_AUDIT_FILES,
+        *CAPACITY_AUDIT_FILES,
+        *BOUND_AUDIT_FILES,
+    ):
         path = root / source
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes((ROOT / source).read_bytes())
@@ -829,6 +849,10 @@ def test_r216_public_checker_rejects_system_dependency_receipt_tamper(
 ) -> None:
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_call_bound_contract import AUDIT_FILES as BOUND_AUDIT_FILES
+    from kokoro_agent.model_call_capacity_guarantee_contract import (
+        AUDIT_FILES as CAPACITY_AUDIT_FILES,
+    )
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
     from kokoro_agent.model_usage_v2_contract import (
         USAGE_AUDIT_FILES as USAGE_V2_AUDIT_FILES,
@@ -836,7 +860,13 @@ def test_r216_public_checker_rejects_system_dependency_receipt_tamper(
 
     root = tmp_path / "r216-receipt-source"
     shutil.copytree(ROOT / "contract", root / "contract")
-    for source in (*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES):
+    for source in (
+        *OWNER_SOURCE_FILES,
+        *USAGE_AUDIT_FILES,
+        *USAGE_V2_AUDIT_FILES,
+        *CAPACITY_AUDIT_FILES,
+        *BOUND_AUDIT_FILES,
+    ):
         target = root / source
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / source).read_bytes())

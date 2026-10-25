@@ -21,6 +21,8 @@ from kokoro_agent.interfaces.http.main import AgentHttpConfig
 from kokoro_agent.infrastructure.postgres_run_repository import RunRepositorySettings
 from kokoro_agent.interfaces.http.execution_proof_jwks import ExecutionProofJwksState
 import kokoro_agent.interfaces.http.server as http_server
+import kokoro_agent.interfaces.http.main as http_main
+from kokoro_agent.model.call_models import ModelCallBoundExpired
 from kokoro_agent.interfaces.http.server import create_http_server, dispatch_request
 from kokoro_agent.streams.factory import StreamSettings
 
@@ -784,3 +786,446 @@ http_main.main()
         if process.poll() is None:
             process.kill()
             process.wait(timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_bound_reader_missing_dedicated_secret_fails_before_shared_auth() -> None:
+    status, payload = await dispatch_request(
+        Config(),
+        "GET",
+        "/v1/model-call-bounds/mcb_00000000-0000-5000-8000-000000000001",
+        {},
+        {"x-request-id": "bound-reader-test"},
+        None,
+    )
+    assert status == 503
+    assert payload == {
+        "error": {
+            "code": "agent_reader_unavailable",
+            "message": "Agent bound reader is unavailable",
+        },
+        "meta": {"request_id": "bound-reader-test"},
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("headers", "query", "body", "status", "code"),
+    [
+        ({}, {}, None, 401, "agent_reader_auth_failed"),
+        ({"authorization": "Bearer secret"}, {}, None, 401, "agent_reader_auth_failed"),
+        ({"authorization": "Bearer billing"}, {}, None, 403, "agent_reader_forbidden"),
+        (
+            {"authorization": "Bearer billing", "x-kokoro-tenant-ref": " tenant"},
+            {},
+            None,
+            403,
+            "agent_reader_forbidden",
+        ),
+        (
+            {
+                "authorization": "Bearer billing",
+                "x-kokoro-tenant-ref": "tenant",
+                "x-kokoro-subject-ref": "",
+            },
+            {},
+            None,
+            403,
+            "agent_reader_forbidden",
+        ),
+        (
+            {
+                "authorization": "Bearer billing",
+                "x-kokoro-tenant-ref": "tenant",
+                "content-length": "1",
+            },
+            {},
+            None,
+            403,
+            "agent_reader_forbidden",
+        ),
+        (
+            {"authorization": "Bearer billing", "x-kokoro-tenant-ref": "tenant"},
+            {},
+            {},
+            403,
+            "agent_reader_forbidden",
+        ),
+        (
+            {"authorization": "Bearer billing", "x-kokoro-tenant-ref": "tenant"},
+            {"extra": ["1"]},
+            None,
+            400,
+            "invalid_model_call_bound_identity",
+        ),
+    ],
+)
+async def test_bound_reader_closed_admission_never_queries_database(
+    monkeypatch: pytest.MonkeyPatch,
+    headers: dict[str, str],
+    query: dict[str, list[str]],
+    body: dict[str, object] | None,
+    status: int,
+    code: str,
+) -> None:
+    def unexpected(*args: object, **kwargs: object) -> Never:
+        raise AssertionError("rejected reader must not construct a repository")
+
+    monkeypatch.setattr(http_server, "PostgresModelCallRepository", unexpected)
+    actual, payload = await dispatch_request(
+        Config(billing_model_call_reader_secret=SecretStr("billing")),
+        "GET",
+        "/v1/model-call-bounds/mcb_00000000-0000-5000-8000-000000000001",
+        query,
+        headers,
+        body,
+    )
+    assert actual == status
+    assert isinstance(payload["error"], dict) and payload["error"]["code"] == code
+
+
+def test_bound_reader_real_host_preserves_absence_and_empty_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.call_models import CurrentModelCallBound
+
+    reads: list[tuple[str, str]] = []
+
+    class Repository:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def read_bound(self, tenant: str, ref: str) -> CurrentModelCallBound:
+            reads.append((tenant, ref))
+            return CurrentModelCallBound(
+                planned_binding_ref="mpb_00000000-0000-5000-8000-000000000001",
+                planned_binding_digest="a" * 64,
+                planned_binding_bytes=b"{}",
+                execution_bound_ref=ref,
+                execution_bound_digest="b" * 64,
+                execution_bound_artifact_version="1.0.0",
+                execution_bound_revision="1",
+                execution_bound_bytes=b"{}",
+            )
+
+    monkeypatch.setattr(http_server, "PostgresModelCallRepository", Repository)
+    instance = create_http_server(
+        Config(billing_model_call_reader_secret=SecretStr("billing")), "127.0.0.1", 0
+    )
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    ref = "mcb_00000000-0000-5000-8000-000000000001"
+    base = f"GET /v1/model-call-bounds/{ref} HTTP/1.1\r\nHost: local\r\nAuthorization: Bearer billing\r\nX-Kokoro-Tenant-Ref: tenant\r\nX-Request-Id: host-bound\r\nConnection: close\r\n"
+    try:
+        address = (str(instance.server_address[0]), int(instance.server_address[1]))
+        good = _parts(_raw(address, (base + "\r\n").encode()))
+        assert good[0] == 200
+        assert good[1]["cache-control"] == "no-store"
+        assert good[1]["x-request-id"] == "host-bound"
+        assert len(json.loads(good[2])["data"]) == 8
+        assert reads == [("tenant", ref)]
+        for extra in ("X-Kokoro-Subject-Ref: \r\n", "Transfer-Encoding: \r\n"):
+            denied = _parts(_raw(address, (base + extra + "\r\n").encode()))
+            assert denied[0] == 403
+            assert json.loads(denied[2])["error"]["code"] == "agent_reader_forbidden"
+        assert reads == [("tenant", ref)]
+    finally:
+        instance.shutdown()
+        instance.server_close()
+        thread.join(timeout=2)
+
+
+@pytest.mark.parametrize("phase", ["listener", "stop_lock"])
+@pytest.mark.parametrize("stop_signal", [signal.SIGINT, signal.SIGTERM])
+def test_http_signal_before_poll_is_lock_free_and_releases_listener(
+    tmp_path: Path, phase: str, stop_signal: signal.Signals
+) -> None:
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = int(reservation.getsockname()[1])
+    script = r"""
+import inspect
+import os
+from pathlib import Path
+import signal
+import socket
+import sys
+import threading
+from kokoro_agent.interfaces.http import main as owner
+
+phase = os.environ["SIGNAL_PHASE"]
+stop_signal = int(os.environ["SIGNAL_NUMBER"])
+injected = Path(os.environ["SIGNAL_INJECTED"])
+original_create = owner.create_http_server
+fired = False
+
+def create(*args, **kwargs):
+    server = original_create(*args, **kwargs)
+    if phase == "listener":
+        with socket.create_connection(server.server_address, timeout=0.2):
+            pass
+        injected.write_text("listener", encoding="utf-8")
+        os.kill(os.getpid(), stop_signal)
+    return server
+owner.create_http_server = create
+
+def trace(frame, event, arg):
+    global fired
+    if event == "line" and not fired and frame.f_code is owner.main.__code__:
+        running = any(thread.name == "kokoro-agent-http-server" and thread.is_alive()
+                      for thread in threading.enumerate())
+        if phase == "stop_lock" and running:
+            fired = True
+            # The old callback closes over an Event whose non-reentrant lock
+            # may already be held when a Python signal interrupts main.
+            callback = signal.getsignal(stop_signal)
+            cells = () if not inspect.isfunction(callback) else callback.__closure__ or ()
+            events = [cell.cell_contents for cell in cells
+                      if isinstance(cell.cell_contents, threading.Event)]
+            lock = events[0]._cond if events else threading.Condition(threading.Lock())
+            with lock:
+                injected.write_text("stop_lock", encoding="utf-8")
+                os.kill(os.getpid(), stop_signal)
+    return trace
+sys.settrace(trace)
+try:
+    owner.main()
+finally:
+    sys.settrace(None)
+"""
+    environment = os.environ.copy()
+    marker = tmp_path / "injected"
+    environment.update(
+        KOKORO_AGENT_HTTP_HOST="127.0.0.1",
+        KOKORO_AGENT_HTTP_PORT=str(port),
+        KOKORO_AGENT_CONFIG="",
+        SIGNAL_PHASE=phase,
+        SIGNAL_NUMBER=str(int(stop_signal)),
+        SIGNAL_INJECTED=str(marker),
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        _, stderr = process.communicate(timeout=3)
+        assert marker.read_text(encoding="utf-8") == phase
+        assert process.returncode == 0, stderr.decode()
+        with socket.socket() as rebound:
+            rebound.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            rebound.bind(("127.0.0.1", port))
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=1)
+
+
+def test_http_constructor_failure_restores_signal_handlers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = {item: signal.getsignal(item) for item in (signal.SIGINT, signal.SIGTERM)}
+
+    def failed(*args: object, **kwargs: object) -> Never:
+        assert all(signal.getsignal(item) != before[item] for item in before)
+        raise OSError("owned bind failure")
+
+    monkeypatch.setattr(http_main, "create_http_server", failed)
+    with pytest.raises(OSError, match="owned bind failure"):
+        http_main.main()
+    assert {item: signal.getsignal(item) for item in before} == before
+
+
+@pytest.mark.parametrize(
+    ("extra", "authorization", "expected"),
+    [
+        ("Content-Length: 0\r\nContent-Length: 1\r\n", "Bearer billing", 403),
+        ("Content-Length: 0\r\nContent-Length: 0\r\n", "Bearer billing", 403),
+        ("Content-Length: 0, 1\r\n", "Bearer billing", 403),
+        ("X-Kokoro-Tenant-Ref: foreign\r\n", "Bearer billing", 403),
+        ("Authorization: Bearer another\r\n", "Bearer billing", 403),
+        ("Content-Length: 0\r\nContent-Length: 1\r\n", "Bearer wrong", 401),
+        ("Authorization: Bearer billing\r\n", "Bearer wrong", 401),
+    ],
+)
+def test_bound_reader_rejects_ambiguous_wire_after_auth_without_read(
+    monkeypatch: pytest.MonkeyPatch,
+    extra: str,
+    authorization: str,
+    expected: int,
+) -> None:
+    reads: list[tuple[str, str]] = []
+
+    class Repository:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def read_bound(self, tenant: str, ref: str) -> None:
+            reads.append((tenant, ref))
+
+    monkeypatch.setattr(http_server, "PostgresModelCallRepository", Repository)
+    instance = create_http_server(
+        Config(billing_model_call_reader_secret=SecretStr("billing")), "127.0.0.1", 0
+    )
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    base = (
+        "GET /v1/model-call-bounds/mcb_00000000-0000-5000-8000-000000000001 HTTP/1.1\r\n"
+        f"Host: local\r\nAuthorization: {authorization}\r\n"
+        "X-Kokoro-Tenant-Ref: tenant\r\nX-Request-Id: ambiguous-bound\r\nConnection: close\r\n"
+    )
+    try:
+        address = (str(instance.server_address[0]), int(instance.server_address[1]))
+        status, headers, body = _parts(_raw(address, (base + extra + "\r\nx").encode()))
+        assert status == expected
+        assert json.loads(body)["error"]["code"] == (
+            "agent_reader_auth_failed" if expected == 401 else "agent_reader_forbidden"
+        )
+        assert headers["cache-control"] == "no-store"
+        assert headers["x-request-id"] == "ambiguous-bound"
+        assert reads == []
+    finally:
+        instance.shutdown()
+        instance.server_close()
+        thread.join(timeout=2)
+
+
+def test_bound_reader_expiry_http_mapping_keeps_request_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Repository:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def read_bound(self, tenant: str, ref: str) -> Never:
+            raise ModelCallBoundExpired("expired")
+
+    monkeypatch.setattr(http_server, "PostgresModelCallRepository", Repository)
+    instance = create_http_server(
+        Config(billing_model_call_reader_secret=SecretStr("billing")), "127.0.0.1", 0
+    )
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    try:
+        address = (str(instance.server_address[0]), int(instance.server_address[1]))
+        status, headers, body = _parts(
+            _raw(
+                address,
+                b"GET /v1/model-call-bounds/mcb_00000000-0000-5000-8000-000000000001 HTTP/1.1\r\n"
+                b"Host: local\r\nAuthorization: Bearer billing\r\nX-Kokoro-Tenant-Ref: tenant\r\n"
+                b"X-Request-Id: expiry-bound\r\nConnection: close\r\n\r\n",
+            )
+        )
+        assert status == 410
+        assert headers["cache-control"] == "no-store"
+        assert headers["x-request-id"] == "expiry-bound"
+        assert json.loads(body) == {
+            "error": {
+                "code": "model_call_bound_expired",
+                "message": "Model-call bound is expired",
+            },
+            "meta": {"request_id": "expiry-bound"},
+        }
+    finally:
+        instance.shutdown()
+        instance.server_close()
+        thread.join(timeout=2)
+
+
+def test_signal_flag_closes_request_gate_before_main_can_start_draining(
+    tmp_path: Path,
+) -> None:
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = int(reservation.getsockname()[1])
+    script = r"""
+import http.client
+import json
+import os
+import signal
+from kokoro_agent.interfaces.http import main as owner
+from kokoro_agent.interfaces.http import server as host
+
+port = int(os.environ["KOKORO_AGENT_HTTP_PORT"])
+original_sleep = owner.time.sleep
+observed = False
+body_calls = 0
+dispatch_calls = 0
+
+def body(self):
+    global body_calls
+    body_calls += 1
+    raise AssertionError("stopped request read body")
+async def dispatch(*args, **kwargs):
+    global dispatch_calls
+    dispatch_calls += 1
+    raise AssertionError("stopped request reached dependency boundary")
+host.AgentRequestHandler._body = body
+host.dispatch_request = dispatch
+
+def poll(seconds):
+    global observed
+    if not observed:
+        observed = True
+        # Callback returns while main is deliberately kept inside this poll.
+        os.kill(os.getpid(), signal.SIGINT)
+        for method, path, bearer, expected, code in (
+            ("GET", "/readyz", "secret", 503, "agent_draining"),
+            ("POST", "/healthz", "secret", 503, "agent_draining"),
+            ("POST", "/healthz", "wrong", 401, "service_auth_failed"),
+        ):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            connection.request(method, path, headers={"Authorization": "Bearer " + bearer,
+                               "Content-Length": "999999999", "Connection": "close"})
+            response = connection.getresponse()
+            document = json.loads(response.read())
+            assert response.status == expected, document
+            assert document["error"]["code"] == code, document
+            connection.close()
+        assert body_calls == dispatch_calls == 0
+    original_sleep(seconds)
+owner.time.sleep = poll
+owner.main()
+assert observed
+"""
+    environment = os.environ.copy()
+    environment.update(
+        KOKORO_AGENT_HTTP_HOST="127.0.0.1",
+        KOKORO_AGENT_HTTP_PORT=str(port),
+        KOKORO_AGENT_CONFIG="",
+        KOKORO_INTERNAL_SECRET_AGENT="secret",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        timeout=3,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+
+
+def test_http_thread_start_failure_closes_listener_and_restores_handlers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = {item: signal.getsignal(item) for item in (signal.SIGINT, signal.SIGTERM)}
+    created: list[http_server.AgentHttpServer] = []
+    original_create = http_main.create_http_server
+
+    def create(*args: object, **kwargs: object) -> http_server.AgentHttpServer:
+        instance = original_create(Config(), "127.0.0.1", 0)
+        created.append(instance)
+        return instance
+
+    def failed_start(self: threading.Thread) -> Never:
+        raise RuntimeError("owned thread start failure")
+
+    monkeypatch.setattr(http_main, "create_http_server", create)
+    monkeypatch.setattr(threading.Thread, "start", failed_start)
+    with pytest.raises(RuntimeError, match="owned thread start failure"):
+        http_main.main()
+    assert len(created) == 1
+    assert created[0].socket.fileno() == -1
+    assert {item: signal.getsignal(item) for item in before} == before

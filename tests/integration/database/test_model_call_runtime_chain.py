@@ -9,7 +9,7 @@ import json
 import re
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal, Never, ParamSpec, TypeVar
 from uuid import uuid4
 
@@ -260,17 +260,17 @@ def _system_route_body(base_url: str) -> bytes:
                 "digest": "a" * 64,
                 "generation": "1",
                 "tenant_generation": "1",
-                "provider_model_name": "provider-model-r197",
-                "request_model": "gateway-model-r197",
+                "provider_model_name": "gpt-4o-2024-08-06",
+                "request_model": "gpt-4o-2024-08-06",
                 "feature_key": "chat",
                 "label_key": "default",
                 "connection": {
                     "protocol": "openai_chat_completions",
                     "connection_type": "direct",
-                    "base_url": base_url,
+                    "base_url": "https://api.openai.com/v1",
                     "secret_handle_ref": "runtime-chain-model-key",
                 },
-                "context_window": 8192,
+                "context_window": 128000,
                 "max_output_tokens": 256,
             }
         },
@@ -761,12 +761,118 @@ async def _close_test_handle(
         primary.add_note("agent handle cleanup also failed: " + type(error).__name__)
 
 
+@pytest.fixture(autouse=True)
+def forbid_official_provider_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero-send trap, not provider evidence or an authorization replacement."""
+    import httpx
+
+    original = httpx.AsyncHTTPTransport.handle_async_request
+
+    async def bounded(
+        self: httpx.AsyncHTTPTransport, request: httpx.Request
+    ) -> httpx.Response:
+        if request.url.host == "api.openai.com":
+            raise AssertionError("provider transport must never be reached")
+        return await original(self, request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", bounded)
+
+
+async def _supported_text_mechanism(
+    handle: AgentHandle,
+    dependencies: WorkerDependencies,
+    request: RunRequest,
+    lease: LeaseFence,
+    database_url: str,
+    schema: str,
+) -> AgentHandle:
+    """Official no-tool graph exercises the real gate, not default DeepAgents.
+
+    The default graph remains separately tested as unsupported. The same durable
+    recipe/run lock and production middleware are used by this bounded fixture.
+    """
+    import langchain.agents as official_agents
+
+    create_agent: Callable[..., object] = TypeAdapter[Callable[..., object]](
+        Callable[..., object]
+    ).validate_python(vars(official_agents)["create_agent"], strict=True)
+    from kokoro_agent.execution.protocols import require_agent_runnable
+    from deepagents._subagent_transformer import SubagentTransformer
+    from kokoro_agent.model.factory import make_chat_model, model_from_route
+    from kokoro_agent.model.call_runtime import ModelCallRuntimeMiddleware
+    from kokoro_agent.domain.run.models import StaticRecipeBinding
+    from kokoro_agent.protocol.model_usage_v2_generated import PlannedBinding
+
+    clients = handle.model_clients[0]
+    route = clients.route
+    async with connect_pg(database_url) as connection, connection.cursor() as cursor:
+        await execute_sql(
+            cursor,
+            f"SELECT assembly_recipe_bytes,assembly_recipe_fingerprint FROM {qualified(schema, 'kokoro_agent_run')} WHERE run_id=%s",
+            (request.run_id,),
+        )
+        row = await fetch_one(cursor)
+        assert row is not None
+    raw = row["assembly_recipe_bytes"]
+    assert isinstance(raw, bytes)
+    recipe = StaticRecipeBinding(
+        canonical_bytes=raw, fingerprint=str(row["assembly_recipe_fingerprint"])
+    )
+    feature = _JSON_OBJECT.validate_python(
+        _JSON_OBJECT.validate_json(raw)["feature"], strict=True
+    )
+    entry = feature["entry_agent"]
+    assert isinstance(entry, str)
+    planned = PlannedBinding(
+        binding_version="2.0.0",
+        model=route.model_id,
+        provider=route.provider_id,
+        revision_id=route.revision_id,
+        provider_model_name=route.provider_model_name,
+        request_model=route.request_model,
+        feature_key=route.feature_key,
+        revision=str(route.revision),
+        generation=route.generation,
+        tenant_generation=route.tenant_generation,
+        digest=route.digest,
+        label=route.label_key,
+    )
+    repository = dependencies.model_call_repository
+    assert repository is not None
+    model = make_chat_model(
+        dependencies.model, model_from_route(route, None), model_clients=clients
+    )
+    middleware = ModelCallRuntimeMiddleware(
+        repository=repository,
+        request=request,
+        lease=lease,
+        planned=planned,
+        recipe=recipe,
+        peer_path=(entry,),
+    )
+
+    def stream_transformer(scope: tuple[str, ...] = ()) -> SubagentTransformer:
+        return SubagentTransformer(scope, subagent_names=frozenset())
+
+    graph = create_agent(
+        model=model,
+        tools=[],
+        middleware=[middleware],
+        checkpointer=dependencies.checkpointer,
+        name=entry,
+        transformers=[stream_transformer],
+    )
+    return replace(handle, runnable=require_agent_runnable(graph))
+
+
+@pytest.mark.parametrize("supported", [True, False])
 async def test_r198_unpublished_billing_fails_closed_and_seals_not_dispatched(
     run_repository: RunRepository,
     run_chat_database_url: str,
     run_chat_schema: str,
     checkpointer: BaseCheckpointSaver[str],
     memory_store: BaseStore,
+    supported: bool,
 ) -> None:
     request = _request()
     scope = RunScope.of(request)
@@ -811,6 +917,15 @@ async def test_r198_unpublished_billing_fails_closed_and_seals_not_dispatched(
             model_resolver=resolver,
         )
         handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        if supported:
+            handle = await _supported_text_mechanism(
+                handle,
+                dependencies,
+                request,
+                lease,
+                run_chat_database_url,
+                run_chat_schema,
+            )
         emitter = await RunEmitter.attach(
             FakeBus(), request.run_id, outbox=run_repository, lease=lease
         )
@@ -873,6 +988,31 @@ async def test_r198_unpublished_billing_fails_closed_and_seals_not_dispatched(
         facts = await _lifecycle_facts(
             run_chat_database_url, run_chat_schema, request.run_id
         )
+        if not supported:
+            assert terminal_claimed is True
+            assert (
+                peer.owner_requests == 1
+                and peer.provider_requests == 0
+                and peer.unknown_requests == []
+            )
+            assert facts == {
+                "run": {
+                    "terminal": True,
+                    "interaction_phase": "terminal",
+                    "attempts": 0,
+                    "dispatched": 0,
+                    "sealed": 0,
+                    "unknown": 0,
+                    "completeness": "none",
+                },
+                "attempt": None,
+                "evidence": None,
+                "terminal": {
+                    "kind": "run.failed",
+                    "payload": {"code": "contract_incompatible", "retryable": False},
+                },
+            }
+            return
         assert {
             "terminal_claimed": terminal_claimed,
             "owner_requests": peer.owner_requests,
@@ -976,6 +1116,9 @@ async def test_r199_prepare_lock_cancellation_propagates_and_rolls_back(
             model_resolver=resolver,
         )
         handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        handle = await _supported_text_mechanism(
+            handle, dependencies, request, lease, run_chat_database_url, run_chat_schema
+        )
         invoke_task: asyncio.Task[bool] | None = None
         invoke_task_consumed = False
         checkpoint_after_cancel: tuple[object, ...] = ()
@@ -1197,6 +1340,9 @@ async def test_r199_terminal_supervisor_recovery_is_byte_stable_and_zero_write(
             model_resolver=resolver,
         )
         handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        handle = await _supported_text_mechanism(
+            handle, dependencies, request, lease, run_chat_database_url, run_chat_schema
+        )
         terminal_bus = FakeBus()
         emitter = await RunEmitter.attach(
             terminal_bus, request.run_id, outbox=run_repository, lease=lease
@@ -1406,6 +1552,9 @@ async def test_r245_native_final_request_precedes_prepare_without_billing(
             model_resolver=resolver,
         )
         handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        handle = await _supported_text_mechanism(
+            handle, dependencies, request, lease, run_chat_database_url, run_chat_schema
+        )
         emitter = await RunEmitter.attach(
             FakeBus(), request.run_id, outbox=run_repository, lease=lease
         )
@@ -1523,10 +1672,10 @@ async def test_r245_native_final_request_precedes_prepare_without_billing(
         assert len(final_requests) == 1
         method, url, raw, hook_task = final_requests[0]
         assert method == "POST"
-        assert url == f"{peer.origin}/v1/chat/completions"
+        assert url == "https://api.openai.com/v1/chat/completions"
         assert hook_task is trace.task
         body = _JSON_OBJECT.validate_json(raw, strict=True)
-        assert body["model"] == "gateway-model-r197"
+        assert body["model"] == "gpt-4o-2024-08-06"
         assert body["n"] == 1
         assert body["max_completion_tokens"] == 256
         messages = _OBJECT_LIST.validate_python(body["messages"], strict=True)
@@ -1659,6 +1808,9 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
             model_resolver=resolver,
         )
         handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        handle = await _supported_text_mechanism(
+            handle, dependencies, request, lease, run_chat_database_url, run_chat_schema
+        )
         stack.push_async_callback(handle.aclose)
         route = await resolver.resolve(
             tenant_id=request.execution_identity.tenant_ref,

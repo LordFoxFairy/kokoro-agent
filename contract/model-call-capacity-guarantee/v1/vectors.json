@@ -1,0 +1,107 @@
+{
+  "valid": [
+    {
+      "name": "fixed-provider-documented-text-profile",
+      "value": {
+        "artifact_version": "1.0.0",
+        "owner": "kokoro-agent",
+        "guarantee_id": "openai-gpt4o-20240806-text-standard-v1",
+        "profile_id": "openai_chat_completions_capacity_v1",
+        "trust_class": "provider-documented/Agent-enforced",
+        "protocol": "openai_chat_completions",
+        "connection_type": "direct",
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "request_model": "gpt-4o-2024-08-06",
+        "context_window": 128000,
+        "max_output_tokens": 16384,
+        "unit": "token",
+        "n": 1,
+        "stream": false,
+        "service_tier": "default",
+        "store": false,
+        "roles": [
+          "system",
+          "user",
+          "assistant"
+        ],
+        "request_fields": [
+          "model",
+          "messages",
+          "n",
+          "max_completion_tokens",
+          "stream",
+          "service_tier",
+          "store"
+        ],
+        "joint_constraints": [
+          "0<=P<=128000",
+          "0<=O<=M<=16384",
+          "total=P+O",
+          "K+U=P",
+          "R+V=O"
+        ],
+        "unsupported_policy": "fail_closed_before_prepare",
+        "uncertain_result_policy": "unknown_no_retry_no_automatic_release",
+        "sunset": "2027-01-14T00:00:00Z",
+        "evidence_checked_on": "2026-10-23",
+        "enforcement_revision": "agent-final-wire-text-v1",
+        "usage_semantics": "cached_input_subset_of_prompt;reasoning_subset_of_completion;no_extra_cache_write_fee_for_fixed_4o;unknown_categories_unsupported",
+        "normalization_owner": "kokoro-agent",
+        "normalization_version": "1.0.0",
+        "normalization_manifest_aggregate_sha256": "ecd30d1908f410eed29181c9f52669f824312bf3a2e3874153d990b95fe58b91",
+        "evidence_version": "1.0.0",
+        "evidence_sha256": "e8ddcfc7e711d95c5324d319bfe254f7e15008708546616199748c7739d0201f"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-field",
+      "mutation": {
+        "extra": true
+      }
+    },
+    {
+      "name": "wrong-owner",
+      "mutation": {
+        "owner": "caller"
+      }
+    },
+    {
+      "name": "wrong-cap",
+      "mutation": {
+        "context_window": 128001
+      }
+    },
+    {
+      "name": "wrong-endpoint",
+      "mutation": {
+        "endpoint": "https://other.invalid/v1/chat/completions"
+      }
+    },
+    {
+      "name": "wrong-tier",
+      "mutation": {
+        "service_tier": "auto"
+      }
+    },
+    {
+      "name": "wrong-sunset",
+      "mutation": {
+        "sunset": "2027-01-15T00:00:00Z"
+      }
+    },
+    {
+      "name": "normalization-identity",
+      "mutation": {
+        "normalization_version": "2.0.0"
+      }
+    },
+    {
+      "name": "evidence-identity",
+      "mutation": {
+        "evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ]
+}

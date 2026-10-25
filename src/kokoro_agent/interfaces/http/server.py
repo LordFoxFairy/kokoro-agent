@@ -18,7 +18,7 @@ import socket
 import threading
 from uuid import uuid4
 from uuid import UUID
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
@@ -42,7 +42,11 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
 from kokoro_agent.infrastructure.postgres_model_call_repository import (
     PostgresModelCallRepository,
 )
-from kokoro_agent.model.call_models import ModelCallEvidenceInvariantFailed
+from kokoro_agent.model.call_models import (
+    ModelCallEvidenceInvariantFailed,
+    ModelCallBoundStale,
+    ModelCallBoundExpired,
+)
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 
 LOGGER = logging.getLogger(__name__)
@@ -66,6 +70,10 @@ _JWKS_IDENTITY_HEADERS = (
 _MODEL_EVIDENCE = re.compile(
     r"^/v1/model-call-attempts/([^/]+)/usage-evidence/([^/]+)$"
 )
+_MODEL_BOUND = re.compile(r"^/v1/model-call-bounds/([^/]+)$")
+_BOUND_REF = re.compile(
+    r"^mcb_[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 _BILLING_FORBIDDEN_HEADERS = tuple(
     name for name in _JWKS_IDENTITY_HEADERS if name != "x-kokoro-tenant-ref"
 ) + ("x-kokoro-service",)
@@ -76,6 +84,7 @@ def _known_business_route(method: str, path: str) -> bool:
     if method == "GET":
         return (
             _MODEL_EVIDENCE.fullmatch(path) is not None
+            or _MODEL_BOUND.fullmatch(path) is not None
             or path in {"/healthz", "/readyz", "/v1/sessions"}
             or any(
                 pattern.fullmatch(path) is not None
@@ -194,6 +203,22 @@ def _billing_reader_auth_failure(
     return None
 
 
+def _bound_reader_auth_failure(
+    config: AgentConfig, headers: Mapping[str, str], request_id: str
+) -> tuple[int, dict[str, object]] | None:
+    failure = _billing_reader_auth_failure(config, headers, request_id)
+    if failure is None:
+        return None
+    status, _ = failure
+    return status, _error(
+        "agent_reader_unavailable" if status == 503 else "agent_reader_auth_failed",
+        "Agent bound reader is unavailable"
+        if status == 503
+        else "Agent bound reader authentication failed",
+        request_id,
+    )
+
+
 def _identity(headers: Mapping[str, str]) -> ExecutionIdentity:
     tenant = headers.get("x-kokoro-tenant-ref", "").strip()
     subject = headers.get("x-kokoro-subject-ref", "").strip()
@@ -290,14 +315,84 @@ async def dispatch_request(
     request_id = _request_id(headers)
     if method == "GET" and path == "/healthz":
         return 200, {"status": "ok", "service": "kokoro-agent"}
+    bound_match = _MODEL_BOUND.fullmatch(path) if method == "GET" else None
     evidence_match = _MODEL_EVIDENCE.fullmatch(path) if method == "GET" else None
     auth_failure = (
-        _billing_reader_auth_failure(config, headers, request_id)
+        _bound_reader_auth_failure(config, headers, request_id)
+        if bound_match is not None
+        else _billing_reader_auth_failure(config, headers, request_id)
         if evidence_match is not None
         else _service_auth_failure(config, headers, request_id)
     )
     if auth_failure is not None:
         return auth_failure
+    if bound_match is not None:
+        tenant = headers.get("x-kokoro-tenant-ref", "")
+        if (
+            _TENANT_REF.fullmatch(tenant) is None
+            or any(name in headers for name in _BILLING_FORBIDDEN_HEADERS)
+            or body is not None
+            or headers.get("content-length", "").strip() not in {"", "0"}
+            or "transfer-encoding" in headers
+        ):
+            return 403, _error(
+                "agent_reader_forbidden",
+                "Agent bound reader identity is invalid",
+                request_id,
+            )
+        ref = bound_match.group(1)
+        if query or _BOUND_REF.fullmatch(ref) is None:
+            return 400, _error(
+                "invalid_model_call_bound_identity",
+                "Model-call bound identity is invalid",
+                request_id,
+            )
+        repository = PostgresModelCallRepository(
+            config.database_url, config.database_schema, total_timeout_seconds=10.0
+        )
+        try:
+            value = await repository.read_bound(tenant, ref)
+        except ModelCallBoundStale:
+            return 409, _error(
+                "model_call_bound_stale", "Model-call bound is stale", request_id
+            )
+        except ModelCallBoundExpired:
+            return 410, _error(
+                "model_call_bound_expired", "Model-call bound is expired", request_id
+            )
+        except Exception:
+            return 503, _error(
+                "agent_reader_unavailable",
+                "Agent bound reader is unavailable",
+                request_id,
+            )
+        if value is None:
+            return 404, _error(
+                "model_call_bound_not_found",
+                "Model-call bound was not found",
+                request_id,
+            )
+        return 200, _envelope(
+            {
+                "planned_binding_ref": value.planned_binding_ref,
+                "planned_binding_digest": value.planned_binding_digest,
+                "planned_binding_bytes_base64url": base64.urlsafe_b64encode(
+                    value.planned_binding_bytes
+                )
+                .rstrip(b"=")
+                .decode("ascii"),
+                "execution_bound_ref": value.execution_bound_ref,
+                "execution_bound_digest": value.execution_bound_digest,
+                "execution_bound_artifact_version": value.execution_bound_artifact_version,
+                "execution_bound_revision": value.execution_bound_revision,
+                "execution_bound_bytes_base64url": base64.urlsafe_b64encode(
+                    value.execution_bound_bytes
+                )
+                .rstrip(b"=")
+                .decode("ascii"),
+            },
+            request_id,
+        )
     if evidence_match is not None:
         tenant = headers.get("x-kokoro-tenant-ref", "").strip()
         content_length = headers.get("content-length", "").strip()
@@ -668,15 +763,27 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         evidence_target = False
         try:
             split = urlsplit(self.path)
+            if self.command == "GET" and _MODEL_BOUND.fullmatch(split.path) is not None:
+                # This closed reader distinguishes an absent assertion from an
+                # explicitly empty wire override; old routes keep their mapping.
+                headers = {
+                    name: value
+                    for name, value in headers.items()
+                    if name in self.headers
+                }
+                headers["x-request-id"] = request_id
             is_health_request = self.command == "GET" and split.path == "/healthz"
             config = None if is_health_request else self._config()
             if config is not None:
-                evidence_target = (
-                    self.command == "GET"
-                    and _MODEL_EVIDENCE.fullmatch(split.path) is not None
+                evidence_target = self.command == "GET" and (
+                    _MODEL_EVIDENCE.fullmatch(split.path) is not None
+                    or _MODEL_BOUND.fullmatch(split.path) is not None
                 )
                 auth_failure = (
-                    _billing_reader_auth_failure(config, headers, request_id)
+                    _bound_reader_auth_failure(config, headers, request_id)
+                    if _MODEL_BOUND.fullmatch(split.path) is not None
+                    and self.command == "GET"
+                    else _billing_reader_auth_failure(config, headers, request_id)
                     if evidence_target
                     else _service_auth_failure(config, headers, request_id)
                 )
@@ -695,6 +802,28 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                             request_id,
                         ),
                         request_id=request_id if evidence_target else None,
+                    )
+                    return
+                if (
+                    self.command == "GET"
+                    and _MODEL_BOUND.fullmatch(split.path) is not None
+                    and any(
+                        len(self.headers.get_all(name, [])) > 1
+                        for name in (
+                            "authorization",
+                            "x-kokoro-tenant-ref",
+                            "content-length",
+                        )
+                    )
+                ):
+                    self._json_response(
+                        403,
+                        _error(
+                            "agent_reader_forbidden",
+                            "Agent bound reader identity is invalid",
+                            request_id,
+                        ),
+                        request_id=request_id,
                     )
                     return
             if self.command not in {"GET", "POST"}:
@@ -793,10 +922,12 @@ class AgentHttpServer(ThreadingHTTPServer):
         address: tuple[str, int],
         config: AgentConfig,
         execution_proof_jwks: ExecutionProofJwksState,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> None:
         self._handler_condition = threading.Condition()
         self._active_handlers = 0
         self._draining = False
+        self._stop_requested = stop_requested
         self.kokoro_config = config
         self.execution_proof_jwks = execution_proof_jwks
         super().__init__(address, AgentRequestHandler)
@@ -830,7 +961,9 @@ class AgentHttpServer(ThreadingHTTPServer):
 
     def try_admit_request(self) -> bool:
         with self._handler_condition:
-            return not self._draining
+            return not self._draining and not (
+                self._stop_requested is not None and self._stop_requested()
+            )
 
     def wait_for_active_handlers(self, timeout: float) -> bool:
         with self._handler_condition:
@@ -845,11 +978,13 @@ def create_http_server(
     port: int,
     *,
     execution_proof_jwks: ExecutionProofJwksState | None = None,
+    stop_requested: Callable[[], bool] | None = None,
 ) -> AgentHttpServer:
     return AgentHttpServer(
         (host, port),
         config,
         execution_proof_jwks or ExecutionProofJwksState.unavailable(),
+        stop_requested,
     )
 
 

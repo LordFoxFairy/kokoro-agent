@@ -189,6 +189,10 @@ def test_public_checker_rejects_coordinated_rewrite_of_historical_usage_v1(
 
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_call_bound_contract import AUDIT_FILES as BOUND_AUDIT_FILES
+    from kokoro_agent.model_call_capacity_guarantee_contract import (
+        AUDIT_FILES as CAPACITY_AUDIT_FILES,
+    )
     from kokoro_agent.model_usage_contract import (
         USAGE_AUDIT_FILES,
         generate_model_usage_artifact,
@@ -200,7 +204,13 @@ def test_public_checker_rejects_coordinated_rewrite_of_historical_usage_v1(
     )
 
     shutil.copytree(ROOT / "contract", tmp_path / "contract")
-    for relative in {*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES}:
+    for relative in {
+        *OWNER_SOURCE_FILES,
+        *USAGE_AUDIT_FILES,
+        *USAGE_V2_AUDIT_FILES,
+        *CAPACITY_AUDIT_FILES,
+        *BOUND_AUDIT_FILES,
+    }:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
@@ -229,6 +239,10 @@ def test_public_checker_validates_current_usage2_not_only_historical_usage1(
     import shutil
     from kokoro_agent import contract_check
     from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+    from kokoro_agent.model_call_bound_contract import AUDIT_FILES as BOUND_AUDIT_FILES
+    from kokoro_agent.model_call_capacity_guarantee_contract import (
+        AUDIT_FILES as CAPACITY_AUDIT_FILES,
+    )
     from kokoro_agent.model_usage_contract import USAGE_AUDIT_FILES
 
     from kokoro_agent.model_usage_v2_contract import (
@@ -236,7 +250,13 @@ def test_public_checker_validates_current_usage2_not_only_historical_usage1(
     )
 
     shutil.copytree(ROOT / "contract", tmp_path / "contract")
-    for relative in {*OWNER_SOURCE_FILES, *USAGE_AUDIT_FILES, *USAGE_V2_AUDIT_FILES}:
+    for relative in {
+        *OWNER_SOURCE_FILES,
+        *USAGE_AUDIT_FILES,
+        *USAGE_V2_AUDIT_FILES,
+        *CAPACITY_AUDIT_FILES,
+        *BOUND_AUDIT_FILES,
+    }:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)

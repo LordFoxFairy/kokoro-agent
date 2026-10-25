@@ -9,7 +9,11 @@ claim that a LangGraph checkpoint was actually observed.
 
 from __future__ import annotations
 
-from support.model_http_mechanism import synthetic_final_digest
+from support.model_call_bound import (
+    supported_final_digest,
+    supported_material,
+    supported_attempt_id,
+)
 
 from kokoro_agent.protocol import SkillProgressSink
 
@@ -266,14 +270,14 @@ async def _open_model_attempts(
         model="model-a3b",
         provider="provider-a3b",
         revision_id="revision-a3b",
-        provider_model_name="provider-model-a3b",
-        request_model="gateway-a3b",
+        provider_model_name="gpt-4o-2024-08-06",
+        request_model="gpt-4o-2024-08-06",
         feature_key=run.feature_key,
         revision="1",
         generation="1",
         tenant_generation="1",
         digest="a" * 64,
-        label=None,
+        label="qa",
     )
     repository = PostgresModelCallRepository(url, schema)
     attempts: dict[str, str] = {}
@@ -285,12 +289,13 @@ async def _open_model_attempts(
     ):
         prepared = await repository.prepare(
             PrepareModelCall(
+                capacity_request=supported_material(planned, run.input.content),
                 final_request_binding_version=1,
-                final_request_digest=synthetic_final_digest(planned, run.input.content),
+                final_request_digest=supported_final_digest(planned, run.input.content),
                 request=run,
                 lease=lease,
                 call_id=str(uuid4()),
-                attempt_id=str(uuid4()),
+                attempt_id=supported_attempt_id(),
                 planned=planned,
                 peer_path=("assistant",),
                 recipe=recipe,

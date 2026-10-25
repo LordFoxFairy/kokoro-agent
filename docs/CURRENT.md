@@ -1,3 +1,23 @@
+## NEXT-AUTH-D2：HTTP 生命周期与歧义头修复候选（2026-10-25）
+
+HTTP signal callback 只记录停止标志，避免重入 Event 的非重入锁；SIGINT/SIGTERM handler 在监听构造前安装，准入同步检查该标志，退出及构造失败恢复原 handler。保留原 drain 线性化、2 秒 deadline 与 3 秒退出断言。新增 bound GET 在专用认证后拒绝重复 Authorization、tenant 与 Content-Length；旧 route 行为保持。真实时序和 wire 负控首轮 9 FAIL/4 PASS，修复后定向 20 PASS；第一次修复仍有 2 FAIL，原日志保留。原随机 SIGINT 失败没有当时的栈证据，不将本轮两项确定风险当作其唯一根因。
+
+已补 bound expiry 的 410 映射、lease/profile sunset 最小值、毫秒向下取整、零生命周期拒绝及续租/跨 sunset 的原字节重放检查；新增真实 PG 时间边界 2 PASS。完整数据库目录（10 个 test 文件）与 HTTP ingress 验收 413 PASS/2 条 SDK 提醒，专属资源身份及库存首末一致；HTTP/codec 纯回归 169 PASS。格式 322 文件、lint、显式 venv Pyright、lock、三个正式生成器漂移检查与 contract checker 均通过。原有测试正文与拒绝断言保留，所有失败证据继续留存。
+
+本轮文档更新后停止源码写入，最终完整默认回归、六路径增量及 445 输入保护以 `next-agent-bound-d2-worker-v2.json` 为准；仍待独立审查与 Root 集成验收，未提交。normal Agent 仍 false、生产 harddeny 保留，Billing 消费与完整模型/工具/资金链路未完成。
+
+## NEXT-AUTH-D2：实现候选，最终门进行中（2026-10-23）
+
+已实现bound schema-first/strict codec、prepare同事务DB冻结、六列fresh installer和专用Billing真实HTTP reader；normal Agent仍false、harddeny保留，无Provider/模型/工具/资金动作。五个受影响真实PG/Redis/HTTP文件257 PASS/0 SKIP，专属Redis14首末0且runid相同；新增实际Python Agent host→真实PG bound GET正控1 PASS。测试真实SDK机制与默认DeepAgents unsupported旅程分开，不冒完整grant或默认任务可用。首轮失败及中断保留，最终精确命令/失败/哈希以next-agent-bound-d2-worker-v1.json为准。Root后续独立全资源/审查尚未完成。
+
+## NEXT-AUTH-D1：技术保证候选实现（2026-10-23，冻结等待Root独审）
+
+已实现独立capacity guarantee 1.0.0的schema-first模型/manifest/发行checker与资源加载，以及固定4o2024-08-06 puretext/nonstream/default tier/storefalse的factory窄分支。旧factory真实SDK序列化反例缺default tier为RED；当前最终wire观察为GREEN。捕获freeze为观察stub，不证明真实grant/prepare；原production harddeny/claimant门另行回归。正式evidence是Agent审核有限事实包，不是网页全文摘要；保证绑定现usage/v1 normalization owner/version/aggregate，不改旧artifact。
+
+稳定最终默认2464 PASS/773 deselected/2 SDK warnings（167.17秒）；具名七文件310 PASS，实际SDK及原owned生命周期五文件439 PASS；Root实际三文件378 PASS；Ruff格式/lint、显式venv Pyright、正规生成漂移与contract checker均通过。wheel/sdist构建通过，独立target加载已安装包完成checker正控、五asset加normalization manifest的缺失/RECORD篡改共12负控并精确恢复。依赖复用原frozen venv，不冒全新依赖环境。原失败、中断与source/manifest交错的非终态日志全部保留，不算通过；最终精确命令/hash以 `next-agent-capacity-d1-worker-v1.json` 为准。
+
+尚未Root独审、提交或正常激活。D2 bound/SQL/reader及Billing消费OPEN，Agent仍false；未运行模型/工具/资金/PG/Redis。此切片不适用默认DeepAgents工具请求，不代表完整grant链或提供方账单保证。
+
 ## 2026-10-19 现有执行能力集成交付
 
 本轮集成本地fffd38e与最新main815b4c1既有事实：保HTTP7/proof2、精确Skills与MCP生命周期、已批准model-connections/usage2源码及published通知不重发；同时保main首帧/终态原子receipt manifest。重复初始化SQL收敛在原PostgresRunRepositoryContext，通过原cursor/Run锁/事务调用，ON CONFLICT不覆盖任何水位/关闭标志；没有新模块、连接、事务框架或Schema。原800行边界保持，不通过抬高阈值或压空行隐藏问题。

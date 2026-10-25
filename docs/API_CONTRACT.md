@@ -1,3 +1,13 @@
+## NEXT-AUTH-D2：当前机器合同候选（2026-10-23）
+
+HTTP additive 7.1.0（URL仍/v1）；正式新增GET /v1/model-call-bounds/{bound_ref}，独立model-call-bound/v1 1.0.0与八字段closed投影沿R252。专用Billing secret无通用回退；tenant必需，真实空身份覆盖、GET body/Transfer-Encoding拒绝；no-store和request ID保持。404未知、409当前状态/fence失效、410到期、503损坏/依赖失败。旧Failure开放code不新增enum，旧usage/proof合同不变。机器资源由原生成/check/package入口登记；不将bound混入usage2或proof2。
+
+## NEXT-AUTH-D1：正式技术保证机器面（2026-10-23，候选待审）
+
+新增独立 `contract/model-call-capacity-guarantee/v1/{schema.json,guarantee.json,evidence.json,vectors.json,manifest.json}`，版本1.0.0、owner=kokoro-agent、profile=openai_chat_completions_capacity_v1。schema closed且所有字段required，包含固定endpoint/snapshot/transport、n/stream/tier/store、角色和最终request字段闭集、128000/16384及joint/subset语义、unknown策略、sunset和官方依据。guarantee canonical SHA与原始文件source SHA分别登记，不能用网页URL或caller数字替代身份；重复key、坏UTF8、超预算、未知owner/version/digest均拒绝。
+
+正常入口为 `scripts/generate_model_call_capacity_guarantee.py [--check]` 与现contract checker；生成protocol模型而不复制PlannedBinding。运行时只从当前发行资源显式读取，无网络/配置回退。该artifact不是新HTTP能力，也不发布bound reader；既有R252 GET /v1/model-call-bounds/{bound_ref}、八字段投影仍为D2目标，HTTP7和usage/proof均原字节。
+
 ## Raw通知不要求外部ACK（2026-10-19，实施门）
 
 当前HTTP7/Redis机器artifact与所有外部字段不变；BFF仍只读Agent durable Chat并写自身ledger，没有raw ACK endpoint。内部published通知不等待并不存在的外部receipt producer，移除宽限重发参数/配置及内部republish候选；Run/control admission receipt不是该通知回执。queued失败重试与精确Chat恢复不变。既有真实rejected和损坏历史保护继续，不把可丢通知称BFF已消费；不新增公开协议、自动模型/工具调用或扣费。
@@ -127,29 +137,33 @@ retryable的503可有限retry；404/500不自动retry。
 consumer固定。验证error envelope、request-id/no-store、method/path负例、response size、base64 roundtrip与artifact digest。当前不改
 OpenAPI，Billing不得复制本文JSON提前造client。
 
-## R252-AGENT-BOUND-D0：目标 artifact 与受认证 read（2026-10-05；未发布）
+## R252-AGENT-BOUND-D0：Agent 技术保证与逐 attempt 执行界（2026-10-23；仅设计）
 
-本节只冻结后继机器语义；当前公开机器事实仍是既有HTTP5、execution-proof与usage/v1，下面的`model-call-bound/v1`、route、version和digest尚不存在，不能被Billing pin或用于授权。
+**当前尚未实施。** 基线为 `9a2679f60f501a3fbe1eee7d0a6bb4f48ec7f243`；本阶段只收敛三设计，不修改源码、SQL、机器 artifact、测试或配置。现最终 HTTPX hook/prepare 已存在，但 bound producer/reader、Billing grant consumer尚未实现，harddeny保留，正常Agent仍false。下方2026-10-05及System3记录为历史，不覆盖本节目标。
 
-目标 `contract/model-call-bound/v1` artifact version拟固定`1.0.0`；下列是已冻结语义骨架，最终closed schema还必须纳入本节后述正式guarantee的exact机器身份，在该owner/source获批前不得生成schema/positive vector/manifest：
+Root已批准Agent现model-call owner发布versioned capacity-and-usage-semantics guarantee，信任类为 **provider-documented/Agent-enforced**：正式provider文档给固定snapshot容量与usage语义，Agent在最终materialized wire与单次dispatch边界执行closed profile。不是provider违约或任意异常账单绝对封顶保证；不需要新外部owner或本地tokenizer。System只选择受信连接/型号/revision，不凭配置整数制造guarantee。Billing仍独占商业mapping、rate/policy、quote、hold/grant与capture/release。
 
-- `artifact_version="1.0.0"`、`profile_id="openai_chat_completions_capacity_v1"`、`unit="token"`、`revision="1"`、`sealed=true`；
-- identity：`tenant_ref/run_id/call_id/attempt_id/attempt_ordinal`及原`lease.owner/generation`，producer固定`kokoro-agent`；
-- planned：完整现 `PlannedBinding`、`planned_binding_ref="mpb_<attempt UUID>"`与其现canonical SHA-256；
-- final request：binding version=`1`、现final digest、`request_profile="chat-completions-materialized-json-v1"`及final wire正整数`max_completion_tokens`；不含body/headers/secret；
-- System provenance固定为contract `3.0.0`、source commit `955bd587f46a771e43a4330d202d90a7d2d67262`、artifact SHA-256 `94ed91655741cbba66ce80a4c41717b9179cc509cb6858534e0b78aa3e6dc059`、provenance SHA-256 `5fda620ca1526f57d8759b2c6282ed6d674455a78e8ff9ee7fc0522e8f5a3832`、19-source receipt `aaf1428aa898592fb370021790d5e55cb3dd43b44080696dd2ec99f91904408b`，并携同planned revision的`context_window/max_output_tokens`；这些字段只证明目录来源，不是计费cap guarantee；
-- constraints是closed joint relation：input/output两个root有限上界、`total=input+output`、cache-read→input与reasoning→output的inclusive subset；cache-write/未知category、模态、协议进入显式unsupported闭集而非填0；
-- `bound_ref="mcb_<attempt UUID>"`、UTC毫秒`sealed_at/valid_until`。两瞬时点分别由同一事务DB clock和锁内lease expiry向下量化为不晚于原值的整数毫秒；payload不含自身digest，`execution_bound_digest=SHA256(RFC8785(payload))`由持久列/read envelope给出。
+首版固定direct `https://api.openai.com/v1/chat/completions`、`gpt-4o-2024-08-06`、`n=1`、`stream=false`、`service_tier=default`、`store=false`；messages仅system/user/assistant角色与字符串content。未知字段、tools/functions/tool_calls/role=tool、多模态、prediction、stream_options、cache options及额外tier拒绝；不允许客户端header或YAML自报保证。实际锁定SDK最终wire允许集需后继真实机制测试固定。当前factory的reasoning_effort与流式选项仅在匹配profile分支窄收敛，不改其他provider，不切默认模型。**首版不支持默认DeepAgents bind_tools任务**；本地function definitions/tool_calls/tool-result的独立token-only扩展及每工具journal授权保持OPEN，不把tools泛开放或宣称默认聊天已运行。
 
-整数都拒绝bool/float/string混型；count为非负int64，context/output/final cap为positive int32且`final cap <= max_output_tokens <= context_window`；量化后`valid_until > sealed_at`。数据库不得依赖TIMESTAMPTZ(3)隐式round，也不得由应用时钟或两次now分别生成二值。同attempt exact replay必须返回原bytes/digest/time；任一planned/final/System/profile/limit/lease漂移是identity conflict，不生成第二bound、不静默升revision。首版revision恒1且sealed，未来变更必须新attempt或新breaking artifact，不能原地续租/重算。
+技术约束unit=`token`：`0<=P<=128000`、`0<=O<=M<=16384`，M必须为最终wire真实cap且不超受信route输出cap；`total=P+O`、`K+U=P`、`R+V=O`，K为cached输入，R为reasoning输出。采用保守矩形，不以`P<=128000-M`缩小输入界，也不把K/R再加到根总量。容量不是actual；8MiB/字符数/预算不是token换算。初始profile技术有效期最晚 `2027-01-14T00:00:00Z`，每attempt expiry不得晚于lease/profile sunset；不是默认模型迁移，后继snapshot另行审查。
 
-**未满足的正向发布前置。** `openai_chat_completions_capacity_v1`只有在具名trusted owner发布versioned capacity-and-usage-semantics guarantee，且Agent固定其owner/version/digest并核其精确覆盖本planned provider/model/gateway后才可进入schema合法正向vector。该保证必须明确billable input/output cap、cache/reasoning inclusive关系及不存在未声明收费category；System 3.0 contract/provenance当前不含这些断言。因此当前没有合法positive bound fixture，producer/read/paid Admission必须fail closed。后继owner/source由Root另行批准；本合同不预造`guarantee_id`占位字段、不把provider网页/YAML/header/credential/tokenizer猜测塞进artifact。保证正式发布后才把其精确机器身份加入本schema并固定新freeze SHA，不得以本D0文字当机器证据。
+官方依据为OpenAI模型页、conversation-state、token-counting、Chat create、prompt-caching与deprecations正式文档（https://developers.openai.com/api/docs/models/gpt-4o 、https://developers.openai.com/api/docs/guides/conversation-state 、https://developers.openai.com/api/docs/guides/token-counting 、https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create 、https://developers.openai.com/api/docs/guides/prompt-caching 、https://developers.openai.com/api/docs/deprecations）。网页URL只作为审核证据，不能充当guarantee digest。正式机器身份由Agent固定artifact canonical内容/schema/vector/provenance产生；运行时不抓网页。保证须发布owner/id/version/digest、精确endpoint/snapshot/协议/transport/request闭集、上述根界/子集/category与unsupported规则、normalization引用、执行机制revision、证据版本/日期/摘要与sunset。缺身份/漂移/unsupported在prepare新增attempt之前typed failclosed，零有效bound、零send，禁止placeholder/nullable/default/fallback。
+
+当前System固定来源采用本仓 `contract/provenance.json::consumer_dependencies` 的唯一System **4.0.0**：commit `7f479f654c535077874d9cf63d1b25437e9420b6`、artifact `c7cda9d09db266cd26dc1b80dfe9bb95c3c9f6a91bdbd6c5d7de4f85295d1dc6`、provenance `37e338939ebecc4a61cf7aff4d14c2e28b5bc34381e66324a2009988e793d2d0`及该收据完整source closure。原System3出处只留历史；新bound必须固定当前4的完整原收据，不从邻仓/网络动态读。保证还须与planned provider/model/direct endpoint、revision/generation及final request digest精确绑定，System出处不代替它。
+
+### 正式目标机器面（尚未生成/发布）
+
+复用R252 `contract/model-call-bound/v1` version1.0.0、profile_id=`openai_chat_completions_capacity_v1`、unit token、revision1、sealed=true，不建平行preauthorization合同。planned完整现PlannedBinding、mpb_<attempt UUID>/digest；bound mcb_<attempt UUID>、tenant/run/call/attempt/ordinal/lease、producer=kokoro-agent、final binding version1/digest及request profile。新增exact capacity-guarantee owner/id/version/digest引用及适用profile/期限，保证内容与schema由后继契约卡完整冻结；网页URL不替代机器身份。System4完整出处取本节现收据。count沿原非负int64、cap/context正int32，不改变旧usage/proof整数规则。
+
+不公开actor/subject/assertion正文、attempt_binding/authorization bytes、prompt/headers/credential、价格或pricing account。技术guarantee不是grant，后继request_ref在authorization阶段绑定，不是bound生成前置。DB sealed_at/valid_until沿DATA_MODEL；schema拒unknown/混型/重复key/非canonical原bytes，exact replay不刷新。
 
 目标internal-owner operation为 `GET /v1/model-call-bounds/{bound_ref}`。成功仍用现request-id envelope，`data` closed字段为：`planned_binding_ref`、`planned_binding_digest`、`planned_binding_bytes_base64url`、`execution_bound_ref`、`execution_bound_digest`、`execution_bound_artifact_version`、`execution_bound_revision`、`execution_bound_bytes_base64url`；base64url无padding，consumer解码原bytes、strict parse、要求RFC8785逐字相等并重算两个digest。一次read同时关闭planned+bound tuple，不新增generic artifact endpoint；响应不含prompt/final body、actor/subject明文内容、authorization bytes、Billing request/admission、金额或secret。
 
-read只接受 `Authorization: Bearer <KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET>`；专用`SecretStr`常量时间匹配成功即唯一映射caller=`kokoro-billing`，现共享`KOKORO_INTERNAL_SECRET_AGENT`即使合法也不得fallback到本route。成功后才接受必填`x-kokoro-tenant-ref`作为该受信Billing caller的tenant断言并与artifact逐值相等；`x-kokoro-service`、actor/subject/assertion headers和body不参与认证或授权。URL ref也不构成权限。repository以tenant+ref定位后，在一个只读事务/同一DB clock核Run非terminal、原lease owner/generation仍current、当前lease未过期且未缩短到bound期限之前；错误tenant与unknown统一404 `model_call_bound_not_found`，stale fence/terminal为409 `model_call_bound_stale`，墙钟到期为410 `model_call_bound_expired`。专用secret缺/空或own dependency不可用为503 `agent_reader_unavailable`；credential缺失、scheme不为Bearer或值不匹配为401 `agent_reader_auth_failed`；credential已匹配但tenant断言缺失/空白/畸形，或携带试图覆盖身份的service/actor/subject/assertion/body字段，为403 `agent_reader_forbidden`。全部使用现安全error envelope且零业务写；deadline/取消有界、无自动重试、credential不进入error/log/metric label。当前route/config/schema仍未实现，不能先以shared bearer或header字符串通过contract测试冒充认证。
+read只接受 `Authorization: Bearer <KOKORO_AGENT_BILLING_MODEL_CALL_READER_SECRET>`；专用`SecretStr`常量时间匹配成功即唯一映射caller=`kokoro-billing`，现共享`KOKORO_INTERNAL_SECRET_AGENT`即使合法也不得fallback到本route。成功后才接受必填`x-kokoro-tenant-ref`作为该受信Billing caller的tenant断言并与artifact逐值相等；`x-kokoro-service`、actor/subject/assertion headers和body不参与认证或授权。URL ref也不构成权限。repository以tenant+ref定位后，在一个只读事务/同一DB clock核Run非terminal、原lease owner/generation仍current、当前lease未过期且未缩短到bound期限之前；错误tenant与unknown统一404 `model_call_bound_not_found`，stale fence/terminal为409 `model_call_bound_stale`，墙钟到期为410 `model_call_bound_expired`。专用secret缺/空或own dependency不可用为503 `agent_reader_unavailable`；credential缺失、scheme不为Bearer或值不匹配为401 `agent_reader_auth_failed`；credential已匹配但tenant断言缺失/空白/畸形，或携带试图覆盖身份的service/actor/subject/assertion/body字段，为403 `agent_reader_forbidden`。全部使用现安全error envelope且零业务写；deadline/取消有界、无自动重试、credential不进入error/log/metric label。当前bound route/schema仍未实现；专用reader config已由final usage reader实现，复用它不等于bound认证路由已接通，不能以shared bearer或header字符串通过contract测试冒充认证。
 
-后继生成与消费顺序固定：可信capacity guarantee owner先正式发布并获Root准入 → Agent把exact guarantee identity纳入schema/vectors后生成manifest/parser/package provenance → Root固定commit/direct/source/archive digest并验producer/reader → Billing独立pin和strict consumer。usage/v1保持post-call actual evidence，不升版、不接受bound字段；System/Billing合同不由本仓复制。当前route/config/schema/guarantee均未实现，未运行contract/HTTP/PG/provider测试，缺任一前置仍0 bound/0 send。
+后继顺序：Agent先正式发布capacity-guarantee与bound artifact/schema/vectors/manifest、正常parser/package/provenance和本reader；Root核原Git对象/commit/direct/source/archive digest，Billing独立固定消费身份及R201 strict reader后才有机会创建Admission。现HTTP final usage专用认证已实现，可复用同reader secret与具名权限；本bound route仍未实现。Billing缺商业mapping/rate/policy/IAM任一项继续拒绝。usage1/2/proof2不加字段，默认DeepAgents工具扩展OPEN。
+
+实现/测试/生成/打包与所有现消费者影响闭集见TECHNICAL_DESIGN本R252放置表；不因新NOT NULL把旧fixture降级为nullable。当前没有机器artifact、producer或真实positive执行验收。unknown hold/reconcile及拒绝/异常发票边界按共同裁决，不将过期或断流当release/known-zero。
 
 **R255 owner 边界澄清（仅 D0 对齐，未实现 reader）。** 本节目标 bound 只证明技术 planned binding 与本次执行界，不声明 actual provider attribution，也不发布 Billing 独占的商业 pricing account；实际 provider 归属由后继 strict sealed evidence 证明。后继 `request_ref` 由 Agent authorization 状态机绑定同一 attempt 与已冻结的 refs/digests，并供 Billing Admission 幂等身份核对，不作为 bound 生成或 reader 的前置。当前 `PlannedBinding` 闭集没有 `provider_account_ref`；若需要该技术账户身份，必须先由具名技术 owner 以固定版本正式发布，不从名称、credential 或商业账户推导。本次只澄清既有 owner 边界，不改变 guarantee 缺失时 fail closed、reader 专用认证或 DB 时钟/lease 规则，不新增机器字段或实现。
 

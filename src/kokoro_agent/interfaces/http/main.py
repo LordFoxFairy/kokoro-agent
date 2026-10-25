@@ -208,52 +208,65 @@ def main() -> None:
         LOGGER.error("Agent HTTP configuration is invalid")
         raise SystemExit(2)
     log_http_config_summary(composition, LOGGER)
-    server = create_http_server(
-        composition.config,
-        composition.config.host,
-        composition.config.port,
-        execution_proof_jwks=composition.jwks,
-    )
-    LOGGER.info(
-        "kokoro-agent HTTP ingress listening: bind_mode=%s port=%d",
-        _bind_mode(composition.config.host),
-        composition.config.port,
-    )
-    stop = threading.Event()
+    stopping = False
 
     def request_stop(_signum: int, _frame: FrameType | None) -> None:
-        server.start_draining()
-        stop.set()
+        # A Python signal can interrupt main while a threading lock is held.
+        # Record only the flag here; the admission gate reads the same flag.
+        nonlocal stopping
+        stopping = True
 
     previous = {
-        item: signal.signal(item, request_stop)
-        for item in (signal.SIGINT, signal.SIGTERM)
+        item: signal.getsignal(item) for item in (signal.SIGINT, signal.SIGTERM)
     }
-    server_thread = threading.Thread(
-        target=server.serve_forever,
-        kwargs={"poll_interval": 0.1},
-        name="kokoro-agent-http-server",
-        daemon=True,
-    )
+    server = None
+    server_thread: threading.Thread | None = None
     try:
+        for item in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(item, request_stop)
+        server = create_http_server(
+            composition.config,
+            composition.config.host,
+            composition.config.port,
+            execution_proof_jwks=composition.jwks,
+            stop_requested=lambda: stopping,
+        )
+        LOGGER.info(
+            "kokoro-agent HTTP ingress listening: bind_mode=%s port=%d",
+            _bind_mode(composition.config.host),
+            composition.config.port,
+        )
+        if stopping:
+            return
+        server_thread = threading.Thread(
+            target=server.serve_forever,
+            kwargs={"poll_interval": 0.1},
+            name="kokoro-agent-http-server",
+            daemon=True,
+        )
         server_thread.start()
-        while server_thread.is_alive() and not stop.wait(0.1):
-            pass
+        while server_thread.is_alive() and not stopping:
+            time.sleep(0.1)
     except KeyboardInterrupt:
-        server.start_draining()
-        stop.set()
+        stopping = True
     finally:
-        deadline = time.monotonic() + _DRAIN_TIMEOUT_S
-        server.start_draining()
-        if server_thread.is_alive():
-            server.shutdown()
-        server.wait_for_active_handlers(max(0.0, deadline - time.monotonic()))
-        server.server_close()
-        server_thread.join(timeout=2)
-        for item, handler in previous.items():
-            signal.signal(item, handler)
-        if server_thread.is_alive():
-            raise RuntimeError("kokoro-agent HTTP shutdown exceeded its bound")
+        try:
+            if server is not None:
+                deadline = time.monotonic() + _DRAIN_TIMEOUT_S
+                server.start_draining()
+                if server_thread is not None and server_thread.is_alive():
+                    server.shutdown()
+                server.wait_for_active_handlers(max(0.0, deadline - time.monotonic()))
+                server.server_close()
+                if server_thread is not None and server_thread.ident is not None:
+                    server_thread.join(timeout=2)
+                    if server_thread.is_alive():
+                        raise RuntimeError(
+                            "kokoro-agent HTTP shutdown exceeded its bound"
+                        )
+        finally:
+            for item, handler in previous.items():
+                signal.signal(item, handler)
 
 
 __all__ = [

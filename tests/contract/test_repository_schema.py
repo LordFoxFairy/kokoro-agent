@@ -71,3 +71,32 @@ def test_final_request_facts_are_clean_slate_required_columns() -> None:
     )
     assert "final_request_binding_version integer not null default" not in sql
     assert "final_request_digest text not null default" not in sql
+
+
+def test_bound_columns_are_clean_slate_and_no_fallback() -> None:
+    from pathlib import Path
+    import re
+
+    schema = (Path(__file__).resolve().parents[2] / "database/schema.sql").read_text()
+    for name, kind in {
+        "execution_bound_artifact_version": "TEXT",
+        "execution_bound_ref": "TEXT",
+        "execution_bound_revision": "BIGINT",
+        "execution_bound_bytes": "BYTEA",
+        "execution_bound_digest": "TEXT",
+        "execution_bound_valid_until": r"TIMESTAMPTZ\(3\)",
+    }.items():
+        assert re.search(rf"\b{name}\s+{kind}\s+NOT NULL\s*,", schema)
+    assert "UNIQUE (tenant_id, execution_bound_ref)" in schema
+    assert "execution_bound_ref = 'mcb_' || attempt_id::TEXT" in schema
+    assert "execution_bound_valid_until > prepared_at" in schema
+
+
+def test_bound_database_digest_is_original_byte_sha256() -> None:
+    from pathlib import Path
+
+    schema = (Path(__file__).resolve().parents[2] / "database/schema.sql").read_text()
+    assert (
+        "execution_bound_digest = encode(sha256(execution_bound_bytes), 'hex')"
+        in schema
+    )

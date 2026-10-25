@@ -1,0 +1,20 @@
+{
+  "owner": "kokoro-agent",
+  "artifact_version": "1.0.0",
+  "guarantee_sha256": "326f7d12d6cdfecf46f78f66ff7400378dc76ee4386146687a8574cf03af6995",
+  "evidence_sha256": "e8ddcfc7e711d95c5324d319bfe254f7e15008708546616199748c7739d0201f",
+  "source_sha256": {
+    "contract/model-call-capacity-guarantee/v1/schema.json": "c00852c059920e10f498e01e641f2270a896cc8392f79ff97261167da8c922c8",
+    "contract/model-call-capacity-guarantee/v1/guarantee.json": "7c3da26f60d42addd029876c31ad4a1b7c3ce3090187975e03ded73327041ece",
+    "contract/model-call-capacity-guarantee/v1/evidence.json": "07f5f501b81b78ded69e0127996bc975dcb6b6bdb1d17a97e105bd4ad2dd187a",
+    "contract/model-call-capacity-guarantee/v1/vectors.json": "332b4cd0444299ad4a5ee125a9a06c42b03c6e06d25667cb89f26d16d248e689",
+    "contract/usage/v1/manifest.json": "29d15de901e60b1026ff3834249a4f5c442092b7ccef1981baaabcfaf30cbea1",
+    "scripts/generate_model_call_capacity_guarantee.py": "0401c88216e32af18118b34cc923b732cdcc47384385d8a77a40a7c7144f6421",
+    "src/kokoro_agent/model_call_capacity_guarantee_contract.py": "6810f9ad89bead074d5f07d55037463c47188348f7b70404c8da598d6adc95cf",
+    "src/kokoro_agent/model/capacity_guarantee.py": "be4963c62eb11f91a7f4bc231579f9ce29e73442caff85fd61374830c9473d8b",
+    "src/kokoro_agent/model/factory.py": "3169b4b3df212c36dfa47f12fb96b8ff1672e73456b7b027bfbf801159ed506c",
+    "src/kokoro_agent/distribution_assets.py": "0b4e3cca741544eecaeddafb396acc2e6b6b6ab9b74bd48e5ec4242ffe6f1217",
+    "src/kokoro_agent/protocol/model_call_capacity_guarantee_generated.py": "d2aeace75c10c75c548e06a3288c370d4bc8c3a9aad0e176c5022008ca733857"
+  },
+  "aggregate_sha256": "807bed09daefd7b3151e69b1d489ae6113c63231a8099ede65f19fb166490798"
+}

@@ -303,6 +303,12 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   planned_digest          TEXT NOT NULL,
   final_request_binding_version INTEGER NOT NULL,
   final_request_digest    TEXT NOT NULL,
+  execution_bound_artifact_version TEXT NOT NULL,
+  execution_bound_ref TEXT NOT NULL,
+  execution_bound_revision BIGINT NOT NULL,
+  execution_bound_bytes BYTEA NOT NULL,
+  execution_bound_digest TEXT NOT NULL,
+  execution_bound_valid_until TIMESTAMPTZ(3) NOT NULL,
   authorization_bytes     BYTEA NOT NULL,
   authorization_digest    TEXT NOT NULL,
   authorization_state     TEXT NOT NULL,
@@ -315,6 +321,16 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   latest_evidence_digest  TEXT,
   created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT uq_model_attempt_execution_bound UNIQUE (tenant_id, execution_bound_ref),
+  CONSTRAINT ck_model_attempt_execution_bound CHECK (
+    execution_bound_artifact_version = '1.0.0' AND execution_bound_revision = 1 AND
+    execution_bound_ref ~ '^mcb_[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' AND
+    execution_bound_ref = 'mcb_' || attempt_id::TEXT AND
+    octet_length(execution_bound_bytes) BETWEEN 1 AND 65536 AND
+    execution_bound_digest ~ '^[0-9a-f]{64}$' AND
+    execution_bound_digest = encode(sha256(execution_bound_bytes), 'hex') AND
+    execution_bound_valid_until > prepared_at
+  ),
   CONSTRAINT uq_model_attempt_call_ordinal UNIQUE (run_id, call_id, attempt_ordinal),
   CONSTRAINT uq_model_attempt_binding UNIQUE (tenant_id, run_id, attempt_binding_digest),
   CONSTRAINT ck_model_attempt_identity CHECK (

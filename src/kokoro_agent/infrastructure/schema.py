@@ -437,6 +437,12 @@ async def _verify_model_evidence_schema(
         "planned_digest": "text",
         "final_request_binding_version": "integer",
         "final_request_digest": "text",
+        "execution_bound_artifact_version": "text",
+        "execution_bound_ref": "text",
+        "execution_bound_revision": "bigint",
+        "execution_bound_bytes": "bytea",
+        "execution_bound_digest": "text",
+        "execution_bound_valid_until": "timestamp with time zone",
         "authorization_bytes": "bytea",
         "authorization_digest": "text",
         "authorization_state": "text",
@@ -506,6 +512,7 @@ async def _verify_model_evidence_schema(
     check_names = {
         RUN_CLAIMS_TABLE: {"ck_kokoro_agent_run_model_usage"},
         MODEL_CALL_ATTEMPTS_TABLE: {
+            "ck_model_attempt_execution_bound",
             "ck_model_attempt_final_request",
             "ck_model_attempt_identity",
             "ck_model_attempt_bytes",
@@ -547,6 +554,7 @@ async def _verify_model_evidence_schema(
         "model_attempt_count > 0 AND "
         "(model_sealed_attempt_count < model_attempt_count "
         "OR model_unknown_attempt_count > 0)))",
+        "ck_model_attempt_execution_bound": "CHECK (execution_bound_artifact_version = '1.0.0'::text AND execution_bound_revision = 1 AND execution_bound_ref ~ '^mcb_[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text AND execution_bound_ref = ('mcb_'::text || attempt_id::text) AND octet_length(execution_bound_bytes) >= 1 AND octet_length(execution_bound_bytes) <= 65536 AND execution_bound_digest ~ '^[0-9a-f]{64}$'::text AND execution_bound_digest = encode(sha256(execution_bound_bytes), 'hex'::text) AND execution_bound_valid_until > prepared_at)",
         "ck_model_attempt_final_request": "CHECK (final_request_binding_version = 1 AND "
         "final_request_digest ~ '^[0-9a-f]{64}$'::text)",
         "ck_model_attempt_bytes": "CHECK (octet_length(attempt_binding_bytes) >= 1 AND "
@@ -637,6 +645,13 @@ async def _verify_model_evidence_schema(
         ),
     }
     indexes = (
+        (
+            MODEL_CALL_ATTEMPTS_TABLE,
+            "uq_model_attempt_execution_bound",
+            True,
+            ["tenant_id", "execution_bound_ref"],
+            None,
+        ),
         (
             MODEL_CALL_ATTEMPTS_TABLE,
             "uq_model_attempt_call_ordinal",

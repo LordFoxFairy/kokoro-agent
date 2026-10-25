@@ -8,6 +8,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from kokoro_agent.clients.system import ResolvedModel
+from kokoro_agent.model.capacity_guarantee import (
+    load_capacity_guarantee,
+    validate_capacity_request,
+)
 from kokoro_agent.model.call_artifacts import (
     encode_final_request_digest,
     encode_planned_artifact,
@@ -21,6 +25,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
 from kokoro_agent.model.call_models import (
+    CapacityRequestMaterial,
     ModelCallAuthorizationUnavailable,
     ModelCallInputInvalid,
     ModelCallRepository,
@@ -142,6 +147,15 @@ async def freeze_final_model_request(
             raise ModelCallAuthorizationUnavailable(
                 "model-call final scope is unavailable"
             )
+
+        validate_capacity_request(
+            route=route,
+            raw=raw,
+            method=method,
+            endpoint=endpoint,
+            headers=headers,
+            guarantee=load_capacity_guarantee(),
+        )
         _, planned_digest = encode_planned_artifact(scope.planned)
         digest = encode_final_request_digest(
             endpoint=endpoint, planned_digest=planned_digest, raw=raw
@@ -149,6 +163,13 @@ async def freeze_final_model_request(
         # No await separates the claim/active check from entry to real preparation.
         await scope.repository.prepare(
             PrepareModelCall(
+                capacity_request=CapacityRequestMaterial(
+                    route=route,
+                    raw=raw,
+                    method="POST",
+                    endpoint=endpoint,
+                    headers=tuple(headers),
+                ),
                 request=scope.request,
                 lease=scope.lease,
                 call_id=scope.call_id,

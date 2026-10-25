@@ -7,6 +7,8 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from kokoro_agent import model_usage_contract, model_usage_v2_contract
+from kokoro_agent import model_call_capacity_guarantee_contract as capacity_contract
+from kokoro_agent import model_call_bound_contract as bound_contract
 from kokoro_agent.chat_contract_check import (
     failure_model_bytes,
     generate_failure_models,
@@ -30,6 +32,7 @@ from kokoro_agent.usage_history_contract import validate_usage_history
 ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
 REQUIRED_PATHS = {
+    "/v1/model-call-bounds/{bound_ref}",
     "/healthz",
     "/readyz",
     "/v1/execution-proof/jwks",
@@ -65,8 +68,8 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "7.0.0":
-        raise ValueError("Agent HTTP contract version must be 7.0.0")
+    if info.get("version") != "7.1.0":
+        raise ValueError("Agent HTTP contract version must be 7.1.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")
@@ -180,6 +183,8 @@ def validate(root: Path = ROOT) -> None:
     validate_platform_binding_artifact(root)
     validate_usage_history(root)
     model_usage_v2_contract.validate_model_usage_contract(root)
+    capacity_contract.generate(root, check=True)
+    bound_contract.generate(root, check=True)
 
 
 def main() -> int:
@@ -188,6 +193,8 @@ def main() -> int:
             *OWNER_SOURCE_FILES,
             *model_usage_contract.USAGE_AUDIT_FILES,
             *model_usage_v2_contract.USAGE_AUDIT_FILES,
+            *capacity_contract.AUDIT_FILES,
+            *bound_contract.AUDIT_FILES,
             "contract/provenance.json",
             *PLATFORM_AUDIT_FILES,
         }

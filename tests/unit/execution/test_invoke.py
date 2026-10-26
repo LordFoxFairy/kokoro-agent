@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool
@@ -67,7 +67,12 @@ from kokoro_agent.protocol import (
 )
 from support.deepagents import create_test_deep_agent
 from support.local_fake import LocalFakeChatModel
-from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
+from kokoro_agent.execution.events import (
+    RunEmitter,
+    clip_result,
+    tool_returned_payload,
+    subagent_tool_returned_payload,
+)
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.execution.failures import failure_code, run_failed_payload
 from kokoro_agent.model.call_models import (
@@ -1931,3 +1936,42 @@ async def test_r94_native_projection_failure_joins_started_leaf_consumers(
                 if not leaf.done():
                     leaf.cancel()
             await asyncio.gather(task, *leaf_tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "output,expected_error",
+    [
+        (
+            ToolMessage(
+                content="handled diagnostic", tool_call_id="t1", status="error"
+            ),
+            True,
+        ),
+        (
+            ToolMessage(
+                content="error: ordinary successful text",
+                tool_call_id="t1",
+                status="success",
+            ),
+            False,
+        ),
+        ({"status": "error", "is_error": True}, False),
+        ("error: ordinary text", False),
+    ],
+)
+def test_only_typed_tool_result_status_marks_handled_failure(
+    output: object, expected_error: bool
+) -> None:
+    tc = _tool_call_info(output)
+    main = tool_returned_payload(tc)
+    inner = subagent_tool_returned_payload(tc, subagent_id="peer")
+    assert main is not None and main.is_error is expected_error
+    assert inner.is_error is expected_error
+
+
+def test_interrupt_is_not_a_return_even_with_an_error_tool_message() -> None:
+    tc = _StubToolCall(
+        output=ToolMessage(content="paused", tool_call_id="t1", status="error"),
+        error="Interrupt(paused)",
+    )
+    assert tool_returned_payload(tc) is None

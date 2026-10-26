@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from langchain.tools import ToolRuntime
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import StructuredTool, ToolException
 from langchain_mcp_adapters.callbacks import CallbackContext, Callbacks
 from mcp.shared.context import RequestContext
 from mcp.types import (
@@ -112,9 +112,11 @@ async def _call_with_elicitation(
                 if isinstance(exc, GraphInterrupt):
                     raise exc
                 if exc is not None:  # 远端执行失败：错误文本给模型自纠，不炸 run。
-                    return "error: MCP_TOOL_CALL_FAILED"
+                    raise ToolException("error: MCP_TOOL_CALL_FAILED") from None
                 result = invoke_task.result()
-                return ("error: " if result.isError else "") + result.model_dump_json()
+                if result.isError:
+                    raise ToolException("error: " + result.model_dump_json())
+                return result.model_dump_json()
             params, fut = next_task.result()
             next_task = None
             outcome = request_input(
@@ -242,9 +244,9 @@ def make_mcp_tools(
         reference = granted.get(server)
         call_id = current_mcp_tool_call_id(run_id)
         if reference is None or client is None:
-            return "error: MCP_CONNECTION_NOT_DECLARED"
+            raise ToolException("error: MCP_CONNECTION_NOT_DECLARED")
         if call_id is None:
-            return "error: MCP_JOURNAL_CALL_REQUIRED"
+            raise ToolException("error: MCP_JOURNAL_CALL_REQUIRED")
         try:
             return await _call_with_elicitation(
                 client.call_tool(
@@ -258,10 +260,10 @@ def make_mcp_tools(
                 tool,
                 call_id,
             )
-        except (asyncio.CancelledError, GraphInterrupt):
+        except (asyncio.CancelledError, GraphInterrupt, ToolException):
             raise
         except Exception:
-            return "error: MCP_TOOL_CALL_FAILED"
+            raise ToolException("error: MCP_TOOL_CALL_FAILED") from None
 
     return (
         StructuredTool(
@@ -281,5 +283,6 @@ def make_mcp_tools(
             description=MCP_2_DESCRIPTION,
             args_schema=CallToolArgs,
             coroutine=call_tool,
+            handle_tool_error=True,
         ),
     )

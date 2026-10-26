@@ -578,3 +578,174 @@ async def test_native_sse_late_result_cannot_hide_observed_bad_ack(
             received.set()
             server.should_exit = True
             await asyncio.wait_for(task, 5)
+
+
+async def test_real_mcp_handled_failure_and_recovery_keep_callback_journal_and_safe_status() -> (
+    None
+):
+    """Real loopback MCP and native ToolNode, no provider/model credentials or shared stores."""
+    import socket
+    import uvicorn
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langgraph.stream import CustomTransformer
+    from mcp.server.fastmcp import FastMCP
+    from pydantic import TypeAdapter
+
+    from kokoro_agent.clients.mcp import McpConnectionRef
+    from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+    from kokoro_agent.execution.events import RunEmitter
+    from kokoro_agent.execution.publish_agent_events import pump_run
+    from kokoro_agent.mcp.tools import make_mcp_tools
+    from support.chat import FakeChatRepository
+    from support.deepagents import create_test_deep_agent
+    from support.fakes import FakeBus, FakeRunRepository
+    from support.local_fake import LocalFakeChatModel
+    from support.managed_mcp import ManagedMcpOwner
+    from support.tool_journal import journal_middleware, journal_request
+
+    mcp = FastMCP("owned-tool-status", stateless_http=True)
+
+    def echo(fail: bool) -> str:
+        owner.tool_calls += 1
+        if fail:
+            raise ValueError("owned recoverable argument")
+        return "error: ordinary successful content"
+
+    mcp.add_tool(echo)
+    schema = TypeAdapter(dict[str, JsonValue]).validate_python(
+        (await mcp.list_tools())[0].inputSchema
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            mcp.streamable_http_app(),
+            log_level="error",
+            timeout_graceful_shutdown=1,
+        )
+    )
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        task = asyncio.create_task(server.serve(sockets=[sock]))
+        try:
+
+            async def ready() -> None:
+                while not server.started:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(ready(), 5)
+            owner = ManagedMcpOwner(
+                endpoint=f"http://127.0.0.1:{port}/mcp", schemas={"echo": schema}
+            )
+            ref = McpConnectionRef(connection_id="connection-1")
+            client = PlatformMcpClient(
+                owner, packages=None, run_id="rn", egress_mode="off"
+            )
+            tools = make_mcp_tools((ref,), client, run_id="rn")
+            store = FakeRunRepository()
+            journal = await journal_middleware(store)
+            agent = create_test_deep_agent(
+                model=LocalFakeChatModel.with_script(
+                    [
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "name": "mcp_call",
+                                    "id": "mcp-fail",
+                                    "type": "tool_call",
+                                    "args": {
+                                        "server": "connection-1",
+                                        "tool": "echo",
+                                        "arguments": {"fail": True},
+                                    },
+                                }
+                            ],
+                        ),
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "name": "mcp_call",
+                                    "id": "mcp-success",
+                                    "type": "tool_call",
+                                    "args": {
+                                        "server": "connection-1",
+                                        "tool": "echo",
+                                        "arguments": {"fail": False},
+                                    },
+                                }
+                            ],
+                        ),
+                        AIMessage(content="done"),
+                    ]
+                ),
+                tools=list(tools),
+                middleware=[journal],
+                subagents=[],
+                system_prompt="Use the provided tool calls.",
+                permissions=[],
+                interrupt_on={},
+            )
+            chat = FakeChatRepository()
+            emitter = await RunEmitter.attach(
+                FakeBus(),
+                "rn",
+                tenant_id="tenant",
+                namespace="ns",
+                session_id="session",
+                chat_repository=chat,
+            )
+            emitter.bind_tool_display_codes((("mcp_call", "tool.mcp.call"),))
+            run = await agent.astream_events(
+                {"messages": [HumanMessage(content="go")]},
+                version="v3",
+                config={},
+                transformers=[CustomTransformer],
+            )
+            async with run:
+                await asyncio.wait_for(
+                    pump_run(emitter, run, source_for=lambda _: "runtime-custom"), 15
+                )
+                assert await run.interrupted() is False
+            activities = [
+                json.loads(row.payload_json)
+                for row in chat.records
+                if row.event_type == "activity"
+            ]
+            assert [item["status"] for item in activities] == [
+                "running",
+                "failed",
+                "running",
+                "completed",
+            ]
+            assert {item["display_code"] for item in activities} == {"tool.mcp.call"}
+            assert len({item["activity_id"] for item in activities}) == 2
+            assert all(
+                set(item)
+                == {"activity", "activity_id", "segment_id", "status", "display_code"}
+                for item in activities
+            )
+            assert store.tool_journal[("rn", "mcp-fail")]["status"] == "failed"
+            assert store.tool_journal[("rn", "mcp-fail")]["is_error"] is True
+            assert store.tool_journal[("rn", "mcp-success")]["status"] == "succeeded"
+            assert store.tool_journal[("rn", "mcp-success")]["is_error"] is False
+            assert "owned recoverable argument" in str(
+                store.tool_journal[("rn", "mcp-fail")]["result"]
+            )
+            assert owner.tool_calls == 2
+            frozen = [row.model_dump_json() for row in chat.records]
+
+            async def never_resend(request: object) -> ToolMessage:
+                raise AssertionError("failed call replay must not contact MCP again")
+
+            replay = await journal.awrap_tool_call(
+                journal_request("mcp_call", "mcp-fail"), never_resend
+            )
+            assert isinstance(replay, ToolMessage) and replay.status == "error"
+            assert owner.tool_calls == 2
+            assert [row.model_dump_json() for row in chat.records] == frozen
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(task, 5)

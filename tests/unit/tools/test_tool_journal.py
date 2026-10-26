@@ -398,3 +398,12 @@ async def test_state_file_assembly_keeps_external_effect_journal(name: str) -> N
     assert first.status == replay.status == "success"
     assert handler.calls == 1
     assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
+
+
+async def test_mcp_success_text_prefix_does_not_override_typed_status() -> None:
+    store = FakeRunRepository()
+    handler = _Handler("error: this is ordinary successful content")
+    result = await (await _mw(store)).awrap_tool_call(_request("mcp_call"), handler)
+    assert isinstance(result, ToolMessage) and result.status == "success"
+    assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
+    assert store.tool_journal[("rn", "c1")]["is_error"] is False

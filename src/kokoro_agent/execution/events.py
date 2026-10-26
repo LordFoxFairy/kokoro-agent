@@ -41,6 +41,7 @@ from kokoro_agent.protocol import (
     agent_event_adapter,
     run_events_stream,
 )
+from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
 from kokoro_agent import metrics
@@ -696,6 +697,13 @@ def _interrupted(tc: ToolCallInfo) -> bool:
     return error is not None and error.startswith(_INTERRUPT_REPR_PREFIXES)
 
 
+def _tool_failed(tc: ToolCallInfo) -> bool:
+    # Handled ToolException uses on_tool_end with a typed error ToolMessage, not on_tool_error.
+    return tc.error is not None or (
+        isinstance(tc.output, ToolMessage) and tc.output.status == "error"
+    )
+
+
 def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload | None:
     # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 缺省。
     if _interrupted(tc):
@@ -706,7 +714,7 @@ def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload | None:
         tool_id=tc.tool_call_id,
         name=tc.tool_name,
         result=result,
-        is_error=tc.error is not None,
+        is_error=_tool_failed(tc),
         truncated=True if truncated else None,
     )
 
@@ -733,7 +741,7 @@ def subagent_tool_returned_payload(
         tool_id=tc.tool_call_id,
         name=tc.tool_name,
         result=result,
-        is_error=tc.error is not None,
+        is_error=_tool_failed(tc),
         truncated=True if truncated else None,
     )
 

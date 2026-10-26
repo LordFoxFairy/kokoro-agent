@@ -31,6 +31,7 @@ from deepagents.backends.state import StateBackend
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
+from kokoro_agent.domain.chat.projection import ToolDisplayCode
 from kokoro_agent.clients.mcp import McpClient, McpConnectionRef
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
@@ -91,6 +92,7 @@ class AgentHandle:
     tool_descriptions: Mapping[str, str]
     resources: tuple[ArchivingWritesMixin, ...] = ()
     model_clients: tuple[ModelHttpClients, ...] = ()
+    tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = ()
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)
@@ -401,6 +403,7 @@ async def build_deep_agent(
         return AgentHandle(
             runnable=require_agent_runnable(candidate),
             tool_descriptions=toolset.descriptions,
+            tool_display_codes=toolset.mounted_display_codes(candidate),
             resources=resources,
             model_clients=(clients,),
         )
@@ -584,12 +587,22 @@ class AgentFactory:
             raise
         descriptions: dict[str, str] = {}
         resources: list[ArchivingWritesMixin] = []
+        common_codes: dict[str, ToolDisplayCode] = dict(
+            built_agents[0].tool_display_codes
+        )
         for built in built_agents:
             descriptions.update(built.tool_descriptions)
             resources.extend(built.resources)
+            peer_codes = dict(built.tool_display_codes)
+            common_codes = {
+                name: code
+                for name, code in common_codes.items()
+                if peer_codes.get(name) == code
+            }
         return AgentHandle(
             runnable=native,
             tool_descriptions=descriptions,
+            tool_display_codes=tuple(sorted(common_codes.items())),
             resources=tuple(resources),
             model_clients=tuple(
                 clients for built in built_agents for clients in built.model_clients

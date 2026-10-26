@@ -1,3 +1,27 @@
+## 2026-10-26 Agent8 安全工具类别（候选实施中，正常未激活）
+
+**基线/变更性质。** 从正常 `83e9e36efeb8086074648ea9d5bd9a3bea43d5cd` 的 HTTP7.4.0（OpenAPI SHA256 `7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad`）演进到 HTTP8.0.0。`ChatActivity` 的 tool 分支当前 `display_code` 仅 const `tool.execution`；后继把它改为下列严格枚举，保原 required 字段、opaque ID、三状态与 `additionalProperties:false`。这是输出闭集扩展，旧严格消费者会拒绝新值，不能伪称兼容的小版本或先启 producer。
+
+| `display_code` | 可声明的公开语义 |
+| --- | --- |
+| `tool.execution` | 通用工具调用，包括旧历史与未获本片受信语义绑定的工具。 |
+| `tool.file.read` | 官方文件读取；包括经真实后端路由读取的 Skill 文件，但不额外声明“读取技能”。 |
+| `tool.mcp.discover` | 自有 MCP 固定 list wrapper 的工具发现操作。 |
+| `tool.mcp.describe` | 自有 MCP 固定 describe wrapper 的工具说明操作。 |
+| `tool.mcp.call` | 自有 MCP 固定 call wrapper 的工具调用操作。 |
+| `tool.web.search` | 自有联网检索操作。 |
+| `tool.web.fetch` | 自有网页读取操作。 |
+
+类别只由已验证实际挂载定义/来源绑定，经 Agent 请求内可信上下文进入安全 Chat 投影；调用名仅定位受信绑定，不按原始名称/参数/结果/description 推断。native read_file 必须证明实际官方挂载来源，同名对象不足以授类别；不读取 SDK 私有字段或修改第三方 runtime。未知公开 code 整条拒绝，不默认为 generic。现 Subagent、Skill preflight、Todo、HITL、Delivery、Run failure/usage/proof 及状态字段保持原定义；不新增 `tool.skill.read`、任意标题、参数、URL/路径、远端工具名、phase、时长或隐藏推理字段。MCP discovery/describe/call 标签不证明远端执行资格、调用成功或成果已发布。
+
+**生命周期/历史。** 同一冻结 Run 定义下的同 call 在 running/completed/failed 及合法恢复时类别一致，opaque 身份与源序号沿原算法；权限、tenant/actor、lease、取消、迟到、HITL/unknown 和 journal 不因展示改变。原 Redis `ToolInvokedPayload`/`ToolReturnedPayload` 及 PostgreSQL schema 不增字段，安全 code 仅进入既有 Chat activity payload。旧已发布 `tool.execution` 仍合法并保原 bytes/digest，重播原值；不回填旧活动、不推测 R6 工具名称、不重做旧 Run。缺新鲜来源证明不授权更具体的类别，也不以显示元数据授予执行许可。
+
+**唯一发行图。** 本仓 canonical OpenAPI8/`contract/provenance.json` → BFF 固定 owner commit、version、完整 OpenAPI/provenance SHA256，沿 `scripts/generate-agent-http-client.mjs` 正规更新 vendor、`contract/dependencies/agent-http.json` 与生成 decoder → BFF canonical Public28 `RunToolActivity.display_code` 同闭集 → App 固定 BFF 完整 artifact/生成物并同步唯一 activity schema 与本地化。BFF 仍用 `CUSTOM kokoro.activity.updated`，compact process、snapshot、ordered parts 与 live 必须同值，不加第二网络事件；App 不直读 Agent 或复制 Python 类型。跨仓 consumer 写入与正常装配由各 owner/Root 后继承担，不由本仓设计稿冒充已发行。
+
+**本仓机器/生成门。** 精确候选写区见本仓技术设计本节；只改 `contract/openapi/v1/openapi.json`、`contract/provenance.json`、`src/kokoro_agent/contract_check.py`、`src/kokoro_agent/chat_contract_check.py` 的版本/闭集/来源核验，沿 `uv run python scripts/generate_failure_models.py` 正规刷新 generated Failure 源摘要与 provenance，再用同命令 `--check` 和 `uv run kokoro-agent-contract-check` 核验。生成的 Failure 业务 tuple、proof2、usage2、其它 owner pins 和原独立生成链不得变化；不手填生成字节或摘要。HTTP8 → 完整7.4父原件的逆证明只用于测试，保旧机器约束与历史 hash，不在运行时双读/降级。行为、contract、安装分发及持久 replay 风险按技术设计既有测试路径核验，无新 endpoint、SQL、Redis 字段、依赖或配置。
+
+**配对/回滚界限。** 发布 artifact 与正常激活分开：BFF/App 先能严格读取上述完整闭集，再由 Root 成套准入 Agent8 新 Run；不修改正常源或已有 frozen recipe。新 code 已持久化后，停止新 producer/派发不等于旧 reader 已可回退，恢复期间须保能读取这些事件的固定消费者；不删除/改写历史事件来降版。Root 已复核设计门并授权本仓候选业务/机器实施；实际验证与冻结收据另交 Root，正常资源与跨仓配对仍须 Root 独立授权。
+
 ## 2026-10-25 Personal MCP SSE runtime 消费（候选已实施，尚未正常激活）
 
 正式 producer 固定 Platform `8cfead647856ef54ec851a3bebe169a3ca14d212`／Runtime1.5。现 `ResolveMcpRuntimeConnection`／`AcquireMcpRuntimeCredential` 两 RPC、operation `mcp.resolve_runtime_connection`／`mcp.acquire_runtime_credential`、当前 E2 与 binding3.0.0 不变。新 resolution `sse=10` 与 credential `sse=5` 必须同 case；exact connector/connection/server/selector/declaration、resolution reference SHA、discovery/invocation purpose、grant/audit/原参数 bytes／approval presence／key、trusted Run/tenant/lease 与最小 expiry 均沿原检查。HTTP／managed STDIO不降级、不兼容错 case，SSE不伪装 HTTP；BFF Public26只运输ID，不授执行权。本仓只消费该已发行 wire，不新增 Agent API/Schema/依赖。

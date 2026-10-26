@@ -375,6 +375,7 @@ class SupervisorExecutionMixin(SupervisorContext):
                     approval_tool_names=approval_tool_names,
                     # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
                     describe_tool=built.describe_tool,
+                    tool_display_codes=built.tool_display_codes,
                     source_for=self._source_for,
                     trace=trusted_trace,
                     on_native_settled=on_native_settled,

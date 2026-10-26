@@ -6,12 +6,14 @@ import hashlib
 import copy
 import json
 from pathlib import Path
+from typing import get_args
 
 from jsonschema import Draft202012Validator, ValidationError as SchemaValidationError
 from jsonschema import validate as validate_schema_instance
 
 from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
 from kokoro_agent.bff_admission_contract import GENERATED as BFF_BUDGET_GENERATED
+from kokoro_agent.domain.chat.projection import ToolDisplayCode
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -259,6 +261,43 @@ def read_contract_document(path: Path) -> dict[str, object]:
         raise ValueError(f"{path} must contain a JSON object") from error
 
 
+def http74_parent_bytes(document: dict[str, object]) -> bytes:
+    """Undo only Agent8's closed display output extension, preserving the full parent."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.0.0":
+        raise ValueError("tool display extension requires HTTP 8.0.0")
+    info["version"] = "7.4.0"
+    schemas = _object(
+        _object(parent["components"], source="components")["schemas"], source="schemas"
+    )
+    branches = TypeAdapter(list[dict[str, object]]).validate_python(
+        _object(schemas["ChatActivity"], source="ChatActivity")["oneOf"]
+    )
+    properties = _object(branches[0]["properties"], source="tool properties")
+    if properties["display_code"] != {
+        "type": "string",
+        "enum": list(get_args(ToolDisplayCode)),
+    }:
+        raise ValueError("tool display code extension is not exact")
+    properties["display_code"] = {"type": "string", "const": "tool.execution"}
+    branches[0]["properties"] = properties
+    activity = _object(schemas["ChatActivity"], source="ChatActivity")
+    activity["oneOf"] = branches
+    schemas["ChatActivity"] = activity
+    components = _object(parent["components"], source="components")
+    components["schemas"] = schemas
+    parent["components"] = components
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad"
+    ):
+        raise ValueError("complete HTTP 7.4 parent differs")
+    return raw
+
+
 def http72_parent_bytes(document: dict[str, object]) -> bytes:
     """Prove the complete published parent; remove only this release's named extension."""
     parent = copy.deepcopy(document)
@@ -306,8 +345,8 @@ def failure_model_bytes(
     """Compile only the approved two failure profiles; reject unsupported shapes."""
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
-    if _object(document.get("info"), source="info").get("version") != "7.4.0":
-        raise ValueError("failure profiles require HTTP 7.4.0")
+    if _object(document.get("info"), source="info").get("version") != "8.0.0":
+        raise ValueError("failure profiles require HTTP 8.0.0")
     schemas = _object(
         _object(document.get("components"), source="components").get("schemas"),
         source="schemas",
@@ -435,7 +474,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "7.4.0",
+        "version": "8.0.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }

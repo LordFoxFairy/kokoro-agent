@@ -6,6 +6,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from deepagents.backends.protocol import BackendProtocol
 from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.runnables.graph import Graph
+from langgraph.prebuilt import ToolNode
+from deepagents.middleware.filesystem import ReadFileSchema
+from kokoro_agent.domain.chat.projection import ToolDisplayCode
 
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.agents.definition import Agent
@@ -32,6 +36,7 @@ class Toolset:
     by_name: Mapping[str, BaseTool]
     # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
     descriptions: Mapping[str, str]
+    display_bindings: tuple[tuple[str, BaseTool, ToolDisplayCode], ...] = ()
 
     @classmethod
     def from_tools(
@@ -39,6 +44,7 @@ class Toolset:
         tools: Sequence[BaseTool],
         *,
         implicit_authorized: frozenset[str] = RESERVED_TOOL_NAMES,
+        display_bindings: Sequence[tuple[BaseTool, ToolDisplayCode]] = (),
     ) -> Toolset:
         """Build all derived indexes once and reject cross-source name collisions."""
 
@@ -49,6 +55,13 @@ class Toolset:
                     f"duplicate tool name across GA sources: {tool.name!r}"
                 )
             by_name[tool.name] = tool
+        bindings: tuple[tuple[str, BaseTool, ToolDisplayCode], ...] = tuple(
+            (tool.name, tool, code) for tool, code in display_bindings
+        )
+        if len({name for name, _, _ in bindings}) != len(bindings) or any(
+            by_name.get(name) is not tool for name, tool, _ in bindings
+        ):
+            raise ValueError("display binding must identify a unique mounted source")
         return cls(
             tools=tuple(tools),
             authorized=frozenset(by_name) | implicit_authorized,
@@ -58,14 +71,55 @@ class Toolset:
                 for name, tool in by_name.items()
                 if tool.description
             },
+            display_bindings=bindings,
         )
+
+    def mounted_display_codes(
+        self, runnable: object
+    ) -> tuple[tuple[str, ToolDisplayCode], ...]:
+        """Observe the official constructed ToolNode, never infer from stream names."""
+        get_graph = getattr(runnable, "get_graph", None)
+        if not callable(get_graph):
+            return ()
+        graph = get_graph()
+        if not isinstance(graph, Graph):
+            return ()
+        node = graph.nodes.get("tools")
+        data: object = getattr(node, "data", None)
+        if not isinstance(data, ToolNode) or type(data) is not ToolNode:
+            return ()
+        mounted = data.tools_by_name
+        if any(
+            mounted.get(name) is not tool or tool.name != name
+            for name, tool, _ in self.display_bindings
+        ):
+            raise ValueError("display source differs from the actual ToolNode")
+        codes: dict[str, ToolDisplayCode] = {
+            name: code for name, _, code in self.display_bindings
+        }
+        native_read = mounted.get("read_file")
+        # Reserved-name collision is rejected by the factory before construction.
+        # This is the original official node's object, not another read_file tool.
+        if (
+            "read_file" not in self.by_name
+            and native_read is not None
+            and native_read.args_schema is ReadFileSchema
+        ):
+            codes["read_file"] = "tool.file.read"
+        return tuple(sorted(codes.items()))
 
     def with_tools(self, tools: Sequence[BaseTool]) -> Toolset:
         """Add Feature-local tools while preserving the existing authorization base."""
 
         mounted_names = frozenset(tool.name for tool in self.tools)
         implicit = self.authorized - mounted_names
-        return self.from_tools((*self.tools, *tools), implicit_authorized=implicit)
+        return self.from_tools(
+            (*self.tools, *tools),
+            implicit_authorized=implicit,
+            display_bindings=tuple(
+                (tool, code) for _, tool, code in self.display_bindings
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -128,6 +182,7 @@ async def build_toolset(
     }
     bound["mcp"] = make_mcp_tools(agent.mcp, resolved_mcp, run_id=request.run_id)
     tools: list[BaseTool] = []
+    display_bindings: list[tuple[BaseTool, ToolDisplayCode]] = []
     for source in plan.sources:
         if source.kind == "delivery":
             if delivery is None:
@@ -138,7 +193,23 @@ async def build_toolset(
         if tuple(tool.name for tool in materialized) != source.names:
             raise ValueError("tool materialization differs from selection plan")
         tools.extend(materialized)
-    return Toolset.from_tools(tools)
+        if source.kind == "mcp":
+            display_bindings.extend(
+                zip(
+                    materialized,
+                    ("tool.mcp.discover", "tool.mcp.describe", "tool.mcp.call"),
+                    strict=True,
+                )
+            )
+        elif source.kind == "toolbox":
+            for tool in materialized:
+                for registered, origin in toolbox.source_bindings:
+                    if tool is registered and origin == tool.name:
+                        if origin == "web_search":
+                            display_bindings.append((tool, "tool.web.search"))
+                        elif origin == "web_fetch":
+                            display_bindings.append((tool, "tool.web.fetch"))
+    return Toolset.from_tools(tools, display_bindings=display_bindings)
 
 
 async def resolve_declared_mcp(

@@ -183,3 +183,88 @@ async def test_toolset_materialization_consumes_the_shared_plan(
     assert tuple(t.name for t in built.tools) == expected.names
     assert ("deliver" in expected.names) == (declared and available)
     assert built.authorized >= frozenset(expected.names)
+
+
+def test_display_codes_use_original_constructed_toolnode_objects_not_names() -> None:
+    import deepagents
+    from typing import Any
+
+    create_deep_agent: Any = getattr(deepagents, "create_deep_agent")
+    from deepagents.backends import StateBackend
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from kokoro_agent.mcp.tools import make_mcp_tools
+    from kokoro_agent.tools.web_fetch import make_web_fetch_tool
+    from kokoro_agent.domain.chat.projection import ToolDisplayCode
+
+    from kokoro_agent.agents.native_profile import validate_native_registry
+
+    validate_native_registry()
+    mcp = make_mcp_tools((), None, run_id="display-run")
+    web = make_web_fetch_tool(allow_private=False)
+    bindings: tuple[tuple[StructuredTool, ToolDisplayCode], ...] = (
+        (mcp[0], "tool.mcp.discover"),
+        (mcp[1], "tool.mcp.describe"),
+        (mcp[2], "tool.mcp.call"),
+        (web, "tool.web.fetch"),
+    )
+    tools = Toolset.from_tools((*mcp, web), display_bindings=bindings)
+    native = create_deep_agent(
+        model=FakeListChatModel(responses=["unused"]),
+        tools=tools.tools,
+        backend=StateBackend(),
+    )
+    codes = dict(tools.mounted_display_codes(native))
+    assert codes == {
+        "mcp_list_tools": "tool.mcp.discover",
+        "mcp_describe_tool": "tool.mcp.describe",
+        "mcp_call": "tool.mcp.call",
+        "web_fetch": "tool.web.fetch",
+        "read_file": "tool.file.read",
+    }
+    assert tools.mounted_display_codes(object()) == ()
+    counterfeit = create_deep_agent(
+        model=FakeListChatModel(responses=["unused"]),
+        tools=(*mcp, _tool("web_fetch")),
+        backend=StateBackend(),
+    )
+    with pytest.raises(ValueError, match="actual ToolNode"):
+        tools.mounted_display_codes(counterfeit)
+    with pytest.raises(ValueError, match="mounted source"):
+        Toolset.from_tools(
+            (_tool("web_fetch"),), display_bindings=((web, "tool.web.fetch"),)
+        )
+    # A metadata label copied onto an unrelated object cannot confer a category.
+    forged = _tool("web_search")
+    forged.metadata = {"display_code": "tool.web.search"}
+    unknown = Toolset.from_tools((forged,))
+    graph = create_deep_agent(
+        model=FakeListChatModel(responses=["unused"]),
+        tools=unknown.tools,
+        backend=StateBackend(),
+    )
+    assert "web_search" not in dict(unknown.mounted_display_codes(graph))
+
+
+def test_missing_or_impostor_toolnode_cannot_grant_native_semantics() -> None:
+    from langchain_core.runnables.graph import Graph
+    from langgraph.prebuilt import ToolNode
+    from typing import Any
+
+    class Impostor(ToolNode):
+        pass
+
+    class Runnable:
+        def __init__(self, node: ToolNode | None) -> None:
+            self.node = node
+
+        def get_graph(self) -> Graph:
+            graph = Graph()
+            if self.node is not None:
+                add_node: Any = getattr(graph, "add_node")
+                add_node(self.node, id="tools")
+            return graph
+
+    tools = Toolset.from_tools(())
+    assert tools.mounted_display_codes(Runnable(None)) == ()
+    assert tools.mounted_display_codes(Runnable(Impostor((_tool("read_file"),)))) == ()
+    assert tools.mounted_display_codes(Runnable(ToolNode((_tool("read_file"),)))) == ()

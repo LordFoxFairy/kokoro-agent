@@ -45,7 +45,7 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 
 from kokoro_agent import metrics
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
-from kokoro_agent.domain.chat.projection import project_chat_fact
+from kokoro_agent.domain.chat.projection import project_chat_fact, ToolDisplayCode
 from kokoro_agent.domain.chat.models import ChatEventRecord
 from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatRepository
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
@@ -58,6 +58,7 @@ from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
 SourceResolver = Callable[[str], SubagentSource]
+_TOOL_DISPLAY_ADAPTER: TypeAdapter[ToolDisplayCode] = TypeAdapter(ToolDisplayCode)
 LOGGER = logging.getLogger(__name__)
 
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
@@ -199,6 +200,34 @@ class RunEmitter:
         self._namespace = namespace
         self._session_id = session_id
         self._chat_repository = chat_repository
+        self._tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] | None = None
+        self._tool_display_calls: dict[
+            tuple[str, str], tuple[str, ToolDisplayCode]
+        ] = {}
+
+    def bind_tool_display_codes(
+        self, bindings: tuple[tuple[str, ToolDisplayCode], ...]
+    ) -> None:
+        """Bind only factory-observed definitions; no authority from event payloads."""
+        validated: tuple[tuple[str, ToolDisplayCode], ...] = tuple(
+            sorted(
+                (name, _TOOL_DISPLAY_ADAPTER.validate_python(code, strict=True))
+                for name, code in bindings
+            )
+        )
+        if len(dict(validated)) != len(validated):
+            raise ValueError("duplicate tool display binding")
+        if (
+            self._tool_display_codes is not None
+            and self._tool_display_codes != validated
+        ):
+            raise ValueError("tool display binding changed within the Run")
+        if any(
+            dict(validated).get(name, "tool.execution") != code
+            for name, code in self._tool_display_calls.values()
+        ):
+            raise ValueError("tool display classification changed after observation")
+        self._tool_display_codes = validated
 
     @property
     def run_id(self) -> str:
@@ -485,6 +514,20 @@ class RunEmitter:
             or self._namespace is None
         ):
             return True
+        tool_code: ToolDisplayCode = "tool.execution"
+        if isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
+            observed: tuple[str, ToolDisplayCode] = (
+                payload.name,
+                dict(self._tool_display_codes or ()).get(
+                    payload.name, "tool.execution"
+                ),
+            )
+            previous = self._tool_display_calls.setdefault(
+                (payload.segment_id, payload.tool_id), observed
+            )
+            if previous != observed:
+                raise ProgressPersistenceError("tool display call identity changed")
+            tool_code = previous[1]
         projection = project_chat_fact(
             tenant_id=self._tenant_id,
             namespace=self._namespace,
@@ -493,6 +536,7 @@ class RunEmitter:
             source_index=index,
             created_at=wire_epoch_millis_to_utc(timestamp),
             payload=payload,
+            tool_display_code=tool_code,
         )
         if projection is None:
             return True

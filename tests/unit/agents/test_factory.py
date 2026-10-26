@@ -170,6 +170,7 @@ def _factory(
     platform: WorkerPlatformRuntime | None = None,
     checkpointer: InMemorySaver | None = None,
     isolate_model_call_gate_for_unrelated_unit_scope: bool = False,
+    toolbox: ProcessToolbox | None = None,
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
@@ -209,7 +210,7 @@ def _factory(
             ),
             manifest=production_manifest(),
             subagent_catalog=build_subagent_catalog(None),
-            toolbox=build_toolbox(fetch_allow_private=False, search=None),
+            toolbox=toolbox or build_toolbox(fetch_allow_private=False, search=None),
             checkpointer=checkpointer if checkpointer is not None else InMemorySaver(),
             run_repository=repository,
             model_call_repository=_UnusedModelCallRepository(),
@@ -258,6 +259,13 @@ async def test_builds_native_agent_without_external_clients(
     assert callable(handle.runnable.astream_events)
     assert callable(handle.runnable.aget_state)
     assert "deliver" not in handle.tool_descriptions
+    assert dict(handle.tool_display_codes) == {
+        "read_file": "tool.file.read",
+        "mcp_list_tools": "tool.mcp.discover",
+        "mcp_describe_tool": "tool.mcp.describe",
+        "mcp_call": "tool.mcp.call",
+        "web_fetch": "tool.web.fetch",
+    }
     assert resolver.calls
     assert all(call[:3] == ("tenant", feature_key, None) for call in resolver.calls)
 
@@ -2842,3 +2850,83 @@ async def test_native_file_recovery_owns_state_changes_without_repeating_externa
         assert physical_calls == (2 if backend == "state" else 1)
     finally:
         await restored.aclose()
+
+
+async def test_factory_binds_configured_search_and_fetch_objects_without_calling_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.tools.web_search import SearchProviderSettings
+
+    toolbox = build_toolbox(
+        fetch_allow_private=False,
+        search=SearchProviderSettings(
+            provider="searxng", base_url="https://not-contacted.invalid", api_key=None
+        ),
+    )
+    factory, repository = _factory(monkeypatch, RouteResolver(), toolbox=toolbox)
+    request = _request("chat")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    assert set(dict(handle.tool_display_codes).values()) == {
+        "tool.file.read",
+        "tool.mcp.discover",
+        "tool.mcp.describe",
+        "tool.mcp.call",
+        "tool.web.search",
+        "tool.web.fetch",
+    }
+    await handle.aclose()
+
+
+async def test_swarm_does_not_borrow_a_tool_category_from_another_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.agent_factory import AgentHandle
+
+    original = agent_factory_module.build_deep_agent
+    count = 0
+
+    async def narrow(*args: Any, **kwargs: Any) -> AgentHandle:
+        nonlocal count
+        built = await original(*args, **kwargs)
+        count += 1
+        if count == 2:
+            return replace(
+                built,
+                tool_display_codes=tuple(
+                    (name, code)
+                    for name, code in built.tool_display_codes
+                    if name != "web_fetch"
+                ),
+            )
+        return built
+
+    feature = Feature(
+        key="display_peers",
+        agents=(
+            Agent(key="first", prompt="first"),
+            Agent(key="second", prompt="second"),
+        ),
+        entry_agent="first",
+        handoffs=(("first", "second"),),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    monkeypatch.setattr(agent_factory_module, "build_deep_agent", narrow)
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    assert count == 2
+    assert "web_fetch" not in dict(handle.tool_display_codes)
+    assert dict(handle.tool_display_codes)["mcp_call"] == "tool.mcp.call"
+    await handle.aclose()

@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "7.4.0"
+    assert _object(document["info"])["version"] == "8.0.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -553,7 +553,7 @@ def test_current_http7_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "7.4.0"
+    assert _object(document["info"])["version"] == "8.0.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -981,3 +981,48 @@ def test_r216_system_consumer_has_source_and_audit_inventory() -> None:
     declared = package["tool"]["setuptools"]["data-files"]
     assert declared["share/kokoro-agent/audit/src/kokoro_agent"].count(relative) == 1
     # Declaration evidence only; Root must also execute the installed RECORD gate.
+
+
+def test_agent8_tool_display_is_a_closed_output_extension_with_full_parent_proof() -> (
+    None
+):
+    import copy
+    import hashlib
+
+    document = json.loads(CONTRACT.read_bytes())
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    codes = [
+        "tool.execution",
+        "tool.file.read",
+        "tool.mcp.discover",
+        "tool.mcp.describe",
+        "tool.mcp.call",
+        "tool.web.search",
+        "tool.web.fetch",
+    ]
+    assert document["info"]["version"] == "8.0.0"
+    assert tool["properties"]["display_code"] == {"type": "string", "enum": codes}
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.execution",
+    }
+    for code in codes:
+        validate({**payload, "display_code": code}, tool)
+    for code in ["tool.skill.read", "tool.web.search.secret", "", None]:
+        with pytest.raises(SchemaValidationError):
+            validate({**payload, "display_code": code}, tool)
+    with pytest.raises(SchemaValidationError):
+        validate({**payload, "name": "private-tool"}, tool)
+    parent = copy.deepcopy(document)
+    parent["info"]["version"] = "7.4.0"
+    parent["components"]["schemas"]["ChatActivity"]["oneOf"][0]["properties"][
+        "display_code"
+    ] = {"type": "string", "const": "tool.execution"}
+    encoded = (json.dumps(parent, ensure_ascii=False, indent=2) + "\n").encode()
+    assert (
+        hashlib.sha256(encoded).hexdigest()
+        == "7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad"
+    )

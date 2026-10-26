@@ -234,3 +234,149 @@ async def test_stopped_live_publish_preserves_critical_outbox_recovery(
     finally:
         publishing.cancel()
         await asyncio.gather(publishing, return_exceptions=True)
+
+
+@pytest.mark.parametrize("is_error", [False, True])
+async def test_display_binding_is_run_local_stable_and_never_changes_raw_wire(
+    is_error: bool,
+) -> None:
+    import json
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    bus = FakeBus()
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        bus,
+        "display-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=store,
+    )
+    emitter.bind_tool_display_codes((("mcp_call", "tool.mcp.call"),))
+    await emitter.emit(
+        ToolInvokedPayload(
+            segment_id="seg", tool_id="call", name="mcp_call", args={"token": "SECRET"}
+        )
+    )
+    await emitter.emit(
+        ToolReturnedPayload(
+            segment_id="seg",
+            tool_id="call",
+            name="mcp_call",
+            result="SECRET",
+            is_error=is_error,
+        )
+    )
+    assert [json.loads(row.payload_json)["display_code"] for row in store.records] == [
+        "tool.mcp.call",
+        "tool.mcp.call",
+    ]
+    assert [json.loads(row.payload_json)["status"] for row in store.records] == [
+        "running",
+        "failed" if is_error else "completed",
+    ]
+    assert all("SECRET" not in row.payload_json for row in store.records)
+    for _, event, _ in bus.published:
+        raw_payload = event["payload"]
+        assert isinstance(raw_payload, dict)
+        assert "display_code" not in raw_payload
+    with pytest.raises(ValueError, match="changed within"):
+        emitter.bind_tool_display_codes((("mcp_call", "tool.web.fetch"),))
+    other = FakeChatRepository([])
+    unbound = await RunEmitter.attach(
+        FakeBus(),
+        "other-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=other,
+    )
+    await unbound.emit(
+        ToolInvokedPayload(segment_id="seg", tool_id="call", name="mcp_call", args={})
+    )
+    assert json.loads(other.records[0].payload_json)["display_code"] == "tool.execution"
+
+
+async def test_display_identity_allows_call_id_reuse_between_distinct_segments() -> (
+    None
+):
+    import json
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "reuse-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=store,
+    )
+    emitter.bind_tool_display_codes(
+        (("mcp_call", "tool.mcp.call"), ("web_fetch", "tool.web.fetch"))
+    )
+    for segment, name in [("segment-a", "mcp_call"), ("segment-b", "web_fetch")]:
+        await emitter.emit(
+            ToolInvokedPayload(
+                segment_id=segment, tool_id="reused-id", name=name, args={}
+            )
+        )
+        await emitter.emit(
+            ToolReturnedPayload(
+                segment_id=segment,
+                tool_id="reused-id",
+                name=name,
+                result="private result",
+                is_error=False,
+            )
+        )
+    activities = [json.loads(row.payload_json) for row in store.records]
+    assert [item["display_code"] for item in activities] == [
+        "tool.mcp.call",
+        "tool.mcp.call",
+        "tool.web.fetch",
+        "tool.web.fetch",
+    ]
+    assert activities[0]["activity_id"] == activities[1]["activity_id"]
+    assert activities[2]["activity_id"] == activities[3]["activity_id"]
+    assert activities[0]["activity_id"] != activities[2]["activity_id"]
+    assert all("private result" not in row.payload_json for row in store.records)
+
+
+async def test_display_identity_rejects_tool_rename_within_the_same_segment_and_call() -> (
+    None
+):
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    bus = FakeBus()
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        bus,
+        "rename-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=store,
+    )
+    emitter.bind_tool_display_codes(
+        (("mcp_call", "tool.mcp.call"), ("web_fetch", "tool.web.fetch"))
+    )
+    await emitter.emit(
+        ToolInvokedPayload(
+            segment_id="segment-a", tool_id="same-id", name="mcp_call", args={}
+        )
+    )
+    with pytest.raises(ProgressPersistenceError, match="call identity changed"):
+        await emitter.emit(
+            ToolReturnedPayload(
+                segment_id="segment-a",
+                tool_id="same-id",
+                name="web_fetch",
+                result="not published",
+                is_error=False,
+            )
+        )
+    assert len(store.records) == 1
+    assert len(bus.published) == 1

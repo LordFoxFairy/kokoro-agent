@@ -50,12 +50,23 @@ class _AssistantCompleted(_Payload):
     content: str
 
 
+ToolDisplayCode = Literal[
+    "tool.execution",
+    "tool.file.read",
+    "tool.mcp.discover",
+    "tool.mcp.describe",
+    "tool.mcp.call",
+    "tool.web.search",
+    "tool.web.fetch",
+]
+
+
 class _ToolActivity(_Payload):
     activity: Literal["tool"] = "tool"
     activity_id: str
     segment_id: str
     status: Literal["running", "completed", "failed"]
-    display_code: Literal["tool.execution"] = "tool.execution"
+    display_code: ToolDisplayCode = "tool.execution"
 
 
 class _SubagentActivity(_Payload):
@@ -118,6 +129,7 @@ def project_chat_fact(
     source_index: int,
     created_at: datetime,
     payload: ProjectablePayload,
+    tool_display_code: ToolDisplayCode = "tool.execution",
 ) -> ChatProjection | None:
     """Project only allowlisted product semantics; unknown/private payloads disappear."""
 
@@ -186,6 +198,7 @@ def project_chat_fact(
     elif isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
         event_type = "activity"
         safe_payload = _ToolActivity(
+            display_code=tool_display_code,
             activity_id="act_"
             + opaque("tool-activity", payload.segment_id, payload.tool_id),
             segment_id="seg_" + opaque("segment", payload.segment_id),

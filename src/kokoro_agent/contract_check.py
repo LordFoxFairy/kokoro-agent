@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +12,7 @@ from kokoro_agent import model_usage_contract, model_usage_v2_contract
 from kokoro_agent.chat_contract_check import (
     failure_model_bytes,
     http72_parent_bytes,
+    http74_parent_bytes,
     generate_failure_models,
     read_contract_document as read_document,
     validate_chat_response_contract,
@@ -71,7 +71,9 @@ def _object(value: object, *, source: str) -> dict[str, object]:
 
 def http73_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the optional Run selection and prove the complete published parent."""
-    parent = copy.deepcopy(document)
+    parent = _object(
+        json.loads(http74_parent_bytes(document)), source="HTTP 7.4 parent"
+    )
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "7.4.0":
         raise ValueError("MCP selection requires HTTP 7.4.0")
@@ -114,8 +116,8 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "7.4.0":
-        raise ValueError("Agent HTTP contract version must be 7.4.0")
+    if info.get("version") != "8.0.0":
+        raise ValueError("Agent HTTP contract version must be 8.0.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")

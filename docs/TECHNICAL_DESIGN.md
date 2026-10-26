@@ -1,3 +1,33 @@
+## 2026-10-26 安全工具展示语义（Agent8 候选实施中，正常未激活）
+
+**基线与 owner。** 正常 producer 与本次可维护 checkout 均为 `83e9e36efeb8086074648ea9d5bd9a3bea43d5cd`，本仓 HTTP7.4 原件 SHA256 为 `7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad`。`domain/chat/projection.py` 当前把普通工具压成 `tool.execution`、opaque activity/segment ID 和真实状态；BFF/App 没有收到被遗漏的具体语义。Agent 仍唯一拥有执行事实与安全 Chat 投影，BFF 拥有 durable AG-UI，App 只本地化呈现。本片仅补工具定义的安全类别，不读取模型原文推断意图，不改执行、授权或计费结果。
+
+**实施状态。** Root 已复核本门；候选以实际 `get_graph().nodes["tools"].data` 的官方 `ToolNode.tools_by_name` 获取原挂载对象。自有 MCP/Web 绑定逐对象 identity 核对，官方 read_file 另核原 native 来源/保留名边界与 SDK ReadFileSchema；缺失或伪节点不升级类别，不创建第二 read_file。`AgentHandle` 保存不可变 code tuple，现 invoke 在启动前绑定到原 RunEmitter，emitter 只把受信类别传给纯 Chat 投影；Swarm 只承接各 peer 都已证明且相同的绑定，避免按重名借用其他 peer。当前仅 SDK 构造/测试证据，不是正常模型或工具执行验收；尚未提交发行、配对 BFF/App 或启正常源。
+
+**采用的最小链路。** 在现工具装配边界，从真实挂载对象及其已验证来源建立不可变的闭集展示绑定，经 `AgentHandle`、现 invoke/pump/emitter 的请求内可信上下文交给 `project_chat_fact`。不向 Redis `ToolInvokedPayload`/`ToolReturnedPayload` 加字段，不让模型参数、工具返回值或任意 `BaseTool.metadata` 自报公开类别；不复制 SDK 工具选择/路由算法，不补第二 executor、遥测总线、缓存或事实表。普通调用名只允许定位该已验证的定义绑定，禁止按字符串/正则/description 猜类别。已注册但不在本片语义集的工具及缺少受信来源证明的工具继续使用 `tool.execution`；未知公开 code 则是契约错误，不转通用成功。
+
+| 受信定义/来源 | 固定 `display_code` | 语义边界 |
+| --- | --- | --- |
+| 自有 `make_mcp_tools` 实际创建的 list/describe/call 三对象 | `tool.mcp.discover`、`tool.mcp.describe`、`tool.mcp.call` | 仅固定 wrapper 的能力类别；不公开远端 server/tool 名、Connection、schema、参数或结果，不声称某次发现/调用成功。 |
+| 自有 web_search/web_fetch 构造器及 `ProcessToolbox.source_bindings` 的对象身份 | `tool.web.search`、`tool.web.fetch` | 不公开 query、URL、网页标题/正文或 provider；不解析自述生成标题。 |
+| 已批准锁定 native 来源中实际注册的官方 read_file 工具 | `tool.file.read` | 在真实挂载工具边界核对象与封闭 native 来源，不因任意同名对象/stream name 就授类别；不改或重建官方文件工具。 |
+| 其余/历史通用工具 | `tool.execution` | 不发明更具体的行为。 |
+
+**Skills 的真实边界。** 本仓没有独立 Skill-read 工具；实际链是官方 read_file → 原 `CompositeBackend` → `TypedSkillBackend.aread`。因此本片一律只声明“读取文件”，覆盖 Skill 文件读取而不把其他文件冒作 Skill；既有 `activity=skill` 的真实 preflight 及其 phase 原样保留。不得按 `/.skills/` 参数、文件名、SKILL.md 内容或 raw payload 猜 `tool.skill.read`。官方 read_file 的实际挂载来源与稳定绑定须有原生构造正控；若既有公开 SDK 边界不足以取得该证明，先交 Root 裁决，不以私有 SDK introspection、patch 或名称表代替。
+
+**稳定性与失败恢复。** 同 Run 冻结的实际工具定义决定同一 call 的类别；running/completed/failed 沿原执行事实，开始/结束不得改类、串 call 或跨 peer 借绑定。绑定实现沿既有 recipe/source digest 自然冻结，不新增可编辑 recipe 镜像；resume/重启仍受原 recipe/lease/tenant/主体/工具 journal 围栏约束，不能借分类恢复重做工具。取消、HITL、未知外部效果及迟到事件沿原语义，无合成完成/失败。只有本请求内已验证的类别能进入安全 Chat；name、args、result、error、description、路径、秘密、标题、phase 与时长均不新增公开字段。旧 generic 活动保持原 bytes/digest 和原类别，不回填、不从私有事件反推 R6、不重派旧 Run。
+
+**本次写区（Root 已复核；只改实际需要的路径）。** 下列均相对本仓；列出允许的精确落点，不要求无差别修改：
+
+- 定义/装配：`src/kokoro_agent/tools/toolset.py`、`tools/toolbox.py`、`mcp/tools.py`、`tools/web_search.py`、`tools/web_fetch.py`、`agents/native_profile.py`、`agent_factory.py`。工具来源校验与有限 code 定义留在现职责内，不新增通用注册框架或依赖。
+- 可信上下文/投影：同一源码根下 `execution/protocols.py`、`execution/run_agent.py`、`execution/publish_agent_events.py`、`execution/events.py`、`domain/chat/projection.py`、`worker/supervisor_context.py`、`worker/supervisor_execution.py`；保持原 Redis payload、存储与业务状态机。`execution/runtime_profile_plan.py` 仅在绑定/实际装配一致性需要时窄改，不能放宽 recipe 验证。
+- 机器/生成：`contract/openapi/v1/openapi.json`、`contract/provenance.json`、`src/kokoro_agent/contract_check.py`、`src/kokoro_agent/chat_contract_check.py`；现 `scripts/generate_failure_models.py` 正规生成 `src/kokoro_agent/protocol/run_failure_generated.py` 与 provenance，保原 failure/proof/usage/其它 owner 契约语义。没有新源文件时不改 source inventory、包资产、`pyproject.toml` 或 lock。
+- 行为/机器回归：`tests/unit/tools/test_toolset.py`、`tests/unit/agents/test_factory.py`、`tests/unit/agents/test_native_profile.py`、`tests/unit/execution/test_runtime_profile_plan.py`、`tests/unit/execution/test_invoke.py`、`tests/unit/execution/test_supervisor.py`、`tests/unit/chat/test_emitter.py`、`tests/unit/chat/test_projection.py`、`tests/contract/test_public_contract.py`、`tests/contract/test_machine_contract.py`、`tests/contract/test_chat_response_envelopes.py`。真实持久/replay 独有风险复用 `tests/integration/database/test_run_outbox_filter.py`、`tests/integration/database/test_run_interaction_transactions.py`，资源由 Root 另授，不在文档门启动。
+
+**发行与验证。** Agent8.0 先发布唯一 OpenAPI/provenance 与新旧完整父证明；BFF 再固定精确 commit/digest 正规生成，发布 Public28 的同一 code 闭集，App 固定 BFF artifact 后统一消费 live、compact snapshot 与 ordered parts。现 Agent7.4/BFF27 的严格 decoder 不接新 code，故不能先正常启新 producer。定向测试先证明六类真实构造/挂载来源、同名伪对象/未挂载/未知来源负控、同 call 状态一致、跨 Run/peer 隔离、秘密零公开、旧 generic、取消/恢复/replay；再运行本 owner Ruff/Pyright/contract/generator/pytest/build 等相关完整门，资源与浏览器证据由 Root 单独完成。设计稿或本地候选测试不等于正常运行验收。
+
+**激活/回滚。** Root 独占正常资源、成套版本、排空/切换与 Git。保持正常 `83e9` 和既有持久事件不动；本 writer 不操作 normal producer、模型、外部工具、数据库或服务。运行切换须先具备可读新旧 code 的 BFF/App，再准入 Agent8 新 Run；不迁移已派发 Run 的 frozen recipe。新 code 一旦持久化，先停新 producer/派发并保留能够读取 Agent8/BFF28 事实的消费者，再处理恢复；不能直接降回只认 generic 的旧 reader，也不能删改事件“回滚”。没有新 code 落库的阶段才可成套回退旧组合。具体正常切换与恢复操作另由 Root 授权。
+
 ## 2026-10-25 Personal MCP SSE 固定消费者（候选已实施，尚未正常激活）
 
 **来源与边界。** 固定 Platform 正式本地交付 `8cfead647856ef54ec851a3bebe169a3ca14d212` 的 Runtime1.5 与 personal-SSE profile；owner 仍拥有当前连接／授权／材料，Agent 只消费 typed `sse` 新 case、执行官方 SDK 会话。Browser/BFF 只运输 exact Connection ID，不由 Prepare 成功推断 Agent 已可运行。不新增 RPC、权限、Schema、依赖、工具或协议框架，不开放个人任意 STDIO／SSE 项目发布。原 Streamable HTTP、受管包 STDIO、两 operation/E2/request-binding-v3、当前 Run/lease/selector/grant/原参数字节及工具 journal 不变；原 30 秒总上下文与 resolution/material/grant 最小到期时间不延长。

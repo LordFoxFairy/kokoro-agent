@@ -31,7 +31,8 @@ from deepagents.backends.state import StateBackend
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
-from kokoro_agent.domain.chat.projection import ToolDisplayCode
+from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
+from kokoro_agent.clients.mcp import McpDisplayDeclaration
 from kokoro_agent.clients.mcp import McpClient, McpConnectionRef
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
@@ -93,6 +94,7 @@ class AgentHandle:
     resources: tuple[ArchivingWritesMixin, ...] = ()
     model_clients: tuple[ModelHttpClients, ...] = ()
     tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = ()
+    tool_display_sources: tuple[ToolDisplaySource, ...] = ()
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)
@@ -148,6 +150,7 @@ class _ResolvedCapabilities:
     skills: tuple[ResolvedSkill, ...]
     mcp: McpClient | None
     skill_reader: SkillClient | None
+    mcp_declarations: tuple[McpDisplayDeclaration, ...] = ()
 
 
 async def _preflight(
@@ -282,6 +285,10 @@ async def build_deep_agent(
             delivery=dependencies.delivery,
             lease=lease,
             resolved_mcp=capabilities.mcp,
+            mcp_declarations=capabilities.mcp_declarations,
+            skill_prefixes=tuple(
+                f"{SKILLS_ROOT}{skill.path_segment}/" for skill in capabilities.skills
+            ),
         )
         if plan.handoffs:
             toolset = toolset.with_tools(plan.handoffs)
@@ -404,6 +411,7 @@ async def build_deep_agent(
             runnable=require_agent_runnable(candidate),
             tool_descriptions=toolset.descriptions,
             tool_display_codes=toolset.mounted_display_codes(candidate),
+            tool_display_sources=toolset.mounted_display_sources(candidate),
             resources=resources,
             model_clients=(clients,),
         )
@@ -527,14 +535,17 @@ class AgentFactory:
         capabilities: dict[str, _ResolvedCapabilities] = {}
         for peer in prepared.peers:
             resolved = skills[peer.agent.key]
-            mcp = await resolve_declared_mcp(
+            mcp, declarations = await resolve_declared_mcp(
                 request,
                 peer.agent,
                 self._dependencies.platform,
                 lease,
             )
             capabilities[peer.agent.key] = _ResolvedCapabilities(
-                skills=resolved.skills, mcp=mcp, skill_reader=resolved.skill_reader
+                skills=resolved.skills,
+                mcp=mcp,
+                skill_reader=resolved.skill_reader,
+                mcp_declarations=declarations,
             )
         if len(prepared.peers) == 1:
             peer = prepared.peers[0]
@@ -590,7 +601,9 @@ class AgentFactory:
         common_codes: dict[str, ToolDisplayCode] = dict(
             built_agents[0].tool_display_codes
         )
+        common_sources = set(built_agents[0].tool_display_sources)
         for built in built_agents:
+            common_sources.intersection_update(built.tool_display_sources)
             descriptions.update(built.tool_descriptions)
             resources.extend(built.resources)
             peer_codes = dict(built.tool_display_codes)
@@ -603,6 +616,16 @@ class AgentFactory:
             runnable=native,
             tool_descriptions=descriptions,
             tool_display_codes=tuple(sorted(common_codes.items())),
+            tool_display_sources=tuple(
+                sorted(
+                    (
+                        source
+                        for source in common_sources
+                        if common_codes.get(source.name) == source.code
+                    ),
+                    key=lambda source: source.name,
+                )
+            ),
             resources=tuple(resources),
             model_clients=tuple(
                 clients for built in built_agents for clients in built.model_clients

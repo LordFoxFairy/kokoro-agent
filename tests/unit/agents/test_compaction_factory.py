@@ -4,6 +4,7 @@ No provider, Billing, PostgreSQL, or production execution success is claimed her
 """
 
 from __future__ import annotations
+from kokoro_agent.clients.mcp import McpDisplayDeclaration
 
 import asyncio
 import json
@@ -809,8 +810,12 @@ class _Mcp(PlatformMcpClient):
         self.calls: list[tuple[str, str, dict[str, JsonValue], str]] = []
         self.reads = 0
 
-    async def check(self, references: Sequence[McpConnectionRef]) -> None:
+    async def check(
+        self, references: Sequence[McpConnectionRef]
+    ) -> tuple[McpDisplayDeclaration, ...]:
         assert tuple(ref.connection_id for ref in references) == ("selected",)
+
+        return ()
 
     async def list_tools(self, reference: McpConnectionRef) -> tuple[McpTool, ...]:
         assert reference.connection_id == "selected"

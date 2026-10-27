@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import asyncio
 
 import pytest
 
@@ -406,3 +407,391 @@ async def test_display_identity_rejects_tool_rename_within_the_same_segment_and_
         )
     assert len(store.records) == 1
     assert len(bus.published) == 1
+
+
+async def test_detail_freezes_safe_basename_and_recovers_original_chat() -> None:
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+
+    async def emitter() -> RunEmitter:
+        result = await RunEmitter.attach(
+            FakeBus(),
+            "detail-run",
+            tenant_id="t",
+            namespace="n",
+            session_id="s",
+            chat_repository=store,
+        )
+        result.bind_tool_display_codes((("read_file", "tool.file.read"),))
+        result.bind_tool_display_sources(
+            (
+                ToolDisplaySource(
+                    name="read_file",
+                    code="tool.file.read",
+                    origin="native",
+                    file_scope="virtual",
+                ),
+            )
+        )
+        return result
+
+    first = await emitter()
+    await first.emit(
+        ToolInvokedPayload(
+            segment_id="c",
+            tool_id="c",
+            name="read_file",
+            args={"file_path": "/docs/report.md", "secret": "NEVER_PUBLISH"},
+        )
+    )
+    second = await emitter()
+    await second.emit(
+        ToolReturnedPayload(
+            segment_id="c",
+            tool_id="c",
+            name="read_file",
+            result="NEVER_PUBLISH",
+            is_error=True,
+        )
+    )
+    values = [json.loads(row.payload_json) for row in store.records]
+    assert [value["display_detail"] for value in values] == [
+        {"kind": "file", "name": "report.md"}
+    ] * 2
+    assert [value["status"] for value in values] == ["running", "failed"]
+    assert "NEVER_PUBLISH" not in str(values)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/Users/private/report.md",
+        "/.ssh/key",
+        "/docs/.env",
+        "/docs/../report.md",
+        "C:\\secret\\report.md",
+        "//host/share/file.md",
+        "/docs/sk-proj-secret.txt",
+        "/docs/e\u0301.md",
+        "/docs/hi\u202e.md",
+        "/docs/" + "a" * 121,
+        "/" + "a" * 4096,
+    ],
+)
+async def test_detail_sensitive_or_invalid_target_is_omitted(path: str) -> None:
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    store = FakeChatRepository([])
+    result = await RunEmitter.attach(
+        FakeBus(),
+        "detail-run",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    result.bind_tool_display_codes((("read_file", "tool.file.read"),))
+    result.bind_tool_display_sources(
+        (
+            ToolDisplaySource(
+                name="read_file",
+                code="tool.file.read",
+                origin="native",
+                file_scope="virtual",
+            ),
+        )
+    )
+    await result.emit(
+        ToolInvokedPayload(
+            segment_id="c", tool_id="c", name="read_file", args={"file_path": path}
+        )
+    )
+    assert "display_detail" not in json.loads(store.records[-1].payload_json)
+
+
+@pytest.mark.parametrize("is_error", [False, True])
+async def test_detail_old_absent_is_not_backfilled_by_new_source(
+    is_error: bool,
+) -> None:
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+    old = await RunEmitter.attach(
+        FakeBus(),
+        "old",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    await old.emit(
+        ToolInvokedPayload(
+            segment_id="c", tool_id="c", name="read_file", args={"file_path": "/old.md"}
+        )
+    )
+    original = store.records[0].payload_json
+    new = await RunEmitter.attach(
+        FakeBus(),
+        "old",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    new.bind_tool_display_codes((("read_file", "tool.file.read"),))
+    new.bind_tool_display_sources(
+        (
+            ToolDisplaySource(
+                name="read_file",
+                code="tool.file.read",
+                origin="native",
+                file_scope="virtual",
+            ),
+        )
+    )
+    await new.emit(
+        ToolReturnedPayload(
+            segment_id="c",
+            tool_id="c",
+            name="read_file",
+            result="/new.md",
+            is_error=is_error,
+        )
+    )
+    # A same-emitter resume must not reinterpret the old category either.
+    new.bind_tool_display_codes((("read_file", "tool.file.read"),))
+    assert store.records[0].payload_json == original
+    assert [json.loads(row.payload_json)["display_code"] for row in store.records] == [
+        "tool.execution"
+    ] * 2
+    assert all(
+        "display_detail" not in json.loads(row.payload_json) for row in store.records
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("PRIVATE_HISTORY_CANARY"),
+        OSError("PRIVATE_HISTORY_CANARY"),
+        asyncio.CancelledError(),
+    ],
+)
+async def test_detail_history_failure_is_never_treated_as_no_row(
+    failure: BaseException,
+) -> None:
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    class BrokenHistory(FakeChatRepository):
+        async def first_tool_activity(
+            self,
+            tenant_id: str,
+            namespace: str,
+            session_id: str,
+            run_id: str,
+            activity_id: str,
+        ):
+            raise failure
+
+    store = BrokenHistory([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    import asyncio
+
+    with pytest.raises(
+        asyncio.CancelledError
+        if isinstance(failure, asyncio.CancelledError)
+        else ProgressPersistenceError
+    ) as captured:
+        await emitter.emit(
+            ToolInvokedPayload(
+                segment_id="c",
+                tool_id="c",
+                name="read_file",
+                args={"file_path": "/report.md"},
+            )
+        )
+    assert store.records == []
+    if not isinstance(failure, asyncio.CancelledError):
+        import traceback
+
+        assert "PRIVATE_HISTORY_CANARY" not in "".join(
+            traceback.format_exception(captured.value)
+        )
+
+
+async def test_detail_mcp_label_comes_from_frozen_declaration_and_survives_restart() -> (
+    None
+):
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+    for index, label in enumerate(["Search documents", "Renamed owner declaration"]):
+        emitter = await RunEmitter.attach(
+            FakeBus(),
+            "mcp",
+            tenant_id="t",
+            namespace="n",
+            session_id="s",
+            chat_repository=store,
+        )
+        emitter.bind_tool_display_codes((("mcp_call", "tool.mcp.call"),))
+        emitter.bind_tool_display_sources(
+            (
+                ToolDisplaySource(
+                    name="mcp_call",
+                    code="tool.mcp.call",
+                    origin="mcp",
+                    mcp_names=(("connection", "search", label),),
+                ),
+            )
+        )
+        if index == 0:
+            await emitter.emit(
+                ToolInvokedPayload(
+                    segment_id="c",
+                    tool_id="c",
+                    name="mcp_call",
+                    args={
+                        "server": "connection",
+                        "tool": "search",
+                        "arguments": {"title": "SECRET"},
+                    },
+                )
+            )
+        else:
+            await emitter.emit(
+                ToolReturnedPayload(
+                    segment_id="c",
+                    tool_id="c",
+                    name="mcp_call",
+                    result="SECRET",
+                    is_error=False,
+                )
+            )
+    assert [
+        json.loads(row.payload_json)["display_detail"] for row in store.records
+    ] == [{"kind": "mcp_tool", "name": "Search documents"}] * 2
+
+
+async def test_detail_history_total_deadline_cancels_reader_instead_of_inventing_absence() -> (
+    None
+):
+    import asyncio
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.domain.chat.models import ChatEventRecord
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    closed = False
+
+    class StalledHistory(FakeChatRepository):
+        async def first_tool_activity(
+            self,
+            tenant_id: str,
+            namespace: str,
+            session_id: str,
+            run_id: str,
+            activity_id: str,
+        ) -> ChatEventRecord | None:
+            nonlocal closed
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closed = True
+
+    store = StalledHistory([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    with pytest.raises(ProgressPersistenceError) as error:
+        await asyncio.wait_for(
+            emitter.emit(
+                ToolInvokedPayload(
+                    segment_id="c", tool_id="c", name="read_file", args={}
+                )
+            ),
+            timeout=4,
+        )
+    assert isinstance(error.value.__cause__, TimeoutError)
+    assert closed and store.records == []
+
+
+async def test_detail_corrupt_history_never_exposes_validation_input_in_traceback() -> (
+    None
+):
+    import json
+    import traceback
+    from kokoro_agent.domain.chat.models import ChatEventRecord
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    original = FakeChatRepository([])
+    first = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=original,
+    )
+    await first.emit(
+        ToolInvokedPayload(segment_id="c", tool_id="c", name="read_file", args={})
+    )
+    value = json.loads(original.records[0].payload_json)
+    value.update(
+        display_code="tool.file.read",
+        display_detail={"kind": "file", "name": ".env_SECRET_CANARY"},
+    )
+    record = original.records[0].model_copy(update={"payload_json": json.dumps(value)})
+
+    class CorruptHistory(FakeChatRepository):
+        async def first_tool_activity(
+            self,
+            tenant_id: str,
+            namespace: str,
+            session_id: str,
+            run_id: str,
+            activity_id: str,
+        ) -> ChatEventRecord | None:
+            return record
+
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=CorruptHistory([]),
+    )
+    with pytest.raises(ProgressPersistenceError) as error:
+        await emitter.emit(
+            ToolReturnedPayload(
+                segment_id="c",
+                tool_id="c",
+                name="read_file",
+                result="unused",
+                is_error=False,
+            )
+        )
+    assert "SECRET_CANARY" not in "".join(traceback.format_exception(error.value))

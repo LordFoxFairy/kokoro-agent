@@ -764,3 +764,122 @@ async def test_todo_live_publish_failure_keeps_committed_fact_replayable(
         )
         == before
     )
+
+
+async def test_tool_detail_first_safe_chat_survives_emitter_rebuild_without_backfill(
+    run_repository: RunRepository, run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    """Real PG is the oracle; FakeBus only replaces live transport, not persistence."""
+    import json
+    from support.fakes import FakeBus
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.execution.events import RunEmitter
+    from kokoro_agent.infrastructure.postgres_chat_repository import (
+        PostgresChatRepository,
+    )
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    for legacy in (False, True):
+        request = _request(f"detail-first-{legacy}")
+        scope = RunScope.of(request)
+        tenant = request.execution_identity.tenant_ref
+        lease = await run_repository.try_claim(request, "detail-writer")
+        assert lease is not None
+        repository = PostgresChatRepository(run_chat_database_url, run_chat_schema)
+        first = await RunEmitter.attach(
+            FakeBus(),
+            request.run_id,
+            outbox=run_repository,
+            lease=lease,
+            tenant_id=tenant,
+            namespace=scope.namespace,
+            session_id=scope.session_id,
+            chat_repository=repository,
+        )
+        sources = (
+            ToolDisplaySource(
+                name="read_file",
+                code="tool.file.read",
+                origin="native",
+                file_scope="virtual",
+            ),
+        )
+        if not legacy:
+            first.bind_tool_display_codes((("read_file", "tool.file.read"),))
+            first.bind_tool_display_sources(sources)
+        await first.emit(
+            ToolInvokedPayload(
+                segment_id="call",
+                tool_id="call",
+                name="read_file",
+                args={"file_path": "/docs/report.md", "content": "SECRET"},
+            )
+        )
+        original = next(
+            row
+            for row in await repository.replay(
+                tenant, scope.namespace, scope.session_id
+            )
+            if row.run_id == request.run_id
+        )
+        activity_id = json.loads(original.payload_json)["activity_id"]
+        # Exact scope, same existing table: another tenant/session/run is not a source.
+        assert (
+            await repository.first_tool_activity(
+                tenant, scope.namespace, scope.session_id, request.run_id, activity_id
+            )
+            == original
+        )
+        for wrong in [
+            ("other", scope.namespace, scope.session_id, request.run_id),
+            (tenant, "other", scope.session_id, request.run_id),
+            (tenant, scope.namespace, "other", request.run_id),
+            (tenant, scope.namespace, scope.session_id, "other"),
+        ]:
+            assert await repository.first_tool_activity(*wrong, activity_id) is None
+        fresh = PostgresChatRepository(run_chat_database_url, run_chat_schema)
+        second = await RunEmitter.attach(
+            FakeBus(),
+            request.run_id,
+            outbox=run_repository,
+            lease=lease,
+            tenant_id=tenant,
+            namespace=scope.namespace,
+            session_id=scope.session_id,
+            chat_repository=fresh,
+        )
+        second.bind_tool_display_codes((("read_file", "tool.file.read"),))
+        second.bind_tool_display_sources(sources)
+        await second.emit(
+            ToolReturnedPayload(
+                segment_id="call",
+                tool_id="call",
+                name="read_file",
+                result="SECRET /wrong.md",
+                is_error=False,
+            )
+        )
+        rows = [
+            row
+            for row in await fresh.replay(tenant, scope.namespace, scope.session_id)
+            if row.run_id == request.run_id
+        ]
+        assert len(rows) == 2 and rows[0] == original
+        values = [json.loads(row.payload_json) for row in rows]
+        assert [value["display_code"] for value in values] == [
+            "tool.execution" if legacy else "tool.file.read"
+        ] * 2
+        assert [value.get("display_detail") for value in values] == [
+            None if legacy else {"kind": "file", "name": "report.md"}
+        ] * 2
+        assert (
+            "SECRET" not in str(values)
+            and values[0]["activity_id"] == values[1]["activity_id"]
+        )
+        assert (
+            await fresh.first_tool_activity(
+                tenant, scope.namespace, scope.session_id, request.run_id, activity_id
+            )
+            == original
+        )

@@ -1,3 +1,20 @@
+## 2026-10-27 HTTP8.2 具体动作对象 D0（候选，Root 已核；实施中）
+
+基线源码 `38c294d38cf05149c320622f52490f82fb1fff91`，HTTP8.1.0完整OpenAPI SHA256 `1642829ccf5364692051e836938ef33b36cffeca25f2b7766ad95cd44a1542c9`、provenance SHA256 `879695cfacd55014b9f6a28e3138d88bc009ba9d46acfac27497a26f0025acad`。本门拟发8.2.0，只在 `ChatActivity.oneOf` 的 tool 分支增加 optional `display_detail`；九值display_code、原required、状态、opaque身份、其它分支和所有请求不变。后文旧版本不公开名称的限制保留在其原切片，不覆盖本门增量。
+
+| display_detail | 允许display_code | 语义 |
+| --- | --- | --- |
+| `{kind:"file",name:string}` | `tool.file.read`／`tool.file.write`／`tool.file.deliver` | 当前已核实际ToolNode/schema的file_path或实际deliver.path，经受限路径域／敏感检查后仅basename；不含目录或模型title |
+| `{kind:"mcp_tool",name:string}` | `tool.mcp.describe`／`tool.mcp.call` | 本次已绑定Connection中精确单目标匹配的owner公开声明display_name；不回显raw server／tool，不取description／result |
+
+detail对象严格只含kind/name，未知kind／额外键／null拒绝；name非空、最多120 Unicode scalar且UTF-8≤480bytes，NFC原值、拒控制字符／Cf／孤立代理，不截断／改名。JSON Schema的maxLength=120不能独自证明UTF-8／NFC／分类边界，运行时producer与消费者须按同一域验证。未获详情、路径／名称超界或敏感时producer整体omit；所有其它code、subagent／skill等分支禁带detail。field缺席不是空标题或未执行；status仍只反映原事实，不因有name宣称动作成功。
+
+原路径上限4096 UTF-8 bytes；只相对路径或实际构造已证明的Run公共虚拟根。实码local_shell／Docker文件面virtual_mode=True的公共根是 `/`，不是execute容器的 `/workspace`；原factory StateBackend仅在已核构造下作为图内虚拟根。`/.skills/`仅在本次真实声明／挂载的只读来源且basename安全时准入，不推断技能动作／显示名；custom／e2b等未证公共文件面（含相对输入）、宿主风格绝对路径、Windows drive／UNC、逃逸／敏感目录／凭据文件及可识别token形态均省略detail；不改传给原工具的路径或执行资格。精确剔除、未知秘密残余及来源绑定见同日期TECHNICAL_DESIGN；仅本人Run本已可见文件名／owner公开声明可进入此受限字段，匿名Share必须由BFF原投影和快照明确剔除，不让新字段扩张分享权限。
+
+首次invoked冻结code及detail presence/value，returned只复用；重启cache miss读取同tenant／namespace／session／run／opaque activity首条安全Chat事实，旧absent及原code原样保留，不从raw参数／journal／result回填。原私有ToolInvokedPayload／ToolReturnedPayload和Redis wire不新增展示字段；Chat仍由原payload_json durable replay，HTTP envelope／cursor／顺序和AG-UI种类不变。MCP原check->_binding的typed公开快照零新增owner请求，展示名不授grant，不改变当前授权／SDK／unknown链。
+
+唯一canonical仍 `contract/openapi/v1/openapi.json`；正常生成failure/provenance，不手改生成物。8.2只逆去唯一detail字段／新增schema与版本须逐字还原上述完整8.1原件；保所有更早父证明。BFF固定精确owner commit、8.2与完整OpenAPI/provenance SHA后正规生成、发布Public后继；App固定BFF后继，live／compact snapshot／ordered parts一致。optional不是旧严格reader兼容证明：先配对reader再启producer；新历史存在后回滚producer保留新reader，不改旧bytes。机器／runtime闭合校验、跨code错配、Unicode界、secret omit、恢复和Share负控须实际通过；本候选机器8.2及failure/provenance已沿原生成链更新，尚未发行或正常激活。
+
 ## HTTP8.1 原生写文件与交付文件展示后继
 
 本片父机器版本为 HTTP8.0.0，完整 OpenAPI SHA256 `93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff`；本片后继为 8.1.0，仅在 `ChatActivity.oneOf` 的 tool 分支 `display_code.enum` 原七值末尾追加：

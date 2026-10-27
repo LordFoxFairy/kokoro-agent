@@ -1,3 +1,13 @@
+## 2026-10-27 具体动作对象 D0（HTTP8.2 候选，Root 已核；实施中）
+
+绑定Agent源码 `38c294d38cf05149c320622f52490f82fb1fff91`／HTTP8.1基线。本门无DDL、新表／列／索引、独立日志、journal字段或checkpoint state；仅拟在现 `kokoro_agent_chat_event.payload_json` 的安全tool activity新增optional闭合display_detail，形状／有界公开域见同日期API_CONTRACT。无null／默认值、历史回填或旧JSON规范化；原bytes／source_index／seq／opaque ID不变。详情仍随原Chat事实保留／清理，不设新TTL、镜像或财务／执行事实owner。
+
+首次invoked冻结code与detail的presence/value；内存仅作原事实的请求内索引，不成为恢复依据。cache miss由现ChatRepository的具名owner方法读取首条原安全tool activity：trusted tenant_id／namespace／session_id／run_id精确范围，匹配原opaque activity_id，ORDER BY source_index ASC LIMIT1。现主键 `pk_kokoro_agent_chat_event(tenant_id,namespace,run_id,source_index)` 支持Run前缀和顺序，另有tenant/chat_event_id与tenant/namespace/session/seq唯一索引；activity_id目前仅在payload内，无单独索引，因此是受Run限制的过滤扫描，非全session回放，更不是常数查询成本。现connect_pg／SQL helper没有内建总deadline；本门给该具名读取至多2秒总deadline、零重试（Root已核，并非既有预算或查询性能承诺），调用取消及时关闭原连接；真实PG验证索引范围、大Run及取消边界，不靠LIMIT1声称性能已验。不改索引或建可编辑summary表；如实际成本不满足门限先报Root，不越界加索引。
+
+有首条事实则复用原code／detail（包括absent），不按当前声明改名；无原事实的returned省略详情。损坏／超时／失租与无行区分，沿原安全投影失败处理，不以异常当absent后从私有来源重算。查询只读同owner安全Chat，不读raw journal／result／Redis参数，不调用MCP或工具恢复标题。原Chat append_fenced、immutable identity检查、Run lease／recipe、terminal事务、journal replay与started unknown保障保持，无新增执行许可或工具重派。
+
+MCP声明快照只在原check->_binding现有owner read内投影本次公开元数据，内部exact Connection/selector用于定位，不持久化owner配置、凭据、端点或schema副本；原记录内只保存通过有界校验的display_name。文件仅保存已准入basename，不保存原目录／host path／content／title／note。规则不能识别任意未知秘密，限定本人Run内本已可见对象和公开声明；BFF匿名Share投影与快照必须剔除新detail。历史absent永不补写；新事实写入后回滚producer仍保留可读8.2的reader，不删改Chat以适配旧reader。本门未执行任何数据／资源操作；隔离真实持久、重建emitter、旧bytes及跨主体负控通过后才能认定恢复验收。
+
 ## 2026-10-25 原 attempt 的摘要结果 capsule（设计门，未实施）
 
 **唯一 owner/范围。** Agent 现 `kokoro_agent_model_call_attempt` 保存同一次 native summarization 返回的最小执行结果；Run、lease、usage evidence、Billing 资金与原生 checkpoint owner 不变。基线 `8639d99078d6ca53863462ee8e7459983afd8c57`；本节没有执行 DDL、fresh install、正常库升级或数据回填，不表示摘要崩溃恢复已通过。行为与取舍见 TECHNICAL_DESIGN 同日期小门。

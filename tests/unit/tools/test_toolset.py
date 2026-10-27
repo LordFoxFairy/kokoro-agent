@@ -74,15 +74,12 @@ async def test_declared_mcp_does_not_fall_back_to_deployment() -> None:
         ),
         input=RunInput(message_id="message", content="hello"),
     )
-    assert (
-        await resolve_declared_mcp(
-            request,
-            Agent(key="base", prompt="base"),
-            None,
-            LeaseFence(owner="w", generation=1),
-        )
-        is None
-    )
+    assert await resolve_declared_mcp(
+        request,
+        Agent(key="base", prompt="base"),
+        None,
+        LeaseFence(owner="w", generation=1),
+    ) == (None, ())
     with pytest.raises(McpClientError):
         await resolve_declared_mcp(
             request,
@@ -303,3 +300,186 @@ def test_missing_or_impostor_toolnode_cannot_grant_native_semantics() -> None:
     counterfeit.args_schema = WriteFileSchema
     forged = Toolset.from_tools((counterfeit,))
     assert forged.mounted_display_codes(Runnable(ToolNode((counterfeit,)))) == ()
+
+
+@pytest.mark.parametrize("virtual", [True, False])
+async def test_detail_sources_require_actual_native_schema_and_run_file_backend(
+    virtual: bool,
+) -> None:
+    import deepagents
+    from typing import Any
+    from unittest.mock import Mock
+    from deepagents.backends.local_shell import LocalShellBackend
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from kokoro_agent.clients.storage import DeliveryClient
+    from kokoro_agent.clients.mcp import (
+        McpDisplayDeclaration,
+        McpConnectionRef,
+        McpClient,
+    )
+    from kokoro_agent.tools.toolset import build_toolset, plan_toolset
+    from kokoro_agent.tools.toolbox import ProcessToolbox
+    from support.fakes import request
+    from kokoro_agent.agents.native_profile import validate_native_registry
+
+    validate_native_registry()
+    backend = LocalShellBackend(virtual_mode=virtual)
+    box = ProcessToolbox(configured=())
+    agent = replace(
+        GENERAL_AGENT,
+        backend="local_shell",
+        mcp=(McpConnectionRef(connection_id="conn"),),
+    )
+    built = await build_toolset(
+        request("detail"),
+        agent=agent,
+        plan=plan_toolset(agent=GENERAL_AGENT, toolbox=box, delivery_available=True),
+        toolbox=box,
+        backend=backend,
+        delivery=Mock(spec=DeliveryClient),
+        resolved_mcp=Mock(spec=McpClient),
+        mcp_declarations=(
+            McpDisplayDeclaration(
+                connection_id="conn", selector="search", display_name="Search documents"
+            ),
+        ),
+    )
+    create: Any = getattr(deepagents, "create_deep_agent")
+    graph = create(
+        model=FakeListChatModel(responses=["unused"]),
+        tools=built.tools,
+        backend=backend,
+    )
+    sources = {source.name: source for source in built.mounted_display_sources(graph)}
+    for tool, field in [
+        ("read_file", "file_path"),
+        ("write_file", "file_path"),
+        ("deliver", "path"),
+    ]:
+        detail = sources[tool].detail(
+            {field: "/docs/report.md", "title": "SECRET", "content": "SECRET"}
+        )
+        assert (detail.model_dump() if detail else None) == (
+            {"kind": "file", "name": "report.md"} if virtual else None
+        )
+    declared = sources["mcp_call"].detail({"server": "conn", "tool": "search"})
+    assert declared is not None
+    assert declared.model_dump() == {"kind": "mcp_tool", "name": "Search documents"}
+    assert sources["mcp_call"].detail({"server": "other", "tool": "search"}) is None
+    assert built.mounted_display_sources(object()) == ()
+    # A custom tool with a manually assigned category still has no native provenance.
+    impostor = _tool("read_file")
+    forged = replace(
+        Toolset.from_tools(
+            (impostor,), display_bindings=((impostor, "tool.file.read"),)
+        ),
+        backend=backend,
+    )
+    from langgraph.prebuilt import ToolNode
+    from langchain_core.runnables.graph import Graph
+
+    class BareGraph:
+        def get_graph(self) -> Graph:
+            result = Graph()
+            add_node: Any = getattr(result, "add_node")
+            add_node(ToolNode((impostor,)), id="tools")
+            return result
+
+    assert forged.mounted_display_sources(BareGraph()) == ()
+
+
+@pytest.mark.parametrize("backend_kind", ["custom", "e2b"])
+async def test_unproven_backend_cannot_borrow_state_backend_display_policy(
+    backend_kind: str,
+) -> None:
+    import deepagents
+    from typing import Any
+    from deepagents.backends import StateBackend
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.policy import Backend
+    from pydantic import TypeAdapter
+    from kokoro_agent.tools.toolset import build_toolset, plan_toolset
+    from kokoro_agent.tools.toolbox import ProcessToolbox
+    from support.fakes import request
+
+    backend_adapter: TypeAdapter[Backend] = TypeAdapter(Backend)
+    agent = Agent(
+        key="custom",
+        prompt="p",
+        backend=backend_adapter.validate_python(backend_kind),
+    )
+    backend = StateBackend()
+    box = ProcessToolbox(configured=())
+    tools = await build_toolset(
+        request("custom"),
+        agent=agent,
+        plan=plan_toolset(agent=agent, toolbox=box, delivery_available=False),
+        toolbox=box,
+        backend=backend,
+        delivery=None,
+    )
+    create: Any = getattr(deepagents, "create_deep_agent")
+    graph = create(
+        model=FakeListChatModel(responses=["unused"]),
+        tools=tools.tools,
+        backend=backend,
+    )
+    read = next(
+        source
+        for source in tools.mounted_display_sources(graph)
+        if source.name == "read_file"
+    )
+    assert read.detail({"file_path": "/report.md"}) is None
+
+
+async def test_real_declared_skill_mount_exposes_only_safe_basename() -> None:
+    import deepagents
+    from typing import Any
+    from deepagents.backends import StateBackend
+    from deepagents.backends.composite import CompositeBackend
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from kokoro_agent.clients.skills import ResolvedSkill
+    from kokoro_agent.skills.backend import TypedSkillBackend
+    from kokoro_agent.tools.toolset import build_toolset, plan_toolset
+    from kokoro_agent.tools.toolbox import ProcessToolbox
+    from support.fakes import request
+
+    skill = ResolvedSkill(
+        source_ref="skill:one",
+        skill_id="one",
+        revision=1,
+        asset_ref="asset",
+        content_digest="a" * 64,
+        manifest_identity="identity",
+    )
+    prefix = f"/.skills/{skill.path_segment}/"
+    backend = CompositeBackend(
+        default=StateBackend(), routes={"/.skills/": TypedSkillBackend((skill,), None)}
+    )
+    box = ProcessToolbox(configured=())
+    tools = await build_toolset(
+        request("skill-detail"),
+        agent=GENERAL_AGENT,
+        plan=plan_toolset(agent=GENERAL_AGENT, toolbox=box, delivery_available=False),
+        toolbox=box,
+        backend=backend,
+        delivery=None,
+        skill_prefixes=(prefix,),
+    )
+    create: Any = getattr(deepagents, "create_deep_agent")
+    graph = create(
+        model=FakeListChatModel(responses=["unused"]),
+        tools=tools.tools,
+        backend=backend,
+    )
+    sources = {source.name: source for source in tools.mounted_display_sources(graph)}
+    read = sources["read_file"].detail({"file_path": prefix + "SKILL.md"})
+    assert read is not None and read.model_dump() == {
+        "kind": "file",
+        "name": "SKILL.md",
+    }
+    assert (
+        sources["read_file"].detail({"file_path": "/.skills/unknown/SKILL.md"}) is None
+    )
+    assert sources["write_file"].detail({"file_path": prefix + "SKILL.md"}) is None

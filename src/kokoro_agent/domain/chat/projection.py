@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    JsonValue,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
+from typing import Self
 
 from kokoro_agent.domain.chat.models import (
     ChatEventDraft,
@@ -63,12 +74,177 @@ ToolDisplayCode = Literal[
 ]
 
 
-class _ToolActivity(_Payload):
+class ToolDisplayDetail(_Payload):
+    kind: Literal["file", "mcp_tool"]
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        if not safe_display_name(value):
+            raise ValueError("invalid public display name")
+        if sensitive_display_text(value):
+            raise ValueError("sensitive public display name")
+        return value
+
+    @model_validator(mode="after")
+    def file_basename(self) -> Self:
+        if self.kind == "file" and (
+            self.name in {".", ".."} or any(c in self.name for c in "/\\:")
+        ):
+            raise ValueError("display file must be a basename")
+        return self
+
+
+def safe_display_name(value: str) -> bool:
+    return (
+        1 <= len(value) <= 120
+        and unicodedata.normalize("NFC", value) == value
+        and not any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)
+        and len(value.encode("utf-8")) <= 480
+        and bool(value.strip())
+    )
+
+
+def sensitive_display_text(value: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)(?:^|[._ /-])(?:credentials?|secrets?|tokens?|passwords?|private[_-]?key)(?:$|[._ /-])"
+            r"|(?:^|/)\.(?:ssh|aws|gnupg|kube)(?:/|$)|(?:^|/)\.env(?:[./_-]|$)"
+            r"|(?:^|/)(?:\.netrc|\.npmrc|\.git-credentials|service[_-]account\.json)(?:$|/)"
+            r"|(?:id_rsa|id_ed25519|\.pem$|\.p12$|\.pfx$|bearer\s|sk[-_]|gh[pousr]_|github_pat_|AKIA[A-Z0-9]{16}|-----BEGIN)"
+            r"|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+            value,
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ToolDisplaySource:
+    """Factory-observed source; never constructed from event metadata."""
+
+    name: str
+    code: ToolDisplayCode
+    origin: Literal["native", "delivery", "mcp", "web"]
+    file_scope: Literal["none", "virtual"] = "none"
+    skill_prefixes: tuple[str, ...] = ()
+    mcp_names: tuple[tuple[str, str, str], ...] = ()
+
+    def detail(self, args: dict[str, JsonValue]) -> ToolDisplayDetail | None:
+        value: object = None
+        kind: Literal["file", "mcp_tool"]
+        if self.origin in {"native", "delivery"} and self.code in {
+            "tool.file.read",
+            "tool.file.write",
+            "tool.file.deliver",
+        }:
+            value = args.get("path" if self.origin == "delivery" else "file_path")
+            if (
+                type(value) is not str
+                or not value
+                or len(value) > 4096
+                or any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)
+            ):
+                return None
+            if (
+                len(value.encode("utf-8")) > 4096
+                or unicodedata.normalize("NFC", value) != value
+            ):
+                return None
+            if any(c in value for c in "\\:?#%") or value.startswith(("//", "~")):
+                return None
+            parts = value.removeprefix("/").split("/")
+            if any(part in {"", ".", ".."} or part.startswith("~") for part in parts):
+                return None
+            if parts[0].casefold() in {
+                "users",
+                "home",
+                "private",
+                "etc",
+                "proc",
+                "sys",
+                "var",
+            } or sensitive_display_text(value):
+                return None
+            if parts[0] == ".skills":
+                if self.code != "tool.file.read" or not any(
+                    value.startswith(prefix) for prefix in self.skill_prefixes
+                ):
+                    return None
+            elif self.file_scope != "virtual":
+                return None
+            value, kind = parts[-1], "file"
+        elif self.origin == "mcp" and self.code in {
+            "tool.mcp.describe",
+            "tool.mcp.call",
+        }:
+            names = [
+                label
+                for connection, selector, label in self.mcp_names
+                if connection == args.get("server") and selector == args.get("tool")
+            ]
+            if len(names) != 1:
+                return None
+            value, kind = names[0], "mcp_tool"
+        else:
+            return None
+        try:
+            return ToolDisplayDetail(kind=kind, name=value)
+        except ValueError:
+            return None
+
+
+class ToolActivity(_Payload):
     activity: Literal["tool"] = "tool"
     activity_id: str
     segment_id: str
     status: Literal["running", "completed", "failed"]
-    display_code: ToolDisplayCode = "tool.execution"
+    display_code: ToolDisplayCode
+    display_detail: ToolDisplayDetail | None = None
+
+    @model_validator(mode="after")
+    def detail_matches_code(self) -> Self:
+        if self.display_detail is not None:
+            allowed = {
+                "file": {"tool.file.read", "tool.file.write", "tool.file.deliver"},
+                "mcp_tool": {"tool.mcp.describe", "tool.mcp.call"},
+            }
+            if self.display_code not in allowed[self.display_detail.kind]:
+                raise ValueError("display detail differs from the tool category")
+        return self
+
+
+def read_tool_activity(payload_json: str) -> ToolActivity:
+    # Both original opaque-only activities and the new bounded detail fit here.
+    if len(payload_json) > 4096 or len(payload_json.encode("utf-8")) > 4096:
+        raise ValueError("safe activity history exceeds its bounded shape")
+
+    def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        values: dict[str, object] = {}
+        for key, value in pairs:
+            if key in values:
+                raise ValueError("duplicate safe activity member")
+            values[key] = value
+        return values
+
+    def constant(_value: str) -> object:
+        raise ValueError("non-finite safe activity value")
+
+    decoded: object = json.loads(
+        payload_json, object_pairs_hook=unique, parse_constant=constant
+    )
+    value = TypeAdapter(dict[str, object]).validate_python(decoded, strict=True)
+    if not {
+        "activity",
+        "activity_id",
+        "segment_id",
+        "status",
+        "display_code",
+    }.issubset(value):
+        raise ValueError("safe activity history is missing canonical base fields")
+    if "display_detail" in value and value["display_detail"] is None:
+        raise ValueError("null safe activity detail")
+    return ToolActivity.model_validate(value, strict=True)
 
 
 class _SubagentActivity(_Payload):
@@ -122,6 +298,28 @@ ProjectablePayload = (
 )
 
 
+def safe_progress_id(
+    tag: str, tenant_id: str, namespace: str, session_id: str, run_id: str, *parts: str
+) -> str:
+    value = [
+        "kokoro-agent.safe-progress.v1",
+        tag,
+        tenant_id,
+        namespace,
+        session_id,
+        run_id,
+        *parts,
+    ]
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8", errors="strict")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def project_chat_fact(
     *,
     tenant_id: str,
@@ -132,6 +330,7 @@ def project_chat_fact(
     created_at: datetime,
     payload: ProjectablePayload,
     tool_display_code: ToolDisplayCode = "tool.execution",
+    tool_display_detail: ToolDisplayDetail | None = None,
 ) -> ChatProjection | None:
     """Project only allowlisted product semantics; unknown/private payloads disappear."""
 
@@ -141,23 +340,7 @@ def project_chat_fact(
     message: ChatMessageDraft | None = None
 
     def opaque(tag: str, *parts: str) -> str:
-        value = [
-            "kokoro-agent.safe-progress.v1",
-            tag,
-            tenant_id,
-            namespace,
-            session_id,
-            run_id,
-            *parts,
-        ]
-        encoded = json.dumps(
-            value,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8", errors="strict")
-        return hashlib.sha256(encoded).hexdigest()
+        return safe_progress_id(tag, tenant_id, namespace, session_id, run_id, *parts)
 
     if isinstance(payload, TodoUpdatedPayload):
         event_type = "todo.updated"
@@ -199,8 +382,9 @@ def project_chat_fact(
         )
     elif isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
         event_type = "activity"
-        safe_payload = _ToolActivity(
+        safe_payload = ToolActivity(
             display_code=tool_display_code,
+            display_detail=tool_display_detail,
             activity_id="act_"
             + opaque("tool-activity", payload.segment_id, payload.tool_id),
             segment_id="seg_" + opaque("segment", payload.segment_id),

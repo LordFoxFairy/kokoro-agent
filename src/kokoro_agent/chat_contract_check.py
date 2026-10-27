@@ -13,7 +13,7 @@ from jsonschema import validate as validate_schema_instance
 
 from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
 from kokoro_agent.bff_admission_contract import GENERATED as BFF_BUDGET_GENERATED
-from kokoro_agent.domain.chat.projection import ToolDisplayCode
+from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolActivity
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -272,9 +272,90 @@ _HTTP8_TOOL_DISPLAY_CODES = (
 )
 
 
+_TOOL_DETAIL_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "required": ["kind", "name"],
+    "properties": {
+        "kind": {"type": "string", "enum": ["file", "mcp_tool"]},
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "x-kokoro-utf8-byte-limit": 480,
+            "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+        },
+    },
+    "additionalProperties": False,
+}
+_TOOL_DETAIL_CONDITIONS: list[dict[str, object]] = [
+    {
+        "if": {
+            "required": ["display_detail"],
+            "properties": {
+                "display_detail": {"properties": {"kind": {"const": "file"}}}
+            },
+        },
+        "then": {
+            "properties": {
+                "display_code": {
+                    "enum": ["tool.file.read", "tool.file.write", "tool.file.deliver"]
+                }
+            }
+        },
+    },
+    {
+        "if": {
+            "required": ["display_detail"],
+            "properties": {
+                "display_detail": {"properties": {"kind": {"const": "mcp_tool"}}}
+            },
+        },
+        "then": {
+            "properties": {
+                "display_code": {"enum": ["tool.mcp.describe", "tool.mcp.call"]}
+            }
+        },
+    },
+]
+
+
+def http81_parent_bytes(document: dict[str, object]) -> bytes:
+    """Undo the one optional bounded detail, preserving every HTTP8.1 byte."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.2.0":
+        raise ValueError("tool detail extension requires HTTP 8.2.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    activity = _object(schemas.get("ChatActivity"), source="ChatActivity")
+    branches = TypeAdapter(list[dict[str, object]]).validate_python(
+        activity.get("oneOf")
+    )
+    properties = _object(branches[0].get("properties"), source="tool properties")
+    if (
+        properties.pop("display_detail", None) != _TOOL_DETAIL_SCHEMA
+        or branches[0].pop("allOf", None) != _TOOL_DETAIL_CONDITIONS
+    ):
+        raise ValueError("tool detail safety shape differs")
+    branches[0]["properties"] = properties
+    activity["oneOf"] = branches
+    schemas["ChatActivity"] = activity
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.1.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "1642829ccf5364692051e836938ef33b36cffeca25f2b7766ad95cd44a1542c9"
+    ):
+        raise ValueError("complete HTTP 8.1 parent differs")
+    return raw
+
+
 def http80_parent_bytes(document: dict[str, object]) -> bytes:
     """Undo only the two file categories and prove the complete HTTP8 parent."""
-    parent = copy.deepcopy(document)
+    parent = _object(json.loads(http81_parent_bytes(document)), source="HTTP8.1 parent")
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.1.0":
         raise ValueError("file display extension requires HTTP 8.1.0")
@@ -399,8 +480,8 @@ def failure_model_bytes(
     """Compile only the approved two failure profiles; reject unsupported shapes."""
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
-    if _object(document.get("info"), source="info").get("version") != "8.1.0":
-        raise ValueError("failure profiles require HTTP 8.1.0")
+    if _object(document.get("info"), source="info").get("version") != "8.2.0":
+        raise ValueError("failure profiles require HTTP 8.2.0")
     schemas = _object(
         _object(document.get("components"), source="components").get("schemas"),
         source="schemas",
@@ -528,7 +609,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.1.0",
+        "version": "8.2.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -635,6 +716,8 @@ def validate_decoded_chat_payload(
         )
     except SchemaValidationError as error:
         raise ValueError("decoded Chat payload violates owner schema") from error
+    if event_type == "activity" and value.get("activity") == "tool":
+        ToolActivity.model_validate(value, strict=True)
     if event_type == "todo.updated":
         shape = _object(schemas.get("ChatTodo"), source="ChatTodo")
         limit = shape.get("x-kokoro-json-byte-limit")
@@ -700,7 +783,13 @@ def _validate_progress_shapes(
             raise ValueError("activity branch kinds are invalid")
         seen.add(kind)
         required = TypeAdapter(list[str]).validate_python(branch.get("required"))
-        optional: set[str] = {"error_code"} if kind == "skill" else set()
+        optional: set[str] = (
+            {"error_code"}
+            if kind == "skill"
+            else {"display_detail"}
+            if kind == "tool"
+            else set()
+        )
         if (
             branch.get("additionalProperties") is not False
             or set(required) != required_fields[kind]

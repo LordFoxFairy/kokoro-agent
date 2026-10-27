@@ -19,7 +19,7 @@ def _document():
 
 def test_http74_adds_only_optional_exact_connection_selection():
     document = _document()
-    assert document["info"]["version"] == "8.1.0"
+    assert document["info"]["version"] == "8.2.0"
     schema = document["components"]["schemas"]["LaunchRequest"]
     assert "selected_mcp_connection_ids" not in schema["required"]
     selection = schema["properties"]["selected_mcp_connection_ids"]

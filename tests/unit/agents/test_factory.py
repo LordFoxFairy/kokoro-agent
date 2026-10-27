@@ -2930,5 +2930,6 @@ async def test_swarm_does_not_borrow_a_tool_category_from_another_peer(
     )
     assert count == 2
     assert "web_fetch" not in dict(handle.tool_display_codes)
+    assert "web_fetch" not in {source.name for source in handle.tool_display_sources}
     assert dict(handle.tool_display_codes)["mcp_call"] == "tool.mcp.call"
     await handle.aclose()

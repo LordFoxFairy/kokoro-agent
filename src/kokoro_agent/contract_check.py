@@ -116,8 +116,8 @@ def validate_openapi_document(document: dict[str, object]) -> None:
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")
     info = _object(document.get("info"), source="info")
-    if info.get("version") != "8.1.0":
-        raise ValueError("Agent HTTP contract version must be 8.1.0")
+    if info.get("version") != "8.2.0":
+        raise ValueError("Agent HTTP contract version must be 8.2.0")
     if document.get("x-kokoro-owner") != "kokoro-agent":
         raise ValueError("Agent must own its HTTP contract")
     paths = _object(document.get("paths"), source="paths")

@@ -37,8 +37,17 @@ class McpTool:
     input_schema: dict[str, JsonValue]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class McpDisplayDeclaration:
+    connection_id: str
+    selector: str
+    display_name: str
+
+
 class McpClient(Protocol):
-    async def check(self, references: Sequence[McpConnectionRef]) -> None: ...
+    async def check(
+        self, references: Sequence[McpConnectionRef]
+    ) -> tuple[McpDisplayDeclaration, ...]: ...
     async def list_tools(self, reference: McpConnectionRef) -> tuple[McpTool, ...]: ...
     async def call_tool(
         self,

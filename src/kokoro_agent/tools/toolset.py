@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from deepagents.backends.protocol import BackendProtocol
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.runnables.graph import Graph
 from langgraph.prebuilt import ToolNode
 from deepagents.middleware.filesystem import ReadFileSchema, WriteFileSchema
-from kokoro_agent.domain.chat.projection import ToolDisplayCode
+from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
+from deepagents.backends.composite import CompositeBackend
+from deepagents.backends.state import StateBackend
+from deepagents.backends.local_shell import LocalShellBackend
+from kokoro_agent.sandbox.archive import ArchivingLocalShellBackend
+from kokoro_agent.sandbox.docker_backend import (
+    DockerShellBackend,
+    ArchivingDockerShellBackend,
+)
+from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
+from kokoro_agent.clients.mcp import McpDisplayDeclaration
 
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.agents.definition import Agent
+from kokoro_agent.policy import Backend
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.mcp.tools import make_mcp_tools
 from kokoro_agent.clients.mcp import McpClientError
@@ -37,6 +48,10 @@ class Toolset:
     # 审批卡数据源：真挂载工具的自述（deepagents 保留工具不在册，wire 发空串由 web 兜底文案）。
     descriptions: Mapping[str, str]
     display_bindings: tuple[tuple[str, BaseTool, ToolDisplayCode], ...] = ()
+    display_sources: tuple[ToolDisplaySource, ...] = ()
+    backend: BackendProtocol | None = None
+    backend_kind: Backend | None = None
+    skill_prefixes: tuple[str, ...] = ()
 
     @classmethod
     def from_tools(
@@ -115,17 +130,70 @@ class Toolset:
             codes["write_file"] = "tool.file.write"
         return tuple(sorted(codes.items()))
 
+    def mounted_display_sources(
+        self, runnable: object
+    ) -> tuple[ToolDisplaySource, ...]:
+        codes = dict(self.mounted_display_codes(runnable))
+        backend = self.backend
+        skill_prefixes: tuple[str, ...] = ()
+        if type(backend) is CompositeBackend:
+            if (
+                set(backend.routes) == {SKILLS_ROOT}
+                and type(backend.routes.get(SKILLS_ROOT)) is TypedSkillBackend
+            ):
+                skill_prefixes = self.skill_prefixes
+                backend = backend.default
+            else:
+                backend = None  # Unknown file routes do not invalidate independent MCP provenance.
+        virtual = self.backend_kind == "state" and type(backend) is StateBackend
+        if isinstance(backend, LocalShellBackend) and backend.virtual_mode is True:
+            virtual = (
+                self.backend_kind == "local_shell"
+                and type(backend) in {LocalShellBackend, ArchivingLocalShellBackend}
+            ) or (
+                self.backend_kind == "docker"
+                and type(backend) in {DockerShellBackend, ArchivingDockerShellBackend}
+            )
+        sources = {source.name: source for source in self.display_sources}
+        result: list[ToolDisplaySource] = []
+        for name, code in codes.items():
+            source = sources.get(name)
+            if name not in self.by_name and code in {
+                "tool.file.read",
+                "tool.file.write",
+            }:
+                source = ToolDisplaySource(name=name, code=code, origin="native")
+            if source is not None:
+                result.append(
+                    replace(
+                        source,
+                        file_scope="virtual"
+                        if virtual and source.origin in {"native", "delivery"}
+                        else "none",
+                        skill_prefixes=skill_prefixes
+                        if code == "tool.file.read"
+                        else (),
+                    )
+                )
+        return tuple(sorted(result, key=lambda source: source.name))
+
     def with_tools(self, tools: Sequence[BaseTool]) -> Toolset:
         """Add Feature-local tools while preserving the existing authorization base."""
 
         mounted_names = frozenset(tool.name for tool in self.tools)
         implicit = self.authorized - mounted_names
-        return self.from_tools(
-            (*self.tools, *tools),
-            implicit_authorized=implicit,
-            display_bindings=tuple(
-                (tool, code) for _, tool, code in self.display_bindings
+        return replace(
+            self.from_tools(
+                (*self.tools, *tools),
+                implicit_authorized=implicit,
+                display_bindings=tuple(
+                    (tool, code) for _, tool, code in self.display_bindings
+                ),
             ),
+            display_sources=self.display_sources,
+            backend=self.backend,
+            backend_kind=self.backend_kind,
+            skill_prefixes=self.skill_prefixes,
         )
 
 
@@ -174,6 +242,8 @@ async def build_toolset(
     delivery: DeliveryClient | None,
     lease: LeaseFence | None = None,
     resolved_mcp: McpClient | None = None,
+    mcp_declarations: tuple[McpDisplayDeclaration, ...] = (),
+    skill_prefixes: tuple[str, ...] = (),
 ) -> Toolset:
     """五路工具来源合流（顺序即挂载序）：
     ① 注册表工具：wire 点名 + 类型核心工具（对话型=ask_user）
@@ -218,7 +288,35 @@ async def build_toolset(
                             display_bindings.append((tool, "tool.web.search"))
                         elif origin == "web_fetch":
                             display_bindings.append((tool, "tool.web.fetch"))
-    return Toolset.from_tools(tools, display_bindings=display_bindings)
+    declared_connections = {reference.connection_id for reference in agent.mcp}
+    sources = tuple(
+        ToolDisplaySource(
+            name=tool.name,
+            code=code,
+            origin="mcp"
+            if code.startswith("tool.mcp.")
+            else "delivery"
+            if code == "tool.file.deliver"
+            else "web",
+            mcp_names=tuple(
+                sorted(
+                    (item.connection_id, item.selector, item.display_name)
+                    for item in mcp_declarations
+                    if item.connection_id in declared_connections
+                )
+            )
+            if code.startswith("tool.mcp.")
+            else (),
+        )
+        for tool, code in display_bindings
+    )
+    return replace(
+        Toolset.from_tools(tools, display_bindings=display_bindings),
+        display_sources=sources,
+        backend=backend,
+        backend_kind=agent.backend,
+        skill_prefixes=skill_prefixes,
+    )
 
 
 async def resolve_declared_mcp(
@@ -226,15 +324,15 @@ async def resolve_declared_mcp(
     agent: Agent,
     platform: RunMcpFactory | None,
     lease: LeaseFence,
-) -> McpClient | None:
+) -> tuple[McpClient | None, tuple[McpDisplayDeclaration, ...]]:
     """Only run-bound current owner reads, never deployment or name resolution."""
     if not agent.mcp:
-        return None
+        return None, ()
     if platform is None:
         raise McpClientError("MCP_PLATFORM_REQUIRED")
     client = platform.mcp_for_run(LeasedRun(request=request, lease=lease))
-    await client.check(agent.mcp)
-    return client
+    declarations = await client.check(agent.mcp)
+    return client, declarations
 
 
 def _deliver_tool(

@@ -18,7 +18,13 @@ from mcp.types import CallToolResult, Tool, PaginatedRequestParams
 from protobuf import Oneof
 from pydantic import JsonValue, TypeAdapter
 
-from kokoro_agent.clients.mcp import McpClientError, McpConnectionRef, McpTool
+from kokoro_agent.clients.mcp import (
+    McpClientError,
+    McpConnectionRef,
+    McpTool,
+    McpDisplayDeclaration,
+)
+from kokoro_agent.domain.chat.projection import ToolDisplayDetail
 from kokoro_agent.clients.mcp_package_transport import McpPackageTransport
 from kokoro_agent.clients.platform_transport import PlatformRequest
 from kokoro_agent.execution.platform_request_binding_values import (
@@ -205,10 +211,28 @@ class PlatformMcpClient:
             cursors.add(cursor)
         raise McpClientError("MCP_DECLARATION_UNAVAILABLE")
 
-    async def check(self, references: Sequence[McpConnectionRef]) -> None:
+    async def check(
+        self, references: Sequence[McpConnectionRef]
+    ) -> tuple[McpDisplayDeclaration, ...]:
+        declarations: list[McpDisplayDeclaration] = []
         async with asyncio.timeout(30):
             for reference in references:
-                await self._binding(reference)
+                binding = await self._binding(reference)
+                for cap in binding.capabilities:
+                    try:
+                        detail = ToolDisplayDetail(
+                            kind="mcp_tool", name=cap.display_name
+                        )
+                    except ValueError:
+                        continue  # Invalid metadata never changes execution authorization.
+                    declarations.append(
+                        McpDisplayDeclaration(
+                            connection_id=reference.connection_id,
+                            selector=cap.selector,
+                            display_name=detail.name,
+                        )
+                    )
+        return tuple(declarations)
 
     async def _material(
         self,

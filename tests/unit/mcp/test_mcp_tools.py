@@ -1,6 +1,7 @@
 """Stable tools use current owner ports; retired deployment/YAML behavior is not a product API."""
 
 from __future__ import annotations
+from kokoro_agent.clients.mcp import McpDisplayDeclaration
 
 # BaseTool.ainvoke is the upstream unparameterized test boundary.
 # pyright: reportUnknownMemberType=false
@@ -34,8 +35,8 @@ class CurrentClient:
         self.remote_error = False
         self.call_error: BaseException | None = None
 
-    async def check(self, references: object) -> None:
-        return None
+    async def check(self, references: object) -> tuple[McpDisplayDeclaration, ...]:
+        return ()
 
     async def list_tools(self, reference: McpConnectionRef) -> tuple[McpTool, ...]:
         self.reads += 1

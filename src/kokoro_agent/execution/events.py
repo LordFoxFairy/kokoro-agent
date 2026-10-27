@@ -46,7 +46,14 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 
 from kokoro_agent import metrics
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
-from kokoro_agent.domain.chat.projection import project_chat_fact, ToolDisplayCode
+from kokoro_agent.domain.chat.projection import (
+    project_chat_fact,
+    ToolDisplayCode,
+    ToolDisplaySource,
+    ToolDisplayDetail,
+    read_tool_activity,
+    safe_progress_id,
+)
 from kokoro_agent.domain.chat.models import ChatEventRecord
 from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatRepository
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
@@ -203,8 +210,9 @@ class RunEmitter:
         self._chat_repository = chat_repository
         self._tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] | None = None
         self._tool_display_calls: dict[
-            tuple[str, str], tuple[str, ToolDisplayCode]
+            tuple[str, str], tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str]
         ] = {}
+        self._tool_display_sources: tuple[ToolDisplaySource, ...] | None = None
 
     def bind_tool_display_codes(
         self, bindings: tuple[tuple[str, ToolDisplayCode], ...]
@@ -225,10 +233,27 @@ class RunEmitter:
             raise ValueError("tool display binding changed within the Run")
         if any(
             dict(validated).get(name, "tool.execution") != code
-            for name, code in self._tool_display_calls.values()
+            for name, code, _, origin in self._tool_display_calls.values()
+            if not origin.startswith("history:")
         ):
             raise ValueError("tool display classification changed after observation")
         self._tool_display_codes = validated
+
+    def bind_tool_display_sources(self, sources: tuple[ToolDisplaySource, ...]) -> None:
+        validated = tuple(sorted(sources, key=lambda source: source.name))
+        if len({source.name for source in validated}) != len(validated) or any(
+            dict(self._tool_display_codes or ()).get(source.name) != source.code
+            for source in validated
+        ):
+            raise ValueError("display source differs from its bound category")
+        if (
+            self._tool_display_sources is not None
+            and self._tool_display_sources != validated
+        ):
+            raise ValueError("tool display source changed within the Run")
+        if self._tool_display_calls and (self._tool_display_sources or ()) != validated:
+            raise ValueError("tool display source changed after observation")
+        self._tool_display_sources = validated
 
     @property
     def run_id(self) -> str:
@@ -516,19 +541,10 @@ class RunEmitter:
         ):
             return True
         tool_code: ToolDisplayCode = "tool.execution"
+        tool_detail: ToolDisplayDetail | None = None
         if isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
-            observed: tuple[str, ToolDisplayCode] = (
-                payload.name,
-                dict(self._tool_display_codes or ()).get(
-                    payload.name, "tool.execution"
-                ),
-            )
-            previous = self._tool_display_calls.setdefault(
-                (payload.segment_id, payload.tool_id), observed
-            )
-            if previous != observed:
-                raise ProgressPersistenceError("tool display call identity changed")
-            tool_code = previous[1]
+            observation = await self._tool_display_observation(payload)
+            tool_code, tool_detail = observation[1], observation[2]
         projection = project_chat_fact(
             tenant_id=self._tenant_id,
             namespace=self._namespace,
@@ -538,6 +554,7 @@ class RunEmitter:
             created_at=wire_epoch_millis_to_utc(timestamp),
             payload=payload,
             tool_display_code=tool_code,
+            tool_display_detail=tool_detail,
         )
         if projection is None:
             return True
@@ -556,6 +573,116 @@ class RunEmitter:
             raise
         except Exception as error:
             raise ProgressPersistenceError("Chat progress write unconfirmed") from error
+
+    async def _tool_display_observation(
+        self, payload: ToolInvokedPayload | ToolReturnedPayload
+    ) -> tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str]:
+        key = (payload.segment_id, payload.tool_id)
+        previous = self._tool_display_calls.get(key)
+        if previous is not None:
+            if previous[0] != payload.name:
+                raise ProgressPersistenceError("tool display call identity changed")
+            return previous
+        source = next(
+            (
+                item
+                for item in self._tool_display_sources or ()
+                if item.name == payload.name
+            ),
+            None,
+        )
+        code = dict(self._tool_display_codes or ()).get(payload.name, "tool.execution")
+        detail = None
+        if isinstance(payload, ToolInvokedPayload) and source is not None:
+            detail = source.detail(payload.args)
+        assert (
+            self._tenant_id is not None
+            and self._namespace is not None
+            and self._session_id is not None
+            and self._chat_repository is not None
+        )
+        activity_id = "act_" + safe_progress_id(
+            "tool-activity",
+            self._tenant_id,
+            self._namespace,
+            self._session_id,
+            self._run_id,
+            payload.segment_id,
+            payload.tool_id,
+        )
+        recovered = False
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 2
+        task = asyncio.current_task()
+        cancelling = 0 if task is None else task.cancelling()
+        try:
+            # Includes connection acquisition, query, complete row and payload validation.
+            async with asyncio.timeout_at(deadline):
+                record = await self._chat_repository.first_tool_activity(
+                    self._tenant_id,
+                    self._namespace,
+                    self._session_id,
+                    self._run_id,
+                    activity_id,
+                )
+                if task is not None and task.cancelling() > cancelling:
+                    raise asyncio.CancelledError
+                if record is not None:
+                    record = ChatEventRecord.model_validate(
+                        record.model_dump(), strict=True
+                    )
+                    if (
+                        record.tenant_id,
+                        record.namespace,
+                        record.session_id,
+                        record.run_id,
+                        record.event_type,
+                    ) != (
+                        self._tenant_id,
+                        self._namespace,
+                        self._session_id,
+                        self._run_id,
+                        "activity",
+                    ):
+                        raise ValueError("tool display history scope differs")
+                    original = read_tool_activity(record.payload_json)
+                    if (
+                        original.activity_id != activity_id
+                        or original.segment_id
+                        != "seg_"
+                        + safe_progress_id(
+                            "segment",
+                            self._tenant_id,
+                            self._namespace,
+                            self._session_id,
+                            self._run_id,
+                            payload.segment_id,
+                        )
+                    ):
+                        raise ValueError("tool display history identity differs")
+                    code, detail = original.display_code, original.display_detail
+                    recovered = True
+                if loop.time() >= deadline:
+                    raise TimeoutError("tool display history deadline elapsed")
+        except TimeoutError:
+            # Keep the timeout category without retaining peer/row text in its cause.
+            raise ProgressPersistenceError(
+                "tool display history read unconfirmed"
+            ) from TimeoutError("tool display history read timed out")
+        except Exception:
+            # Pydantic includes input_value in ValidationError: never chain stored bytes.
+            raise ProgressPersistenceError(
+                "tool display history read unconfirmed"
+            ) from None
+        observation = (
+            payload.name,
+            code,
+            detail,
+            ("history:" if recovered else "")
+            + (source.origin if source is not None else "unbound"),
+        )
+        self._tool_display_calls[key] = observation
+        return observation
 
     async def _publish_event(self, event: Mapping[str, JsonValue]) -> None:
         # Redis is a bounded live transport. Critical recovery comes from the

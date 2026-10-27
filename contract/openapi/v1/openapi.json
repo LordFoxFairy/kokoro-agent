@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.1.0"
+    "version": "8.2.0"
   },
   "servers": [
     {
@@ -1598,9 +1598,88 @@
                   "tool.file.write",
                   "tool.file.deliver"
                 ]
+              },
+              "display_detail": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "name"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "file",
+                      "mcp_tool"
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "x-kokoro-utf8-byte-limit": 480,
+                    "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs"
+                  }
+                },
+                "additionalProperties": false
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "display_detail"
+                  ],
+                  "properties": {
+                    "display_detail": {
+                      "properties": {
+                        "kind": {
+                          "const": "file"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "display_code": {
+                      "enum": [
+                        "tool.file.read",
+                        "tool.file.write",
+                        "tool.file.deliver"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "display_detail"
+                  ],
+                  "properties": {
+                    "display_detail": {
+                      "properties": {
+                        "kind": {
+                          "const": "mcp_tool"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "display_code": {
+                      "enum": [
+                        "tool.mcp.describe",
+                        "tool.mcp.call"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
           },
           {
             "type": "object",

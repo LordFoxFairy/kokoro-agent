@@ -25,7 +25,7 @@ from kokoro_agent.execution.events import (
 from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
-from kokoro_agent.domain.chat.projection import ToolDisplayCode
+from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
 from kokoro_agent.model.call_scope import (
     DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
     ModelCallScope,
@@ -46,6 +46,7 @@ async def invoke_once(
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
     tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = (),
+    tool_display_sources: tuple[ToolDisplaySource, ...] = (),
     finalize_terminal: Callable[
         [RunCompletedPayload | RunFailedPayload, tuple[int, int]], Awaitable[bool]
     ],
@@ -64,6 +65,7 @@ async def invoke_once(
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
     emitter.bind_tool_display_codes(tool_display_codes)
+    emitter.bind_tool_display_sources(tool_display_sources)
     config = _config(thread_id, trace, recursion_limit)
     if initial:
         # run.started eligibility is explicit; the Run-locked outbox deduplicates retries.

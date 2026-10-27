@@ -71,6 +71,15 @@ class ChatRepository(Protocol):
         limit: int = 500,
     ) -> tuple[ChatEventRecord, ...]: ...
 
+    async def first_tool_activity(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        activity_id: str,
+    ) -> ChatEventRecord | None: ...
+
     async def history(
         self,
         tenant_id: str,

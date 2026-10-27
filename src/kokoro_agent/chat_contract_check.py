@@ -319,9 +319,52 @@ _TOOL_DETAIL_CONDITIONS: list[dict[str, object]] = [
 ]
 
 
+def http82_basename_parent_bytes(document: dict[str, object]) -> bytes:
+    """Undo only file-name semantics, preserving the complete first HTTP8.2 graph."""
+    parent = copy.deepcopy(document)
+    if _object(parent.get("info"), source="info").get("version") != "8.2.0":
+        raise ValueError("file basename correction requires HTTP 8.2.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    activity = _object(schemas.get("ChatActivity"), source="ChatActivity")
+    branches = TypeAdapter(list[dict[str, object]]).validate_python(
+        activity.get("oneOf")
+    )
+    if len(branches) != 3:
+        raise ValueError("file basename activity branches differ")
+    conditions = TypeAdapter(list[dict[str, object]]).validate_python(
+        branches[0].get("allOf")
+    )
+    if len(conditions) != 2:
+        raise ValueError("file basename conditions differ")
+    then = _object(conditions[0].get("then"), source="file condition")
+    properties = _object(then.get("properties"), source="file condition properties")
+    if properties.pop("display_detail", None) != {
+        "properties": {"name": {"pattern": r"^(?!\.{1,2}$)[^/\\:]+$"}}
+    }:
+        raise ValueError("file basename correction differs")
+    then["properties"] = properties
+    conditions[0]["then"] = then
+    branches[0]["allOf"] = conditions
+    activity["oneOf"] = branches
+    schemas["ChatActivity"] = activity
+    components["schemas"] = schemas
+    parent["components"] = components
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "d16786d4b8214ba8ba22950c9b4ab9b297f0a2982724a89720bc268d2445cb71"
+    ):
+        raise ValueError("complete first HTTP 8.2 parent differs")
+    return raw
+
+
 def http81_parent_bytes(document: dict[str, object]) -> bytes:
     """Undo the one optional bounded detail, preserving every HTTP8.1 byte."""
-    parent = copy.deepcopy(document)
+    parent = _object(
+        json.loads(http82_basename_parent_bytes(document)),
+        source="first HTTP8.2 parent",
+    )
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.2.0":
         raise ValueError("tool detail extension requires HTTP 8.2.0")

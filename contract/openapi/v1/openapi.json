@@ -1649,6 +1649,13 @@
                         "tool.file.write",
                         "tool.file.deliver"
                       ]
+                    },
+                    "display_detail": {
+                      "properties": {
+                        "name": {
+                          "pattern": "^(?!\\.{1,2}$)[^/\\\\:]+$"
+                        }
+                      }
                     }
                   }
                 }

@@ -1169,3 +1169,100 @@ def test_http82_inverse_rejects_unapproved_delta(mutation: str) -> None:
         )
     with pytest.raises(ValueError):
         http81_parent_bytes(document)
+
+
+@pytest.mark.parametrize("name", [".", "..", "/private/report.md", "a\\b", "C:secret"])
+def test_file_basename_machine_rejects_what_agent_already_rejects(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    tool = json.loads(CONTRACT.read_bytes())["components"]["schemas"]["ChatActivity"][
+        "oneOf"
+    ][0]
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.file.read",
+        "display_detail": {"kind": "file", "name": name},
+    }
+    with pytest.raises(ValueError):
+        ToolDisplayDetail(kind="file", name=name)
+    with pytest.raises(SchemaValidationError):
+        validate(payload, tool)
+
+
+def test_basename_correction_restores_complete_first_http82_parent() -> None:
+    import hashlib
+    from kokoro_agent.chat_contract_check import http82_basename_parent_bytes
+
+    document = json.loads(CONTRACT.read_bytes())
+    assert document["info"]["version"] == "8.2.0"
+    parent = http82_basename_parent_bytes(document)
+    assert (
+        hashlib.sha256(parent).hexdigest()
+        == "d16786d4b8214ba8ba22950c9b4ab9b297f0a2982724a89720bc268d2445cb71"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["pattern", "removed", "mcp_tightened", "unrelated"]
+)
+def test_basename_correction_inverse_rejects_any_other_delta(mutation: str) -> None:
+    from kokoro_agent.chat_contract_check import http82_basename_parent_bytes
+
+    document = json.loads(CONTRACT.read_bytes())
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    detail = tool["allOf"][0]["then"]["properties"]["display_detail"]
+    if mutation == "pattern":
+        detail["properties"]["name"]["pattern"] = ".*"
+    elif mutation == "removed":
+        del tool["allOf"][0]["then"]["properties"]["display_detail"]
+    elif mutation == "mcp_tightened":
+        tool["allOf"][1]["then"]["properties"]["display_detail"] = detail
+    else:
+        document["components"]["schemas"]["LaunchRequest"]["additionalProperties"] = (
+            True
+        )
+    with pytest.raises(ValueError):
+        http82_basename_parent_bytes(document)
+
+
+@pytest.mark.parametrize(
+    "name", ["report.md", ".gitignore", "...", "..md", "résumé😀.md", "😀" * 120]
+)
+def test_file_basename_machine_retains_valid_unicode_targets(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    tool = json.loads(CONTRACT.read_bytes())["components"]["schemas"]["ChatActivity"][
+        "oneOf"
+    ][0]
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.file.read",
+        "display_detail": {"kind": "file", "name": name},
+    }
+    validate(payload, tool)
+    assert ToolDisplayDetail(kind="file", name=name).name == name
+
+
+@pytest.mark.parametrize("name", ["Search / docs", "server: tool", "a\\b", ".", ".."])
+def test_mcp_public_name_is_not_subject_to_file_basename_policy(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    tool = json.loads(CONTRACT.read_bytes())["components"]["schemas"]["ChatActivity"][
+        "oneOf"
+    ][0]
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.mcp.call",
+        "display_detail": {"kind": "mcp_tool", "name": name},
+    }
+    validate(payload, tool)
+    assert ToolDisplayDetail(kind="mcp_tool", name=name).name == name

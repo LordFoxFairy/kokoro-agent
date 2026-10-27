@@ -8,7 +8,7 @@ from deepagents.backends.protocol import BackendProtocol
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.runnables.graph import Graph
 from langgraph.prebuilt import ToolNode
-from deepagents.middleware.filesystem import ReadFileSchema
+from deepagents.middleware.filesystem import ReadFileSchema, WriteFileSchema
 from kokoro_agent.domain.chat.projection import ToolDisplayCode
 
 from kokoro_agent.protocol import RunRequest
@@ -97,15 +97,22 @@ class Toolset:
         codes: dict[str, ToolDisplayCode] = {
             name: code for name, _, code in self.display_bindings
         }
-        native_read = mounted.get("read_file")
         # Reserved-name collision is rejected by the factory before construction.
-        # This is the original official node's object, not another read_file tool.
+        # Inspect only the official node's object and the pinned native schema.
+        native_read = mounted.get("read_file")
         if (
             "read_file" not in self.by_name
             and native_read is not None
             and native_read.args_schema is ReadFileSchema
         ):
             codes["read_file"] = "tool.file.read"
+        native_write = mounted.get("write_file")
+        if (
+            "write_file" not in self.by_name
+            and native_write is not None
+            and native_write.args_schema is WriteFileSchema
+        ):
+            codes["write_file"] = "tool.file.write"
         return tuple(sorted(codes.items()))
 
     def with_tools(self, tools: Sequence[BaseTool]) -> Toolset:
@@ -201,6 +208,8 @@ async def build_toolset(
                     strict=True,
                 )
             )
+        elif source.kind == "delivery":
+            display_bindings.append((materialized[0], "tool.file.deliver"))
         elif source.kind == "toolbox":
             for tool in materialized:
                 for registered, origin in toolbox.source_bindings:

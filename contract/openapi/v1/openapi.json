@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.0.0"
+    "version": "8.1.0"
   },
   "servers": [
     {
@@ -1594,7 +1594,9 @@
                   "tool.mcp.describe",
                   "tool.mcp.call",
                   "tool.web.search",
-                  "tool.web.fetch"
+                  "tool.web.fetch",
+                  "tool.file.write",
+                  "tool.file.deliver"
                 ]
               }
             },

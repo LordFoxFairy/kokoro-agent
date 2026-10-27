@@ -1,4 +1,18 @@
-## 2026-10-26 安全工具展示语义（Agent8 候选实施中，正常未激活）
+## 原生写文件与交付文件的安全展示类别
+
+**边界与基线。** 本片沿既有 Agent 安全 Chat 投影扩展两个受信工具类别；不改变工具执行、授权、journal／receipt、取消、lease、opaque ID 或数据 Schema。本片父机器 HTTP 为 8.0.0，OpenAPI SHA256 为 `93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff`，provenance SHA256 为 `4333d87e7f2199d549afb1c3334bebf17af99682bcbc093e9b2bba204982570f`。现 `mounted_display_codes` 只给原生 read_file 分类，delivery 装配没有展示绑定，因此真实 write_file／deliver 都投影为 tool.execution；BFF／App 未遗漏一个已有的更具体公开字段。
+
+**唯一增量。** 本片 HTTP 后继为 8.1.0，仅在 ChatActivity 的 tool 分支 display_code 原七值后追加 `tool.file.write`、`tool.file.deliver`。这是需配对部署的输出闭集扩展，不因采用 minor 编号就声称旧严格 reader 能接受新值。原字段、状态、顺序、其它分支与全部请求不变；没有 filename、路径、参数、内容、任意标题或结果字段。成果文件名继续属于已有 Artifact 卡片，不在 activity 上推断关联。
+
+**来源证明。** 原生 write_file 沿现 read_file 方式，在真实构造后的官方 ToolNode.tools_by_name 核实际挂载对象、保留名碰撞边界及锁定 SDK 的 WriteFileSchema 身份；缺节点、伪节点、错误 schema 或缺来源证明不升级类别。deliver 仅在现 delivery 来源分支为实际 `_deliver_tool` 创建的对象加入 `display_bindings`，继续由现对象 identity 检查证明真实挂载。调用名只定位该受信定义；同名任意工具、metadata、description、args／result 不授类别，不新增 executor 或另一展示 registry。AgentHandle／Swarm 的共同绑定交集、RunEmitter 的调用身份与类别一致性围栏原样承接。
+
+**发行与历史。** 唯一 canonical OpenAPI → 原 failure generator 更新源摘要／provenance → BFF 固定 owner commit、8.1.0 与两个原件 SHA，正规生成并发布同闭集 public 后继 → App 固定 BFF 后继并本地化。BFF／App 的写入和正常激活由各 owner／Root 后继承担。原 tool.execution 历史保持原值，不回填、不重派；未知公开类别仍拒绝。新值写入后，回滚 producer 不意味着旧 reader 能读取新历史，恢复时保留已配对 reader。
+
+**精确拟写区。** 设计为本文件及 `docs/API_CONTRACT.md`；机器为 `contract/openapi/v1/openapi.json`、`src/kokoro_agent/chat_contract_check.py`、`src/kokoro_agent/contract_check.py`，正规派生为 `contract/provenance.json`、`src/kokoro_agent/protocol/run_failure_generated.py`；业务只改 `src/kokoro_agent/domain/chat/projection.py`、`src/kokoro_agent/tools/toolset.py`。回归沿 `tests/unit/tools/test_toolset.py`、`tests/unit/chat/test_emitter.py`、`tests/unit/chat/test_projection.py`、`tests/contract/test_machine_contract.py`、`tests/contract/test_chat_response_envelopes.py` 的相关现有覆盖追加。必要发行闭包另含 `src/kokoro_agent/execution_proof_contract.py`、`tests/contract/test_execution_proof_jwks_http.py`、`tests/contract/test_mcp_selection_contract.py` 的 current HTTP 版本核验；proof2／selection 语义及父摘要不变。实际 Factory 覆盖另在 `tests/unit/agents/test_factory.py` 承接新增 write 类别与原无 delivery／Swarm 来源边界，不改 factory 业务。必要索引只更新相邻现有 INDEX；不触 BFF／App、lockfile、SQL、协议事件或任务外源文件。
+
+**验证。** 先建立缺类别的行为 RED，再证明真实原生 WriteFileSchema／实际 deliver 挂载、同名／伪节点拒绝、缺 delivery 不造类别；新类别 running／completed／failed 同调用身份稳定，路径／内容 secret canary 不进 Chat payload。当前 8.1.0 只逆去两个新增值并还原版本后，必须逐字得到完整 8.0.0 原 SHA；原 8.0.0 → 7.4.0 及更早父证明保留，不以局部字段比较代替完整父图。生成 Failure 的业务 tuple 逐字不变，仅源摘要更新。focused、格式／lint／类型、contract、默认测试和分发构建的实际结果分别交 Root 复核；不启动正常服务、SQL 或模型。
+
+## 2026-10-26 安全工具展示语义（历史设计：Agent8）
 
 **基线与 owner。** 正常 producer 与本次可维护 checkout 均为 `83e9e36efeb8086074648ea9d5bd9a3bea43d5cd`，本仓 HTTP7.4 原件 SHA256 为 `7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad`。`domain/chat/projection.py` 当前把普通工具压成 `tool.execution`、opaque activity/segment ID 和真实状态；BFF/App 没有收到被遗漏的具体语义。Agent 仍唯一拥有执行事实与安全 Chat 投影，BFF 拥有 durable AG-UI，App 只本地化呈现。本片仅补工具定义的安全类别，不读取模型原文推断意图，不改执行、授权或计费结果。
 

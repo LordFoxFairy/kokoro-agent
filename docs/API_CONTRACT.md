@@ -1,4 +1,17 @@
-## 2026-10-26 Agent8 安全工具类别（候选实施中，正常未激活）
+## HTTP8.1 原生写文件与交付文件展示后继
+
+本片父机器版本为 HTTP8.0.0，完整 OpenAPI SHA256 `93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff`；本片后继为 8.1.0，仅在 `ChatActivity.oneOf` 的 tool 分支 `display_code.enum` 原七值末尾追加：
+
+| 新值 | 来源及语义 |
+| --- | --- |
+| `tool.file.write` | 实际官方 ToolNode 中通过保留名边界及 SDK WriteFileSchema 身份证明的原生 write_file 定义；仅声明工具类别，成功与否仍由原 status 表达。 |
+| `tool.file.deliver` | 现 delivery 来源分支实际创建并经 ToolNode 对象 identity 核验的 deliver 定义；不以此类别代替 Storage 成功或 Artifact 当前资格。 |
+
+没有新增字段或 endpoint；原 required、opaque activity／segment ID、三状态及 additionalProperties:false 保持。没有 filename、args、路径、content、result 或任意 title 的公开展示字段，产物继续由现 Delivery／Artifact 投影展示。原 Redis 工具事件、HTTP 请求、failure／proof／usage、权限、receipt 和 Schema 不变。原 tool.execution 历史保持，不根据工具顺序或产物标题重新分类。
+
+此 minor 是需协调消费者的输出闭集扩展，不是旧严格 reader 的兼容承诺。Agent canonical → 原 `scripts/generate_failure_models.py` → OpenAPI／provenance 固定发行 → BFF 正规消费／public 后继 → App 固定消费后，Root 才准入新 producer；现有正常资源不在本片操作范围。`8.1.0 → 8.0.0` 只移除两个新枚举并还原版本后必须得到完整父 SHA，继而保留原 8.0.0 → 7.4.0 及全部更早父证明；其它 delta 拒绝。生成 Failure 的业务声明不变，仅正规生成的源摘要及 provenance 更新，不手填 hash。
+
+## 2026-10-26 Agent8 安全工具类别（历史设计）
 
 **基线/变更性质。** 从正常 `83e9e36efeb8086074648ea9d5bd9a3bea43d5cd` 的 HTTP7.4.0（OpenAPI SHA256 `7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad`）演进到 HTTP8.0.0。`ChatActivity` 的 tool 分支当前 `display_code` 仅 const `tool.execution`；后继把它改为下列严格枚举，保原 required 字段、opaque ID、三状态与 `additionalProperties:false`。这是输出闭集扩展，旧严格消费者会拒绝新值，不能伪称兼容的小版本或先启 producer。
 

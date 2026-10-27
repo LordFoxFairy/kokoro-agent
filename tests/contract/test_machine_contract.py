@@ -31,7 +31,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "8.0.0"
+    assert _object(document["info"])["version"] == "8.1.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -553,7 +553,7 @@ def test_current_http7_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "8.0.0"
+    assert _object(document["info"])["version"] == "8.1.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -999,8 +999,10 @@ def test_agent8_tool_display_is_a_closed_output_extension_with_full_parent_proof
         "tool.mcp.call",
         "tool.web.search",
         "tool.web.fetch",
+        "tool.file.write",
+        "tool.file.deliver",
     ]
-    assert document["info"]["version"] == "8.0.0"
+    assert document["info"]["version"] == "8.1.0"
     assert tool["properties"]["display_code"] == {"type": "string", "enum": codes}
     payload = {
         "activity": "tool",
@@ -1026,3 +1028,60 @@ def test_agent8_tool_display_is_a_closed_output_extension_with_full_parent_proof
         hashlib.sha256(encoded).hexdigest()
         == "7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad"
     )
+
+
+def test_http81_file_tool_categories_preserve_the_complete_http8_parent() -> None:
+    import copy
+    import hashlib
+
+    document = json.loads(CONTRACT.read_bytes())
+    assert document["info"]["version"] == "8.1.0"
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    assert tool["properties"]["display_code"]["enum"][-2:] == [
+        "tool.file.write",
+        "tool.file.deliver",
+    ]
+    assert set(tool["properties"]) == {
+        "activity",
+        "activity_id",
+        "segment_id",
+        "status",
+        "display_code",
+    }
+    parent = copy.deepcopy(document)
+    parent["info"]["version"] = "8.0.0"
+    del parent["components"]["schemas"]["ChatActivity"]["oneOf"][0]["properties"][
+        "display_code"
+    ]["enum"][-2:]
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    assert (
+        hashlib.sha256(raw).hexdigest()
+        == "93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff"
+    )
+    from kokoro_agent.chat_contract_check import http80_parent_bytes
+
+    assert http80_parent_bytes(document) == raw
+
+
+@pytest.mark.parametrize(
+    "mutation", ["unknown_code", "missing_code", "extra_field", "status", "request"]
+)
+def test_http81_full_parent_proof_rejects_any_other_delta(mutation: str) -> None:
+    from kokoro_agent.chat_contract_check import http80_parent_bytes
+
+    document = json.loads(CONTRACT.read_bytes())
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    if mutation == "unknown_code":
+        tool["properties"]["display_code"]["enum"].append("raw.private-tool")
+    elif mutation == "missing_code":
+        tool["properties"]["display_code"]["enum"].pop()
+    elif mutation == "extra_field":
+        tool["properties"]["filename"] = {"type": "string"}
+    elif mutation == "status":
+        tool["properties"]["status"]["enum"].append("unknown")
+    else:
+        document["components"]["schemas"]["LaunchRequest"]["additionalProperties"] = (
+            True
+        )
+    with pytest.raises(ValueError):
+        http80_parent_bytes(document)

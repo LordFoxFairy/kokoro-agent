@@ -261,6 +261,7 @@ async def test_builds_native_agent_without_external_clients(
     assert "deliver" not in handle.tool_descriptions
     assert dict(handle.tool_display_codes) == {
         "read_file": "tool.file.read",
+        "write_file": "tool.file.write",
         "mcp_list_tools": "tool.mcp.discover",
         "mcp_describe_tool": "tool.mcp.describe",
         "mcp_call": "tool.mcp.call",
@@ -2872,6 +2873,7 @@ async def test_factory_binds_configured_search_and_fetch_objects_without_calling
     )
     assert set(dict(handle.tool_display_codes).values()) == {
         "tool.file.read",
+        "tool.file.write",
         "tool.mcp.discover",
         "tool.mcp.describe",
         "tool.mcp.call",

@@ -183,6 +183,33 @@ async def test_toolset_materialization_consumes_the_shared_plan(
     assert tuple(t.name for t in built.tools) == expected.names
     assert ("deliver" in expected.names) == (declared and available)
     assert built.authorized >= frozenset(expected.names)
+    import deepagents
+    from typing import Any
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from kokoro_agent.agents.native_profile import validate_native_registry
+
+    validate_native_registry()
+    create_deep_agent: Any = getattr(deepagents, "create_deep_agent")
+    native = create_deep_agent(
+        model=FakeListChatModel(responses=["unused"]),
+        tools=built.tools,
+        backend=Mock(spec=BackendProtocol),
+    )
+    actual_codes = dict(built.mounted_display_codes(native))
+    assert actual_codes.get("deliver") == (
+        "tool.file.deliver" if declared and available else None
+    )
+    delivery_bindings = [
+        (name, tool, code)
+        for name, tool, code in built.display_bindings
+        if name == "deliver"
+    ]
+    if declared and available:
+        assert delivery_bindings == [
+            ("deliver", built.by_name["deliver"], "tool.file.deliver")
+        ]
+    else:
+        assert delivery_bindings == []
 
 
 def test_display_codes_use_original_constructed_toolnode_objects_not_names() -> None:
@@ -220,6 +247,7 @@ def test_display_codes_use_original_constructed_toolnode_objects_not_names() -> 
         "mcp_call": "tool.mcp.call",
         "web_fetch": "tool.web.fetch",
         "read_file": "tool.file.read",
+        "write_file": "tool.file.write",
     }
     assert tools.mounted_display_codes(object()) == ()
     counterfeit = create_deep_agent(
@@ -268,3 +296,10 @@ def test_missing_or_impostor_toolnode_cannot_grant_native_semantics() -> None:
     assert tools.mounted_display_codes(Runnable(None)) == ()
     assert tools.mounted_display_codes(Runnable(Impostor((_tool("read_file"),)))) == ()
     assert tools.mounted_display_codes(Runnable(ToolNode((_tool("read_file"),)))) == ()
+    assert tools.mounted_display_codes(Runnable(ToolNode((_tool("write_file"),)))) == ()
+    from deepagents.middleware.filesystem import WriteFileSchema
+
+    counterfeit = _tool("write_file")
+    counterfeit.args_schema = WriteFileSchema
+    forged = Toolset.from_tools((counterfeit,))
+    assert forged.mounted_display_codes(Runnable(ToolNode((counterfeit,)))) == ()

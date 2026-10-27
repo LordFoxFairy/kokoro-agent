@@ -261,9 +261,63 @@ def read_contract_document(path: Path) -> dict[str, object]:
         raise ValueError(f"{path} must contain a JSON object") from error
 
 
+_HTTP8_TOOL_DISPLAY_CODES = (
+    "tool.execution",
+    "tool.file.read",
+    "tool.mcp.discover",
+    "tool.mcp.describe",
+    "tool.mcp.call",
+    "tool.web.search",
+    "tool.web.fetch",
+)
+
+
+def http80_parent_bytes(document: dict[str, object]) -> bytes:
+    """Undo only the two file categories and prove the complete HTTP8 parent."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.1.0":
+        raise ValueError("file display extension requires HTTP 8.1.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    branches = TypeAdapter(list[dict[str, object]]).validate_python(
+        _object(schemas.get("ChatActivity"), source="ChatActivity").get("oneOf")
+    )
+    properties = _object(branches[0].get("properties"), source="tool properties")
+    current_codes = [*_HTTP8_TOOL_DISPLAY_CODES, "tool.file.write", "tool.file.deliver"]
+    if list(get_args(ToolDisplayCode)) != current_codes or properties.get(
+        "display_code"
+    ) != {
+        "type": "string",
+        "enum": current_codes,
+    }:
+        raise ValueError("file display code extension is not exact")
+    properties["display_code"] = {
+        "type": "string",
+        "enum": list(_HTTP8_TOOL_DISPLAY_CODES),
+    }
+    branches[0]["properties"] = properties
+    activity = _object(schemas["ChatActivity"], source="ChatActivity")
+    activity["oneOf"] = branches
+    schemas["ChatActivity"] = activity
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.0.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff"
+    ):
+        raise ValueError("complete HTTP 8.0 parent differs")
+    return raw
+
+
 def http74_parent_bytes(document: dict[str, object]) -> bytes:
     """Undo only Agent8's closed display output extension, preserving the full parent."""
-    parent = copy.deepcopy(document)
+    parent = _object(
+        json.loads(http80_parent_bytes(document)), source="HTTP 8.0 parent"
+    )
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.0.0":
         raise ValueError("tool display extension requires HTTP 8.0.0")
@@ -277,7 +331,7 @@ def http74_parent_bytes(document: dict[str, object]) -> bytes:
     properties = _object(branches[0]["properties"], source="tool properties")
     if properties["display_code"] != {
         "type": "string",
-        "enum": list(get_args(ToolDisplayCode)),
+        "enum": list(_HTTP8_TOOL_DISPLAY_CODES),
     }:
         raise ValueError("tool display code extension is not exact")
     properties["display_code"] = {"type": "string", "const": "tool.execution"}
@@ -345,8 +399,8 @@ def failure_model_bytes(
     """Compile only the approved two failure profiles; reject unsupported shapes."""
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
-    if _object(document.get("info"), source="info").get("version") != "8.0.0":
-        raise ValueError("failure profiles require HTTP 8.0.0")
+    if _object(document.get("info"), source="info").get("version") != "8.1.0":
+        raise ValueError("failure profiles require HTTP 8.1.0")
     schemas = _object(
         _object(document.get("components"), source="components").get("schemas"),
         source="schemas",
@@ -474,7 +528,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.0.0",
+        "version": "8.1.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }

@@ -10,6 +10,7 @@ from pydantic import JsonValue
 from support.chat import FakeChatRepository
 from support.fakes import FakeBus
 
+from kokoro_agent.domain.chat.projection import ToolDisplayCode
 from kokoro_agent.protocol import live_stream
 from kokoro_agent.execution.events import RunEmitter, message_delta_payload
 from kokoro_agent.streams.protocol import StreamItem
@@ -236,12 +237,24 @@ async def test_stopped_live_publish_preserves_critical_outbox_recovery(
         await asyncio.gather(publishing, return_exceptions=True)
 
 
+@pytest.mark.parametrize(
+    "name,code",
+    [
+        ("mcp_call", "tool.mcp.call"),
+        ("write_file", "tool.file.write"),
+        ("deliver", "tool.file.deliver"),
+    ],
+)
 @pytest.mark.parametrize("is_error", [False, True])
 async def test_display_binding_is_run_local_stable_and_never_changes_raw_wire(
     is_error: bool,
+    name: str,
+    code: ToolDisplayCode,
 ) -> None:
     import json
     from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    checked = code
 
     bus = FakeBus()
     store = FakeChatRepository([])
@@ -253,36 +266,49 @@ async def test_display_binding_is_run_local_stable_and_never_changes_raw_wire(
         session_id="s",
         chat_repository=store,
     )
-    emitter.bind_tool_display_codes((("mcp_call", "tool.mcp.call"),))
+    emitter.bind_tool_display_codes(((name, checked),))
     await emitter.emit(
         ToolInvokedPayload(
-            segment_id="seg", tool_id="call", name="mcp_call", args={"token": "SECRET"}
+            segment_id="seg",
+            tool_id="call",
+            name=name,
+            args={
+                "file_path": "/private/SECRET/file.txt",
+                "content": "SECRET",
+                "path": "/private/SECRET/file.txt",
+            },
         )
     )
     await emitter.emit(
         ToolReturnedPayload(
             segment_id="seg",
             tool_id="call",
-            name="mcp_call",
+            name=name,
             result="SECRET",
             is_error=is_error,
         )
     )
     assert [json.loads(row.payload_json)["display_code"] for row in store.records] == [
-        "tool.mcp.call",
-        "tool.mcp.call",
+        checked,
+        checked,
     ]
     assert [json.loads(row.payload_json)["status"] for row in store.records] == [
         "running",
         "failed" if is_error else "completed",
     ]
     assert all("SECRET" not in row.payload_json for row in store.records)
+    safe = [json.loads(row.payload_json) for row in store.records]
+    assert safe[0]["activity_id"] == safe[1]["activity_id"]
+    assert all(
+        set(row) == {"activity", "activity_id", "segment_id", "status", "display_code"}
+        for row in safe
+    )
     for _, event, _ in bus.published:
         raw_payload = event["payload"]
         assert isinstance(raw_payload, dict)
         assert "display_code" not in raw_payload
     with pytest.raises(ValueError, match="changed within"):
-        emitter.bind_tool_display_codes((("mcp_call", "tool.web.fetch"),))
+        emitter.bind_tool_display_codes(((name, "tool.web.fetch"),))
     other = FakeChatRepository([])
     unbound = await RunEmitter.attach(
         FakeBus(),
@@ -293,7 +319,7 @@ async def test_display_binding_is_run_local_stable_and_never_changes_raw_wire(
         chat_repository=other,
     )
     await unbound.emit(
-        ToolInvokedPayload(segment_id="seg", tool_id="call", name="mcp_call", args={})
+        ToolInvokedPayload(segment_id="seg", tool_id="call", name=name, args={})
     )
     assert json.loads(other.records[0].payload_json)["display_code"] == "tool.execution"
 

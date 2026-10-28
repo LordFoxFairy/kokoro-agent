@@ -8,15 +8,22 @@ compiler 模块或编译抽象。
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, TypeGuard
 
+from deepagents import SubagentTransformer
+from langgraph.prebuilt import ToolCallTransformer
+from langgraph.stream import ProtocolEvent, StreamTransformer
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 import langgraph_swarm
 from langgraph_swarm import SwarmState
 
-from kokoro_agent.execution.protocols import AgentRunnable
+from kokoro_agent.execution.protocols import (
+    AgentRunnable,
+    SWARM_SCOPE_EXTENSION,
+    SwarmPeerScope,
+)
 
 
 def create_swarm(
@@ -33,6 +40,25 @@ def create_swarm(
     """
     if len(peers) < 2:
         raise ValueError("swarm requires at least two peers")
+    factories = _peer_factories(peers)
+    if entry_agent not in factories:
+        raise ValueError("Swarm entry agent must be a declared peer")
+    peer_names = frozenset(factories)
+
+    def subagents(scope: tuple[str, ...]) -> StreamTransformer:
+        if not scope:
+            return SubagentTransformer(scope, subagent_names=frozenset())
+        name, separator, task_id = scope[0].partition(":")
+        if not separator or not task_id or name not in factories:
+            raise ValueError("Swarm stream scope is not a declared peer")
+        transformer = factories[name](scope)
+        if not isinstance(transformer, StreamTransformer):
+            raise TypeError("Native peer factory did not produce a stream transformer")
+        return transformer
+
+    def declaration(scope: tuple[str, ...]) -> StreamTransformer:
+        return _PeerDeclaration(scope, peer_names)
+
     # langgraph-swarm exposes a Pregel-generic signature that is narrower than
     # the DeepAgents runnable accepted at runtime.  The official call is the
     # sole dynamic boundary; the result is narrowed by the guard below.
@@ -43,12 +69,57 @@ def create_swarm(
         default_active_agent=entry_agent,
         state_schema=SwarmState,
     )
-    native: object = builder.compile(checkpointer=checkpointer, store=store)
+    native: object = builder.compile(
+        checkpointer=checkpointer,
+        store=store,
+        transformers=[ToolCallTransformer, subagents, declaration],
+    )
     if not _is_agent_runnable(native):
         raise TypeError(
             "official Swarm returned an object without the DeepAgents invocation surface"
         )
     return native
+
+
+class _PeerDeclaration(StreamTransformer):
+    """Passive public SDK extension; it neither filters nor changes events."""
+
+    def __init__(self, scope: tuple[str, ...], names: frozenset[str]) -> None:
+        super().__init__(scope)
+        self.names = names
+
+    def init(self) -> dict[str, Any]:
+        return {SWARM_SCOPE_EXTENSION: SwarmPeerScope(self.scope, self.names)}
+
+    def process(self, event: ProtocolEvent) -> bool:
+        return True
+
+
+def _peer_factories(
+    peers: Sequence[AgentRunnable],
+) -> dict[str, Callable[[tuple[str, ...]], object]]:
+    factories: dict[str, Callable[[tuple[str, ...]], object]] = {}
+    for peer in peers:
+        name: object = getattr(peer, "name", None)
+        recipe: object = getattr(peer, "stream_transformers", None)
+        if not isinstance(name, str) or not name or ":" in name or name in factories:
+            raise ValueError("Swarm peers require unique native names")
+        if not _is_transformer_recipe(recipe):
+            raise TypeError("Swarm peer does not expose native stream transformers")
+        entries = recipe
+        if len(entries) != 2 or entries[0] is not ToolCallTransformer:
+            raise TypeError(
+                "Swarm peer does not expose the approved native stream recipe"
+            )
+        factory = entries[1]
+        if not callable(factory):
+            raise TypeError("Native peer subagent transformer must be callable")
+        factories[name] = factory
+    return factories
+
+
+def _is_transformer_recipe(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, (list, tuple))
 
 
 def _is_agent_runnable(value: object) -> TypeGuard[AgentRunnable]:

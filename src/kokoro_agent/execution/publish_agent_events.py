@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterable
+from typing import Any
+from collections.abc import AsyncIterable, Coroutine
 
 from kokoro_agent.execution.protocols import (
     AgentRunStream,
     ModelStream,
+    PeerRunStream,
+    SWARM_SCOPE_EXTENSION,
+    SwarmPeerScope,
     SubagentRunStream,
     ToolCallView,
 )
@@ -47,15 +51,36 @@ async def pump_run(
 ) -> None:
     """并发抽干 v3 四路 typed 投影 → 本地 queue 合流 → RunEmitter 单点发布。
 
-    LangGraph v3 用 caller-driven single-flight pump 驱动全图，四路 typed 投影必须并发
-    消费——任一通道缓冲满会回压整图直至死锁；queue 只为合流保序不为吞吐。
+    LangGraph v3 用 caller-driven single-flight pump 驱动全图；投影在首个事件前订阅，
+    再并发消费。原生 channel 未订阅会丢事件；queue 只为合流保序不为吞吐。
     try/finally 保证 None 哨兵必达、drainer 必被收束：上游崩溃也不泄漏后台协程。
     """
     queue: _EventQueue = asyncio.Queue()
 
     async def produce() -> None:
         try:
-            await _consume(run, queue, subagent_id=None, source_for=source_for)
+            declaration = run.extensions.get(SWARM_SCOPE_EXTENSION)
+            if declaration is None:
+                await _consume(run, queue, subagent_id=None, source_for=source_for)
+            elif isinstance(declaration, SwarmPeerScope):
+                peers = aiter(run.subgraphs)
+                tasks = (
+                    asyncio.create_task(
+                        _consume(run, queue, subagent_id=None, source_for=source_for)
+                    ),
+                    asyncio.create_task(
+                        _consume_peers(peers, declaration, queue, source_for)
+                    ),
+                )
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    for task in tasks:
+                        if not task.done() and task.cancelling() == 0:
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                raise TypeError("Invalid native Swarm peer declaration")
         finally:
             await queue.put(None)
 
@@ -68,6 +93,31 @@ async def pump_run(
             if not task.done() and task.cancelling() == 0:
                 task.cancel()
         await asyncio.gather(producer, drainer, return_exceptions=True)
+
+
+async def _consume_peers(
+    peers: AsyncIterable[PeerRunStream],
+    declaration: SwarmPeerScope,
+    queue: _EventQueue,
+    source_for: SourceResolver,
+) -> None:
+    async with asyncio.TaskGroup() as consumers:
+        async for peer in peers:
+            root = declaration.root_scope
+            path = peer.path
+            if (
+                len(path) != len(root) + 1
+                or path[:-1] != root
+                or peer.graph_name not in declaration.peer_names
+                or path[-1].partition(":")[0] != peer.graph_name
+                or not path[-1].partition(":")[2]
+            ):
+                raise ValueError("Unexpected direct Swarm peer stream")
+            # Only declared direct peers enter the public Run. Their genuine task
+            # descendants keep the existing subagent channel and trigger identity.
+            consumers.create_task(
+                _consume(peer, queue, subagent_id=None, source_for=source_for)
+            )
 
 
 async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:
@@ -86,29 +136,39 @@ async def _drain(emitter: RunEmitter, queue: _EventQueue) -> None:
             )
 
 
-async def _consume(
-    run: AgentRunStream | SubagentRunStream,
+def _consume(
+    run: AgentRunStream | SubagentRunStream | PeerRunStream,
     queue: _EventQueue,
     *,
     subagent_id: str | None,
     source_for: SourceResolver,
-) -> None:
-    tasks = (
-        asyncio.create_task(_consume_messages(run.messages, queue, subagent_id)),
-        asyncio.create_task(_consume_tools(run.tool_calls, queue, subagent_id)),
-        asyncio.create_task(_consume_subagents(run.subagents, queue, source_for)),
-        # custom 遥测无 wire kind：仍须抽干防回压，内容弃置。
-        asyncio.create_task(_drain_aiter(run.custom)),
-    )
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        # gather propagates the first error without stopping siblings. Each
-        # recursive run owns and joins its children before that error escapes.
-        for task in tasks:
-            if not task.done() and task.cancelling() == 0:
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+) -> Coroutine[Any, Any, None]:
+    # Register every native projection synchronously, before any consumer can
+    # drive the shared pump. Child handles may emit their first event immediately.
+    messages = aiter(run.messages)
+    tools = aiter(run.tool_calls)
+    subagents = aiter(run.subagents)
+    custom = aiter(run.custom)
+
+    async def consume() -> None:
+        tasks = (
+            asyncio.create_task(_consume_messages(messages, queue, subagent_id)),
+            asyncio.create_task(_consume_tools(tools, queue, subagent_id)),
+            asyncio.create_task(_consume_subagents(subagents, queue, source_for)),
+            # custom 遥测无 wire kind：仍须抽干防回压，内容弃置。
+            asyncio.create_task(_drain_aiter(custom)),
+        )
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            # gather propagates the first error without stopping siblings. Each
+            # recursive run owns and joins its children before that error escapes.
+            for task in tasks:
+                if not task.done() and task.cancelling() == 0:
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    return consume()
 
 
 async def _consume_messages(
@@ -211,10 +271,12 @@ async def _pump_reasoning(
             await queue.put(payload)
 
 
-async def _pump_tool_output(tc: ToolCallView, queue: _EventQueue) -> None:
+async def _pump_tool_output(
+    tc: ToolCallView, deltas: AsyncIterable[object], queue: _EventQueue
+) -> None:
     # 长执行工具（如 execute）的增量输出上 wire；累计超 result 护栏后静默停发（终值走 returned）。
     sent = 0
-    async for chunk in tc.output_deltas:
+    async for chunk in deltas:
         if sent >= TOOL_RESULT_MAX_CHARS:
             continue  # 继续抽干防回压，只是不再上 wire
         text = output_delta_text(chunk)
@@ -231,23 +293,24 @@ async def _consume_tools(
     tool_calls: AsyncIterable[ToolCallView], queue: _EventQueue, subagent_id: str | None
 ) -> None:
     async for tc in tool_calls:
+        deltas = aiter(tc.output_deltas)
         if tc.tool_name == SUBAGENT_TOOL_NAME:
             # 子代理启动工具由 subagents 投影处理，避免与 tool.* / subagent.tool.* 双发。
-            await _drain_aiter(tc.output_deltas)
+            await _drain_aiter(deltas)
             continue
         if subagent_id is not None:
             # 子代理内工具（含其自有 todo，不得覆盖主面板）走 subagent.tool.* 可见性通道；
             # 无输出增量通道，抽干防回压，终值走 returned。
             await queue.put(subagent_tool_invoked_payload(tc, subagent_id=subagent_id))
-            await _drain_aiter(tc.output_deltas)
+            await _drain_aiter(deltas)
             await queue.put(subagent_tool_returned_payload(tc, subagent_id=subagent_id))
             continue
         if tc.tool_name == TODO_TOOL_NAME:
             await queue.put(todo_payload(tc))
-            await _drain_aiter(tc.output_deltas)
+            await _drain_aiter(deltas)
             continue
         await queue.put(tool_invoked_payload(tc))
-        await _pump_tool_output(tc, queue)
+        await _pump_tool_output(tc, deltas, queue)
         returned = tool_returned_payload(tc)
         if returned is None:
             # 工具执行中途 interrupt（如 request_input）：不发伪 returned，等 resume replay 出真值。

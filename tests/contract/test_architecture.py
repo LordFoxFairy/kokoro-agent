@@ -158,9 +158,19 @@ def test_deepagents_construction_has_one_ga_adapter() -> None:
         imports = _imports(path)
         if "deepagents" not in imports:
             continue
-        assert _rel(path) in allowed, (
-            f"{_rel(path)} calls/imports create_deep_agent outside agent_factory.py"
-        )
+        if _rel(path) == "swarm.py":
+            # Swarm consumes the public projection transformer, not a second
+            # DeepAgents constructor. Any added package import remains denied.
+            assert _from_imported_names(path, "deepagents") == {"SubagentTransformer"}
+            assert not any(
+                isinstance(node, ast.Import)
+                and any(alias.name == "deepagents" for alias in node.names)
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            )
+        else:
+            assert _rel(path) in allowed, (
+                f"{_rel(path)} calls/imports create_deep_agent outside agent_factory.py"
+            )
 
 
 def test_deepagents_first_tree_has_no_parallel_runtime_directories() -> None:

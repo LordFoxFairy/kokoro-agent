@@ -4,6 +4,29 @@ from importlib import import_module, metadata
 import pytest
 
 
+@pytest.mark.parametrize("version", ["0.6.6", "0.6.8", "0.7.0"])
+def test_unapproved_native_version_rejected_before_bootstrap(
+    version: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = import_module("kokoro_agent.agents.native_profile")
+    actual_version = metadata.version
+    calls: list[str] = []
+
+    def installed_version(name: str) -> str:
+        return version if name == "deepagents" else actual_version(name)
+
+    monkeypatch.setattr(metadata, "version", installed_version)
+    monkeypatch.setattr(
+        module,
+        "bootstrap_native_profiles",
+        lambda: calls.append("bootstrap"),
+    )
+    with pytest.raises(ValueError, match="unapproved native profile version"):
+        module.prepare_native_recipe()
+    assert calls == []
+
+
 def test_unknown_plugin_rejected_before_load_or_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

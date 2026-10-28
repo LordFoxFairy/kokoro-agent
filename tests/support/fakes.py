@@ -98,7 +98,7 @@ from kokoro_agent.domain.run.models import RunUsageSegment
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.execution.protocols import AgentRunnable, ModelStream
+from kokoro_agent.execution.protocols import AgentRunnable, ModelStream, PeerRunStream
 from kokoro_agent.infrastructure.checkpoint_interactions import (
     PauseReadTarget,
     ResumeReadTarget,
@@ -1886,6 +1886,12 @@ class FakeSubagentRun:
 
 @dataclass
 class FakeRunStream:
+    extensions: dict[str, object] = field(default_factory=dict[str, object])
+
+    @property
+    def subgraphs(self) -> AsyncIterator[PeerRunStream]:
+        return aiter_items(())
+
     models: Sequence[ModelStream] = ()
     tool_views: Sequence[FakeToolCall] = ()
     subagent_runs: Sequence[FakeSubagentRun] = ()

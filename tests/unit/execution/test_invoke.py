@@ -1752,6 +1752,14 @@ async def test_projection_cleanup_does_not_repeat_cancel_owned_coroutines(
 
     class HeldRun:
         @property
+        def extensions(self) -> dict[str, object]:
+            return {}
+
+        @property
+        def subgraphs(self):
+            return FakeRunStream().subgraphs
+
+        @property
         def messages(self) -> AsyncIterator[ModelStream]:
             async def items() -> AsyncIterator[ModelStream]:
                 yield HeldModel()
@@ -1985,6 +1993,14 @@ async def test_r94_native_projection_failure_joins_started_leaf_consumers(
             return held_projection(self.model.reasoning, "reasoning")
 
     class InstrumentedRun:
+        @property
+        def extensions(self):
+            return native.extensions
+
+        @property
+        def subgraphs(self):
+            return native.subgraphs
+
         async def interrupted(self) -> bool:
             return await native.interrupted()
 

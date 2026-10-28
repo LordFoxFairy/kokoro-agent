@@ -14,6 +14,24 @@
 
 后续设计门：scoped transformer与直接peer消费仍归既有swarm/execution，必须区分已声明直接peer和真正native task，不把所有子图提升为公开正文；最终身份双证保持。Command路由兼容尚未裁决：create_deep_agent的用户middleware全部位于原FilesystemMiddleware内层，已证仅追加本仓middleware不足以保留外层处理后路由。不得修改venv、全局monkeypatch、伪造active_agent或跳过文件处理。需评估带固定版本/许可证/退出路径的上游修复或最窄维护补丁，再实施生产修复；普通Agent、HTTP8.8及BFF/App消费者可独立推进，但Swarm未验收不得冒全链闭环。
 
+### Swarm Command 兼容落点（2026-10-28，候选依赖修复）
+
+主方核实并选择上游正式 `deepagents==0.6.7`，不维护本仓 Command monkeypatch、不追最新版本。官方 [PR3391](https://github.com/langchain-ai/deepagents/pull/3391)／fix `d92aef68f70a5e5277c43a50581e7895e682c417` 已由 [0.6.7](https://github.com/langchain-ai/deepagents/releases/tag/deepagents==0.6.7) 发布，release commit `bbeb869e2f9870ccdf93987e8bd0ad6ba2bef05c`。它在原同步／异步文件结果处理中保留 graph/goto；不声称保全部 Command 字段。许可证仍MIT、Python约束和六项直接依赖声明不变；发行还含未知扩展名base64读取修复与DeepAgentState导出，profile文件未变。官方wheel SHA256 `3518c1e5f4b9f6588ba39912b668b42b5c864b99a638e94c166d1c7176c7388e`；PyPI无provenance attestation，记录为供应链限制而非哈希替代证明。
+
+本片只更新pyproject精确pin、uv生成lock、原native_profile版本硬门与runtime provenance版本，保其他锁定版本、权限与插件拒绝规则。原生同步／异步父图handoff正控在0.6.6真实两项失败，后继必须在0.6.7以同一断言通过，并复核文件处理、profile／recipe、HITL与普通Agent。Swarm四投影和直接peer消费仍是独立未修项，不用依赖升级冒整链完成。无Schema、HTTP字段或旧历史写入。
+
+验证仅在独立候选虚拟环境，不改正常HTTP／worker或原0.6.6环境。正常激活需先确认没有旧recipe在途（含HITL暂停、待恢复与已冻结未终态Run）；旧recipe不重算、不假装兼容，按原摘要检查拒绝漂移。回退恢复源码＋lock＋native profile整套基线并用原环境，不单独降包；回退前同样检查新recipe未终态Run。新版本若不通过现行为门，候选不激活。此为既定Agent owner内的最窄已发行修复，不增加新模块/服务或自定义执行器。
+
+### Swarm 原生流接线（2026-10-28，候选已实施、未正常激活）
+
+保持官方runnable与SwarmState，不做router、agent包装或第二协议。`swarm.py`只为已编译声明peer校验原生`name`与固定`stream_transformers`配方；外层compile加官方ToolCallTransformer与scoped SubagentTransformer工厂，root无task声明，peer与其后代使用对应peer自己的原生工厂，不拼接所有peer或借第一peer声明。messages/subgraphs由SDK提供，现CustomTransformer继续沿原入口加入。未知配方／scope拒绝，不探私有闭包。
+
+使用SDK公开StreamTransformer扩展携带编译时不可变的root scope／声明peer集合；只作本地消费判定，不是网络状态或模型自报属性。`protocols.py`描述现原生extensions／subgraphs和直接子图视图。`pump_run`有Swarm声明时并发抽干root四投影及合法直接peer；验证path深度／父前缀／graph_name／节点名一致后，peer按同一公开Run进入现queue／drainer。peer内部task仍由原subagent消费者发布subagent事件，不递归提升peer.subgraphs；未知直接peer拒绝。两路都完成后才发哨兵，取消与持久失败沿原cancel-and-join清退，final原生输出＋同Run公开记录双证不改。
+
+实际SDK订阅约束：StreamChannel在同步`aiter()`时订阅，未订阅会丢事件；不是缓冲满才回压。root的subgraphs及每个run四投影先同步订阅，再启动消费者；收到tool即订阅output_deltas并仅传同一cursor。ModelStream的text/reasoning是可回放projection，保持现有权威终值读取。直接peer使用TaskGroup并发消费，避免等待前一peer结束才订阅下一peer首帧；其异常沿原运行失败路径，不把未知scope变成公开正文。持久写失败在唯一drainer原样传播，取消/退出仍join全部拥有的协程。测试替身与见证wrapper只补相同原生属性，不删除原断言。
+
+写区限制为现swarm.py、protocols.py、publish_agent_events.py与对应支持/行为回归；三文件已在recipe resource manifest，不新增helper或owner。验收含原final正控、异构peer子代理声明隔离、task不提升公开正文／final、往返handoff、HITL／checkpoint恢复、取消与持久失败清退、普通Agent回归。现已沿本节实施。原 final handoff 正控已转绿；真实 SDK 往返交接、异构子代理、审批后新图恢复、取消及持久失败已取得候选证据。正常部署和真实持久组合另验，未据此关闭产品展示。
+
 ## 2026-10-28 逐调用公开行动说明：生产与绑定设计门（源码已接线，未激活）
 
 用户要求以 Manus 的具体行动而非内部调用日志组织主线。Agent 保持唯一执行展示 owner：同一次模型 tool call 的模型可见 schema 增加可选保留字段 `_kokoro_action`，表达简短公开行动/对象，不含推理、秘密或成功断言；不是 provider description。使用官方 ModelRequest/ToolCallRequest override，不替换 mounted 工具、循环或远端 schema，不增加模型请求。保留键冲突/非对象/strict schema不扩展、不剥离原业务字段。

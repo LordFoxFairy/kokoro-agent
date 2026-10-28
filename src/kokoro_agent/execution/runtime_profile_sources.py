@@ -415,7 +415,7 @@ def production_manifest() -> SourceManifest:
             ("click", "8.4.2"),
             ("connectrpc", "0.12.1"),
             ("cryptography", "50.0.1"),
-            ("deepagents", "0.6.6"),
+            ("deepagents", "0.6.7"),
             ("distro", "1.9.0"),
             ("dockerfile-parse", "2.0.1"),
             ("docstring-parser", "0.18.0"),

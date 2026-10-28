@@ -1,3 +1,23 @@
+## 2026-10-28 Swarm 候选默认复验结果（未正常激活）
+
+停写452项输入的最终默认复跑：3151 passed、930 deselected、2882 warnings，195.44秒。此前架构例外与cast失败保留记录，精确导入约束和真实类型校验修正后本次通过。资源marker未运行，不代表真实Provider、正常页面或Manus验收；补充停写复核：452项输入无漂移；ruff check、366份格式、显式0.6.7解释器pyright、lock、contract、wheel/sdist打包及仓外安装contract/native registry/production manifest均通过。正常激活仍待，不把安装smoke当成真实模型执行。日志 `/tmp/kokoro-swarm-default-final2.log`，冻结清单 `/tmp/kokoro-swarm-final-inputs2.json`。
+
+## 2026-10-28 Swarm 主线投影已修复（候选，正常页面仍未激活）
+
+在精确DeepAgents0.6.7候选上，官方Swarm编译补齐原生四投影及不可变peer声明；只提升已声明直接peer，真实task继续原subagent通道。原本失败的最终答复正控现通过；新真实SDK验证alpha→beta→alpha、各自不同helper、子任务正文不升主线、最终身份唯一、checkpoint重放不重复、审批后新图恢复只执行一次、取消和持久失败清退。没有自建router/执行框架、改HTTP/Schema/旧历史或激活正常服务。
+
+候选验证：原final正控1通过；原invoke/factory/final组合193通过；新增4场景加原final共24通过；格式、ruff、显式候选解释器pyright0错。初版GenericFakeChatModel默认stream未带tool_calls，修为该SDK测试模型显式disable_streaming后，保持全部真实图/工具/终态断言；初版类型与测试wrapper补齐错误保留日志。只用InMemorySaver/FakeChat与离线模型，不称真实PG或付费模型链路。独立只读复核无确定P0–P2。首轮完整默认3149通过／2失败（架构规则误把公开SubagentTransformer导入当构造器、实际cast违反本仓零遮掩）；现移除cast，以真实recipe／callable／返回实例校验承接，架构只允许swarm.py精确导入公开SubagentTransformer，仍拒包导入／构造器／通配。原架构＋Swarm／final组合53通过；独审确认未放宽构造owner。完整串行复验继续，停写452项非文档输入已冻结，最终结果后补。
+
+前一依赖单片最终串行复验为3146通过／1原Swarm失败／930未选，输入无漂移；这关闭当次HTTP启动时限偶发失败的复验，不抹去首轮3145／2失败日志。该唯一Swarm失败本轮已修，不再将它记为未实施。
+
+## 2026-10-28 Swarm 文件 middleware 路由丢失：正式补丁候选
+
+选择上游精确DeepAgents0.6.7，不引入本仓Command补丁；pyproject、uv lock、native profile精确门与runtime provenance同步。其余锁定包版本保持，原环境仍0.6.6，隔离候选为0.6.7；正常HTTP/worker、数据库、旧recipe未改。设计、许可证、发行SHA及新旧在途Run的回退边界见TECHNICAL_DESIGN.md。
+
+同一最终sync/async官方父图handoff断言：HEAD归档源＋原0.6.6环境两项失败（未切换peer），隔离0.6.7两项通过；扩大原生SDK/profile/manifest共55通过。初版离线模型按共享历史AI数索引使beta输出空，改用本文件既有各peer独立模型后最终答复断言保留，并重跑旧版真实RED。锁校验、contract、wheel/sdist及仓外安装contract/profile/manifest smoke通过。首轮types误用全局Python产生3548项错误，显式candidate interpreter后剩新增测试lambda参数类型3项，现已补具名参数类型；最终复核另记。
+
+首轮完整默认3145通过／2失败／930资源marker未选；除原Swarm四投影正控外，新增观察到HTTP启动3秒时限失败，仍保日志、不放宽时限。此片只修文件middleware丢路由，未修root四投影与peer消费；不合并、不冒整条Agent链或正常页面完成。
+
 ## 2026-10-28 最终答复边界：候选实现，未激活
 
 普通单 Agent 在原生输出和同 Run 持久公开完成记录双证后绑定最终答复，原 terminal 事务重核并冻结；HTTP8.8 只增加可选公开身份，旧记录不回填、无 DDL。真实 native 纯文本/多步/空 final、HITL 重建恢复、return_direct、checkpoint 无新流均通过；真实 PostgreSQL 定向 12 项通过，涵盖绑定/usage/replay/取消及写失败回滚。ruff/format/pyright/lock/contract/build 通过。

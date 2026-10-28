@@ -2042,6 +2042,14 @@ async def test_terminal_supervisor_closes_factory_owned_s3_client_after_drain(
         def custom(self) -> AsyncIterable[object]:
             return self._delegate.custom
 
+        @property
+        def extensions(self):
+            return self._delegate.extensions
+
+        @property
+        def subgraphs(self):
+            return self._delegate.subgraphs
+
         async def interrupted(self) -> bool:
             return await self._delegate.interrupted()
 

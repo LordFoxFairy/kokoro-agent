@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 from langchain_core.messages import AIMessage
@@ -84,9 +85,34 @@ class SubagentRunStream(SubagentInfo, _RunProjections, Protocol):
     """递归子代理 run 流（AsyncSubagentRunStream）：身份 + 自带递归投影。"""
 
 
+SWARM_SCOPE_EXTENSION = "kokoro_swarm_scope"
+
+
+@dataclass(frozen=True)
+class SwarmPeerScope:
+    """Compile-time declaration, never inferred from model text or graph state."""
+
+    root_scope: tuple[str, ...]
+    peer_names: frozenset[str]
+
+
+class PeerRunStream(_RunProjections, Protocol):
+    """Official direct subgraph handle; native task children are not peers."""
+
+    @property
+    def path(self) -> tuple[str, ...]: ...
+    @property
+    def graph_name(self) -> str: ...
+
+
 @runtime_checkable
 class AgentRunStream(_RunProjections, Protocol):
     """顶层 v3 run 流（AsyncGraphRunStream）：投影 + 暂停查询 + async 上下文清退。"""
+
+    @property
+    def extensions(self) -> Mapping[str, object]: ...
+    @property
+    def subgraphs(self) -> AsyncIterable[PeerRunStream]: ...
 
     async def interrupted(self) -> bool: ...
     async def output(self) -> dict[str, Any] | None: ...

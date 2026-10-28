@@ -13,7 +13,7 @@ def test_production_manifest_has_real_resource_closures() -> None:
     for source in manifest.sources:
         descriptor = manifest.descriptor(source.source_id)
         assert descriptor["files"]
-    assert manifest.descriptor("native")["version"] == "0.6.6"
+    assert manifest.descriptor("native")["version"] == "0.6.7"
     assert manifest.dynamic_edges
     composition = next(
         source for source in manifest.sources if source.source_id == "composition"

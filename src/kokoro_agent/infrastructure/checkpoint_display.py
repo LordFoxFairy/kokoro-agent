@@ -12,6 +12,10 @@ from pydantic import TypeAdapter
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from kokoro_agent.application.run_display import RunDisplay, recover_display
+from kokoro_agent.application.native_activity_details import (
+    NATIVE_FILE_CODES,
+    frozen_native_tools,
+)
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.domain.run.models import ToolJournalRecord
 from kokoro_agent.execution.runtime_profile import canonical_json
@@ -121,38 +125,48 @@ async def read_run_display(
                         for event in events
                     )
                 )
-                if not need_skills and not has_mcp and not has_file:
+                has_native = any(
+                    event.get("display_code") in set(NATIVE_FILE_CODES.values())
+                    for event in events
+                )
+                if not need_skills and not has_mcp and not has_file and not has_native:
                     return result
-                await execute_sql(
-                    cur,
-                    f"SELECT COUNT(*) AS count, COALESCE(SUM(octet_length(result)+octet_length(name)+octet_length(tool_call_id)),0) AS bytes FROM {journal_table} WHERE run_id=%s",
-                    (request.run_id,),
-                )
-                journal_size = await fetch_one(cur)
-                if journal_size is None or journal_size["count"] > 128:
-                    raise ValueError("display journal budget exceeded")
-                budget.reserve(int(journal_size["bytes"]))
-                await execute_sql(
-                    cur,
-                    f"SELECT tool_call_id,name,status,is_error,result FROM {journal_table} WHERE run_id=%s ORDER BY tool_call_id LIMIT 129",
-                    (request.run_id,),
-                )
-                journal_rows = await fetch_all(cur)
-                records = {
-                    row["tool_call_id"]: ToolJournalRecord(
-                        name=row["name"],
-                        status=row["status"],
-                        is_error=row["is_error"],
-                        result=row["result"],
+                records: dict[str, ToolJournalRecord] = {}
+                if has_mcp or has_file:
+                    await execute_sql(
+                        cur,
+                        f"SELECT COUNT(*) AS count, COALESCE(SUM(octet_length(result)+octet_length(name)+octet_length(tool_call_id)),0) AS bytes FROM {journal_table} WHERE run_id=%s",
+                        (request.run_id,),
                     )
-                    for row in journal_rows
-                }
+                    journal_size = await fetch_one(cur)
+                    if journal_size is None or journal_size["count"] > 128:
+                        raise ValueError("display journal budget exceeded")
+                    budget.reserve(int(journal_size["bytes"]))
+                    await execute_sql(
+                        cur,
+                        f"SELECT tool_call_id,name,status,is_error,result FROM {journal_table} WHERE run_id=%s ORDER BY tool_call_id LIMIT 129",
+                        (request.run_id,),
+                    )
+                    journal_rows = await fetch_all(cur)
+                    records = {
+                        row["tool_call_id"]: ToolJournalRecord(
+                            name=row["name"],
+                            status=row["status"],
+                            is_error=row["is_error"],
+                            result=row["result"],
+                        )
+                        for row in journal_rows
+                    }
                 journal = {key: row.name for key, row in records.items()}
                 connections: tuple[str, ...] = ()
                 mcp_source_sha256: str | None = None
-                if has_mcp and any(
-                    row.name in {"mcp_call", "mcp_describe_tool", "mcp_list_tools"}
-                    for row in records.values()
+                native_tools: tuple[str, ...] = ()
+                if has_native or (
+                    has_mcp
+                    and any(
+                        row.name in {"mcp_call", "mcp_describe_tool", "mcp_list_tools"}
+                        for row in records.values()
+                    )
                 ):
                     await execute_sql(
                         cur,
@@ -195,6 +209,7 @@ async def read_run_display(
                         peers = TypeAdapter(list[dict[str, Any]]).validate_python(
                             feature.get("agents"), strict=True
                         )
+                        native_tools = frozen_native_tools(peers) if has_native else ()
                         peer_sets: list[set[str]] = []
                         for peer in peers:
                             refs = TypeAdapter(list[dict[str, str]]).validate_python(
@@ -323,19 +338,24 @@ async def read_run_display(
                                 for item in candidates
                                 if isinstance(item, BaseMessage)
                             )
-                if (has_mcp and connections) or has_file:
-                    # Raw call-ID tokens select candidates only; the locked native
-                    # serializer and projector prove exact typed identity afterwards.
+                if (has_mcp and connections) or has_file or native_tools:
+                    # Native serializer tokens select candidates, not facts. Match
+                    # encoded whole names rather than substrings in prose; typed
+                    # call/result and opaque activity identity still prove each row.
+                    native_tokens = [
+                        saver.serde.dumps_typed(name)[1] for name in native_tools
+                    ]
                     await execute_sql(
                         cur,
                         f"""SELECT DISTINCT c.checkpoint_id FROM {checkpoints} c
                       JOIN {writes} w ON w.thread_id=c.thread_id AND w.checkpoint_ns=c.checkpoint_ns AND w.checkpoint_id=c.checkpoint_id
                       WHERE c.thread_id=%s AND c.checkpoint_ns='' AND c.metadata->>'kokoro_run_id'=%s AND w.channel='messages'
-                      AND EXISTS (SELECT 1 FROM {journal_table} j WHERE j.run_id=%s AND ((j.name IN ('mcp_call','mcp_describe_tool','mcp_list_tools') AND %s) OR (j.name='read_file' AND %s)) AND position(convert_to(j.tool_call_id,'UTF8') in w.blob)>0)
+                      AND ((w.type='msgpack' AND EXISTS (SELECT 1 FROM unnest(%s::bytea[]) AS candidate(token) WHERE position(candidate.token in w.blob)>0)) OR EXISTS (SELECT 1 FROM {journal_table} j WHERE j.run_id=%s AND ((j.name IN ('mcp_call','mcp_describe_tool','mcp_list_tools') AND %s) OR (j.name='read_file' AND %s)) AND position(convert_to(j.tool_call_id,'UTF8') in w.blob)>0))
                       ORDER BY c.checkpoint_id LIMIT 33""",
                         (
                             scope.scoped_thread_id,
                             request.run_id,
+                            native_tokens,
                             request.run_id,
                             bool(has_mcp and connections),
                             has_file,
@@ -382,4 +402,5 @@ async def read_run_display(
                     journal_records=records,
                     mcp_connections=connections,
                     mcp_source_sha256=mcp_source_sha256,
+                    native_tools=native_tools,
                 )

@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from mcp.types import CallToolResult
+from kokoro_agent.application.native_activity_details import native_activity_details
 from kokoro_agent.domain.run.models import ToolJournalRecord
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from typing import Self
@@ -107,6 +108,7 @@ def recover_display(
     journal_records: Mapping[str, ToolJournalRecord] | None = None,
     mcp_connections: tuple[str, ...] = (),
     mcp_source_sha256: str | None = None,
+    native_tools: tuple[str, ...] = (),
 ) -> RunDisplay:
     """Intersect native facts with original ready/activity and real journal IDs.
 
@@ -217,7 +219,12 @@ def recover_display(
         display_skills=list(skills.values()),
         tool_paths=list(tools.values()),
         activity_details=_activity_details(
-            scope, activities, messages, journal_records or {}, mcp_connections
+            scope,
+            activities,
+            messages,
+            journal_records or {},
+            mcp_connections,
+            native_tools,
         ),
         tool_facts=_mcp_facts(
             scope,
@@ -352,6 +359,7 @@ def _activity_details(
     messages: Sequence[BaseMessage],
     journal: Mapping[str, ToolJournalRecord],
     connections: tuple[str, ...],
+    native_tools: tuple[str, ...] = (),
 ) -> list[ActivityDetail]:
     codes = {
         "mcp_call": "tool.mcp.call",
@@ -465,8 +473,14 @@ def _activity_details(
             values = details[activity_id].model_dump(mode="json")
             values["tool_description"] = description.model_dump(mode="json")
             details[activity_id] = ActivityDetail.model_validate(values)
-    # File targets remain in original display_detail/tool_paths; category alone
-    # does not establish the actual native function name (write_file vs edit_file).
+    details.update(
+        {
+            item.activity_id: item
+            for item in native_activity_details(
+                scope, activities, messages, native_tools
+            )
+        }
+    )
     return [details[key] for key in activities if key in details][:128]
 
 

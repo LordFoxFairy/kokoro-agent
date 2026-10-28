@@ -808,3 +808,176 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
                 "truncated": False,
                 "redacted": False,
             }
+
+
+@pytest.mark.asyncio
+async def test_native_file_loop_details_without_journal_survive_reopen_and_stay_read_only(
+    run_chat_schema: str,
+    run_chat_database_url: str,
+    chat_repository: PostgresChatRepository,
+) -> None:
+    """Actual pinned SDK file tools + native PG saver; the model is an offline script."""
+    import deepagents
+    from langchain_core.messages import AIMessage, HumanMessage
+    from kokoro_agent.execution.runtime_profile import canonical_json
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+    from support.local_fake import LocalFakeChatModel
+    from kokoro_agent.tools.toolset import Toolset
+
+    run = request("native-file-details")
+    scope = RunScope.of(run)
+    operations = [
+        ("write_file", {"file_path": "/notes.md", "content": "Before"}),
+        ("ls", {"path": "/"}),
+        (
+            "edit_file",
+            {"file_path": "/notes.md", "old_string": "Before", "new_string": "After"},
+        ),
+        ("read_file", {"file_path": "/notes.md"}),
+        ("glob", {"pattern": "*.md", "path": "/"}),
+        ("grep", {"pattern": "After", "path": "/", "output_mode": "content"}),
+    ]
+    script = [
+        AIMessage(
+            id=f"model-{index}",
+            content="",
+            tool_calls=[
+                {
+                    "id": f"call-{index}",
+                    "name": name,
+                    "args": args,
+                }
+            ],
+        )
+        for index, (name, args) in enumerate(operations)
+    ]
+    script.append(AIMessage(id="final", content="Done"))
+    recipe_value: dict[str, Any] = {
+        "domain_tag": "kokoro-agent:assembly-recipe:1",
+        "feature": {
+            "agents": [
+                {
+                    "mcp": [],
+                    "backend": {"kind": "state"},
+                    "permissions": {"approval_tools": [], "review_tools": []},
+                    "pause_tools": [],
+                }
+            ]
+        },
+    }
+    recipe = canonical_json(recipe_value)
+    async with connect_pg(run_chat_database_url) as conn, conn.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"INSERT INTO {qualified(run_chat_schema, 'kokoro_agent_run')} (run_id,tenant_id,request_json,assembly_recipe_bytes,assembly_recipe_fingerprint) VALUES (%s,%s,%s,%s,%s)",
+            (
+                run.run_id,
+                run.execution_identity.tenant_ref,
+                run.model_dump_json(),
+                recipe,
+                hashlib.sha256(recipe).hexdigest(),
+            ),
+        )
+    # Unrelated journaled tools do not participate in native file previews.
+    async with connect_pg(run_chat_database_url) as conn, conn.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"INSERT INTO {qualified(run_chat_schema, 'kokoro_agent_tool_journal')} (run_id,tool_call_id,name,status,is_error,result) SELECT %s, 'unrelated-' || n, 'other_tool', 'succeeded', false, 'Other result' FROM generate_series(1,129) n",
+            (run.run_id,),
+        )
+    config: Any = {
+        "configurable": {"thread_id": scope.scoped_thread_id, "checkpoint_ns": ""},
+        "metadata": {"kokoro_run_id": run.run_id},
+    }
+    async with make_checkpointer(
+        CheckpointSettings(
+            database_url=run_chat_database_url, schema_name=run_chat_schema
+        )
+    ) as saver:
+        create: Any = getattr(deepagents, "create_deep_agent")
+        graph = create(model=LocalFakeChatModel.with_script(script), checkpointer=saver)
+        codes = dict(Toolset.from_tools([]).mounted_display_codes(graph))
+        await graph.ainvoke(
+            {"messages": [HumanMessage(content="Inspect fixture files")]}, config
+        )
+    for index, (name, _) in enumerate(operations):
+        code = codes.get(name, "tool.execution")
+        for offset, payload in enumerate(
+            [
+                ToolInvokedPayload(
+                    segment_id=f"call-{index}",
+                    tool_id=f"call-{index}",
+                    name=name,
+                    args={},
+                ),
+                ToolReturnedPayload(
+                    segment_id=f"call-{index}",
+                    tool_id=f"call-{index}",
+                    name=name,
+                    result="",
+                    is_error=False,
+                ),
+            ]
+        ):
+            projection = project_chat_fact(
+                tenant_id=run.execution_identity.tenant_ref,
+                namespace=scope.namespace,
+                session_id=run.session_id,
+                run_id=run.run_id,
+                source_index=index * 2 + offset,
+                created_at=datetime.now(UTC),
+                payload=payload,
+                tool_display_code=code,
+            )
+            assert projection is not None
+            await chat_repository.append(projection)
+    async with make_checkpointer(
+        CheckpointSettings(
+            database_url=run_chat_database_url, schema_name=run_chat_schema
+        )
+    ) as saver:
+        for index in range(40):
+            unrelated: Any = {
+                "source": "loop",
+                "step": 100 + index,
+                "parents": {},
+                "kokoro_run_id": run.run_id,
+            }
+            config = await saver.aput(config, empty_checkpoint(), unrelated, {})
+            await saver.aput_writes(
+                config,
+                [
+                    (
+                        "messages",
+                        [
+                            AIMessage(
+                                id=f"unrelated-{index}",
+                                content="Details about unrelated tools and ls in prose",
+                            )
+                        ],
+                    )
+                ],
+                task_id="other-model",
+            )
+    before = await _snapshot(run_chat_database_url, run_chat_schema)
+    first = await read_run_display(run_chat_database_url, run_chat_schema, run)
+    assert [item.tool_name for item in first.activity_details] == [
+        name for name, _ in operations
+    ]
+    for item, (_, args) in zip(first.activity_details, operations, strict=True):
+        assert (
+            item.input_preview is not None
+            and json.loads(item.input_preview.text) == args
+        )
+        assert item.output_preview is not None
+    assert first.activity_details[3].output_preview is not None
+    assert "After" in first.activity_details[3].output_preview.text
+    assert first.activity_details[1].output_preview is not None
+    assert "/notes.md" in first.activity_details[1].output_preview.text
+    assert await read_run_display(run_chat_database_url, run_chat_schema, run) == first
+    assert await _snapshot(run_chat_database_url, run_chat_schema) == before
+    # Same thread has no right to use this Run's calls under another Run identity.
+    foreign = run.model_copy(update={"run_id": "foreign-run"})
+    assert (
+        await read_run_display(run_chat_database_url, run_chat_schema, foreign)
+    ).activity_details == []

@@ -22,3 +22,5 @@ operator boundary，负责配置映射和调用这里的 DDL 实现。
 - `checkpoint_display.py`：同owner RR READ ONLY的有界native exact tuple展示恢复，先核共享32相关locator/8MiB全native输入；Skill exact tuple与journal-token筛选后的native typed pending独立恢复，原recipe/public selector及旧版本失败事实只作display overlay，不重建Delta、不执行graph、不改旧Chat。
 
 - 私有工具预览沿 `application/run_display.py` 与 `domain/chat/tool_display_preview.py`：原Run typed call/journal/frozen selection只读交集，prepared文本去binding ID、输入/输出有界过滤；不变更Chat/SSE或写入历史。
+
+- 原生文件详情由 `application/native_activity_details.py` 投影：冻结StateBackend及无人工改参/结果替换，原Run typed call/result精确配对；checkpoint reader按原生编码候选筛选，不读取当前文件系统、不为免journal工具新增journal。

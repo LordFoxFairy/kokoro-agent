@@ -204,3 +204,13 @@ Redis worker 的 `input`、`run.resume/run.cancel` 是内部 envelope。generate
   RunRepository 与 checkpoint 是当前 worker 执行入口的必要基础设施，不伪装成可选依赖。
 - System ModelResolver 已在 worker/AgentFactory 接线，使用 trusted tenant/feature 和可选模型标签；
   实例化前验证可执行路由，无可用路由或凭据时失败关闭。确定性 fake 仅在 tests；live System 联调证据见 ACCEPTANCE。
+
+
+### 原生文件动作详情（2026-10-28）
+
+既有私有 RunDisplay.activity_details 承接 ls/read_file/glob/grep/write_file/edit_file，HTTP、AG-UI、Schema 不变。
+只读取原 Run 的 native checkpoint writes；冻结配方必须证明所有可能 peer 使用 StateBackend，并排除 approval_tools、pause_tools、review_tools 中可能被人工改写的调用。字段缺失不当作空政策；其它 backend 与审批修订来源未证时省略详情，不使用当前文件或模型另行解释历史。
+
+投影绑定 typed AIMessage/ToolMessage、唯一 call ID、原 scope 与 opaque activity ID、实际类别和终态；冲突来源/参数/结果不择首尾。输入仅取该原生工具具名参数，输出仅取原文本结果，沿原有私密过滤、2048/4096字节预览和响应总预算。目录不伪装文件 target；文件目标只承接原活动已经证明的路径。候选以锁定原生序列化名称token筛选，再以typed内容证明，不解码自制Delta；共享32 locator/8MiB/5秒预算保持，纯native路径不加载无关journal。
+
+验证使用实际锁定DeepAgents文件工具及PostgreSQL saver、离线脚本模型；六工具真实返回、重开只读、40个无关checkpoint与129条无关journal、身份/参数冲突及人工策略排除分别覆盖。正常环境是否激活、实际浏览器证据归Root当前事实，不以本说明代替页面验收。

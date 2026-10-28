@@ -657,6 +657,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 "x-kokoro-service",
                 *_JWKS_IDENTITY_HEADERS,
             )
+            if name in self.headers
         }
 
     def _send_representation(

@@ -20,3 +20,5 @@
 application port 的具体技术 adapter，以及 canonical schema。`application/schema.py` 是 schema apply 的稳定
 operator boundary，负责配置映射和调用这里的 DDL 实现。
 - `checkpoint_display.py`：同owner RR READ ONLY的有界native exact tuple展示恢复，先核共享32相关locator/8MiB全native输入；Skill exact tuple与journal-token筛选后的native typed pending独立恢复，原recipe/public selector及旧版本失败事实只作display overlay，不重建Delta、不执行graph、不改旧Chat。
+
+- 私有工具预览沿 `application/run_display.py` 与 `domain/chat/tool_display_preview.py`：原Run typed call/journal/frozen selection只读交集，prepared文本去binding ID、输入/输出有界过滤；不变更Chat/SSE或写入历史。

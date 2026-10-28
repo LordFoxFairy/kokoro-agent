@@ -626,7 +626,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     document = read_contract_document(source)
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
-    http83_tool_facts_parent_bytes(document)
+    http84_activity_details_parent_bytes(document)
     expected = failure_model_bytes(document, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
@@ -657,7 +657,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.4.0",
+        "version": "8.5.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -1090,8 +1090,159 @@ _TOOL_FACTS = {
 }
 
 
+_ACTIVITY_DETAILS = {
+    "type": "array",
+    "maxItems": 128,
+    "x-kokoro-unique-by": "activity_id",
+    "items": {
+        "type": "object",
+        "required": ["activity_id", "tool_name"],
+        "properties": {
+            "activity_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^act_[0-9a-f]{64}(?![\\s\\S])",
+            },
+            "tool_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "x-kokoro-utf8-byte-limit": 480,
+                "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+            },
+            "target": {
+                "type": "object",
+                "required": ["kind", "name"],
+                "properties": {
+                    "kind": {"type": "string", "enum": ["file", "mcp_tool"]},
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120,
+                        "x-kokoro-utf8-byte-limit": 480,
+                        "x-kokoro-unicode-domain": "NFC "
+                        "Unicode "
+                        "scalars; "
+                        "no Cc, Cf "
+                        "or Cs",
+                    },
+                    "virtual_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "x-kokoro-utf8-byte-limit": 4096,
+                        "x-kokoro-unicode-domain": "NFC "
+                        "Unicode "
+                        "scalars; "
+                        "no "
+                        "Cc, "
+                        "Cf "
+                        "or "
+                        "Cs",
+                        "description": "Validated "
+                        "absolute "
+                        "virtual "
+                        "backend path; "
+                        "never a host "
+                        "path, URL, "
+                        "secret or "
+                        "unproven raw "
+                        "argument.",
+                    },
+                },
+                "additionalProperties": False,
+                "allOf": [
+                    {
+                        "if": {"properties": {"kind": {"const": "file"}}},
+                        "then": {
+                            "properties": {
+                                "name": {"pattern": "^(?!\\.{1,2}$)[^/\\\\:]+$"}
+                            }
+                        },
+                    },
+                    {
+                        "if": {"properties": {"kind": {"const": "mcp_tool"}}},
+                        "then": {"not": {"required": ["virtual_path"]}},
+                    },
+                ],
+            },
+            "input_preview": {
+                "type": "object",
+                "required": ["text", "truncated", "redacted"],
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "x-kokoro-utf8-byte-limit": 2048,
+                    },
+                    "truncated": {"type": "boolean"},
+                    "redacted": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+            "output_preview": {
+                "type": "object",
+                "required": ["text", "truncated", "redacted"],
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "x-kokoro-utf8-byte-limit": 4096,
+                    },
+                    "truncated": {"type": "boolean"},
+                    "redacted": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": False,
+    },
+    "description": "Private same-Run evidence-bound tool details only; missing fields remain unknown. "
+    "Filtered bounded text is not a universal secret-free guarantee. Never Share, "
+    "execution authority, HTML, autolinks or instructions.",
+}
+
+
+def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only private details and prove every byte of the issued HTTP8.4."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.5.0":
+        raise ValueError("private details require HTTP 8.5.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    display = _object(schemas.get("RunDisplay"), source="RunDisplay")
+    properties = _object(display.get("properties"), source="RunDisplay properties")
+    if properties.pop("activity_details", None) != _ACTIVITY_DETAILS or display.get(
+        "required"
+    ) != ["run_id", "display_skills", "tool_paths", "tool_facts", "activity_details"]:
+        raise ValueError("private details delta differs")
+    display["properties"] = properties
+    display["required"] = ["run_id", "display_skills", "tool_paths", "tool_facts"]
+    schemas["RunDisplay"] = display
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.4.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "239219e5a80427a74f8d89363c5a7a4fe2753f99c6b469b02bab7fba9ba44f52"
+    ):
+        raise ValueError("complete HTTP8.4 private details parent differs")
+    return raw
+
+
 def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact historical MCP display delta; prove all HTTP8.3 bytes."""
+    if _object(document.get("info"), source="info").get("version") == "8.5.0":
+        document = _object(
+            json.loads(http84_activity_details_parent_bytes(document)),
+            source="HTTP8.4 parent",
+        )
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.4.0":
@@ -1125,7 +1276,10 @@ def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the issued display nodes, then prove every HTTP8.2 byte."""
-    if _object(document.get("info"), source="info").get("version") == "8.4.0":
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.4.0",
+        "8.5.0",
+    }:
         document = _object(
             json.loads(http83_tool_facts_parent_bytes(document)),
             source="HTTP8.3 tool facts parent",
@@ -1202,6 +1356,7 @@ def _display_parent(document: dict[str, object]) -> dict[str, object]:
     if _object(document.get("info"), source="info").get("version") in {
         "8.3.0",
         "8.4.0",
+        "8.5.0",
     }:
         return _object(
             json.loads(http82_display_parent_bytes(document)),

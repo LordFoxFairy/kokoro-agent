@@ -97,7 +97,7 @@ def validate_http_provenance(root: Path, provenance: dict[str, object]) -> None:
     record = _http_contract_object(
         provenance.get("http_contract"), source="HTTP provenance"
     )
-    if record.get("version") != "8.4.0" or record.get("path") != OPENAPI_RELATIVE:
+    if record.get("version") != "8.5.0" or record.get("path") != OPENAPI_RELATIVE:
         raise ValueError("HTTP direct provenance identity is invalid")
     expected = hashlib.sha256((root / OPENAPI_RELATIVE).read_bytes()).hexdigest()
     if record.get("sha256") != expected:

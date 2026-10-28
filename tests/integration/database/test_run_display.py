@@ -639,3 +639,145 @@ async def test_late_native_read_file_checkpoint_recovers_exact_skill_path_not_me
     assert [item.name for item in result.display_skills] == ["actual-native"]
     assert result.tool_facts == []
     assert await _snapshot(run_chat_database_url, run_chat_schema) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ["running", "terminal", "discover", "foreign_run", "wrong_name", "secret_output"],
+)
+async def test_private_details_read_exact_native_call_and_journal_without_writes(
+    run_chat_schema: str,
+    run_chat_database_url: str,
+    chat_repository: PostgresChatRepository,
+    case: str,
+) -> None:
+    from langchain_core.messages import AIMessage
+    from kokoro_agent.execution.runtime_profile import canonical_json
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    run = request("private-display-" + case)
+    scope = RunScope.of(run)
+    name = "mcp_list_tools" if case == "discover" else "mcp_call"
+    args: dict[str, Any] = (
+        {}
+        if case == "discover"
+        else {
+            "server": "connection",
+            "tool": "query",
+            "arguments": {
+                "repository": "owner/repo",
+                "Authorization": "Bearer OMIT_ME",
+            },
+        }
+    )
+    projection = project_chat_fact(
+        tenant_id=run.execution_identity.tenant_ref,
+        namespace=scope.namespace,
+        session_id=run.session_id,
+        run_id=run.run_id,
+        source_index=0,
+        created_at=datetime.now(UTC),
+        payload=ToolInvokedPayload(
+            segment_id="call", tool_id="call", name=name, args={}
+        ),
+        tool_display_code="tool.mcp.discover"
+        if case == "discover"
+        else "tool.mcp.call",
+    )
+    assert projection is not None
+    await chat_repository.append(projection)
+    recipe = canonical_json(
+        {
+            "domain_tag": "kokoro-agent:assembly-recipe:1",
+            "feature": {"agents": [{"mcp": [{"connection_id": "connection"}]}]},
+        }
+    )
+    result = (
+        "connection/query — Available tools"
+        if case == "discover"
+        else json.dumps(
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Bearer OMIT_ME"
+                        if case == "secret_output"
+                        else "Actual result",
+                    }
+                ],
+                "isError": False,
+            }
+        )
+    )
+    async with connect_pg(run_chat_database_url) as conn, conn.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"INSERT INTO {qualified(run_chat_schema, 'kokoro_agent_run')} (run_id,tenant_id,request_json,assembly_recipe_bytes,assembly_recipe_fingerprint) VALUES (%s,%s,%s,%s,%s)",
+            (
+                run.run_id,
+                run.execution_identity.tenant_ref,
+                run.model_dump_json(),
+                recipe,
+                hashlib.sha256(recipe).hexdigest(),
+            ),
+        )
+        await execute_sql(
+            cur,
+            f"INSERT INTO {qualified(run_chat_schema, 'kokoro_agent_tool_journal')} (run_id,tool_call_id,name,status,is_error,result) VALUES (%s,%s,%s,%s,%s,%s)",
+            (
+                run.run_id,
+                "call",
+                "other_tool" if case == "wrong_name" else name,
+                "started" if case == "running" else "succeeded",
+                False,
+                result,
+            ),
+        )
+    config: Any = {
+        "configurable": {"thread_id": scope.scoped_thread_id, "checkpoint_ns": ""}
+    }
+    async with make_checkpointer(
+        CheckpointSettings(
+            database_url=run_chat_database_url, schema_name=run_chat_schema
+        )
+    ) as saver:
+        metadata: Any = {
+            "source": "loop",
+            "step": 0,
+            "parents": {},
+            "kokoro_run_id": "foreign" if case == "foreign_run" else run.run_id,
+        }
+        config = await saver.aput(config, empty_checkpoint(), metadata, {})
+        await saver.aput_writes(
+            config,
+            [
+                (
+                    "messages",
+                    [
+                        AIMessage(
+                            id="native",
+                            content="",
+                            tool_calls=[{"id": "call", "name": name, "args": args}],
+                        )
+                    ],
+                )
+            ],
+            task_id="tool-call",
+        )
+    before = await _snapshot(run_chat_database_url, run_chat_schema)
+    response = await read_run_display(run_chat_database_url, run_chat_schema, run)
+    assert await _snapshot(run_chat_database_url, run_chat_schema) == before
+    details = response.model_dump(mode="json")["activity_details"]
+    assert "OMIT_ME" not in json.dumps(details)
+    if case in {"foreign_run", "wrong_name"}:
+        assert details == []
+    else:
+        assert len(details) == 1 and details[0]["tool_name"] == name
+        assert "input_preview" in details[0]
+        if case in {"running", "secret_output"}:
+            assert "output_preview" not in details[0]
+        else:
+            assert (
+                "Available tools" if case == "discover" else "Actual result"
+            ) in details[0]["output_preview"]["text"]

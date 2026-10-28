@@ -151,9 +151,7 @@ async def read_run_display(
                 connections: tuple[str, ...] = ()
                 mcp_source_sha256: str | None = None
                 if has_mcp and any(
-                    row.name in {"mcp_call", "mcp_describe_tool"}
-                    and row.status == "succeeded"
-                    and not row.is_error
+                    row.name in {"mcp_call", "mcp_describe_tool", "mcp_list_tools"}
                     for row in records.values()
                 ):
                     await execute_sql(
@@ -333,7 +331,7 @@ async def read_run_display(
                         f"""SELECT DISTINCT c.checkpoint_id FROM {checkpoints} c
                       JOIN {writes} w ON w.thread_id=c.thread_id AND w.checkpoint_ns=c.checkpoint_ns AND w.checkpoint_id=c.checkpoint_id
                       WHERE c.thread_id=%s AND c.checkpoint_ns='' AND c.metadata->>'kokoro_run_id'=%s AND w.channel='messages'
-                      AND EXISTS (SELECT 1 FROM {journal_table} j WHERE j.run_id=%s AND ((j.name IN ('mcp_call','mcp_describe_tool') AND %s) OR (j.name='read_file' AND %s)) AND position(convert_to(j.tool_call_id,'UTF8') in w.blob)>0)
+                      AND EXISTS (SELECT 1 FROM {journal_table} j WHERE j.run_id=%s AND ((j.name IN ('mcp_call','mcp_describe_tool','mcp_list_tools') AND %s) OR (j.name='read_file' AND %s)) AND position(convert_to(j.tool_call_id,'UTF8') in w.blob)>0)
                       ORDER BY c.checkpoint_id LIMIT 33""",
                         (
                             scope.scoped_thread_id,

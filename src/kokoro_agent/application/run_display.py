@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -18,6 +19,16 @@ from kokoro_agent.domain.chat.projection import (
     ToolDisplayDetail,
     safe_progress_id,
     safe_virtual_path,
+)
+
+
+from kokoro_agent.domain.chat.tool_display_preview import (
+    ActivityDetail,
+    ToolPreview,
+    clip_text,
+    mcp_output,
+    preparation_output,
+    preview,
 )
 
 
@@ -69,10 +80,18 @@ class RunDisplay(BaseModel):
         default_factory=lambda: list[ToolFact](), max_length=128
     )
 
+    activity_details: list[ActivityDetail] = Field(
+        default_factory=lambda: list[ActivityDetail](), max_length=128
+    )
+
     @model_validator(mode="after")
     def unique_facts(self) -> Self:
         if len({fact.activity_id for fact in self.tool_facts}) != len(self.tool_facts):
             raise ValueError("duplicate tool display fact")
+        if len({item.activity_id for item in self.activity_details}) != len(
+            self.activity_details
+        ):
+            raise ValueError("duplicate private activity detail")
         return self
 
 
@@ -192,10 +211,13 @@ def recover_display(
                 if activity_id in tools and tools[activity_id] != fact:
                     raise ValueError("conflicting native tool path")
                 tools[activity_id] = fact
-    return RunDisplay(
+    result = RunDisplay(
         run_id=scope[3],
         display_skills=list(skills.values()),
         tool_paths=list(tools.values()),
+        activity_details=_activity_details(
+            scope, activities, messages, journal_records or {}, mcp_connections
+        ),
         tool_facts=_mcp_facts(
             scope,
             activities,
@@ -205,6 +227,8 @@ def recover_display(
             mcp_source_sha256,
         ),
     )
+
+    return _fit_display(result)
 
 
 def _mcp_facts(
@@ -319,3 +343,131 @@ def _mcp_facts(
         if len(values) > 1:
             facts[activity_id] = ToolFact.model_validate(values)
     return [facts[activity_id] for activity_id in activities if activity_id in facts]
+
+
+def _activity_details(
+    scope: tuple[str, str, str, str],
+    activities: Mapping[str, Mapping[str, Any]],
+    messages: Sequence[BaseMessage],
+    journal: Mapping[str, ToolJournalRecord],
+    connections: tuple[str, ...],
+) -> list[ActivityDetail]:
+    codes = {
+        "mcp_call": "tool.mcp.call",
+        "mcp_describe_tool": "tool.mcp.describe",
+        "mcp_list_tools": "tool.mcp.discover",
+    }
+    calls: dict[str, tuple[str, dict[str, Any]]] = {}
+    conflicts: set[str] = set()
+    for message in messages:
+        if not isinstance(message, AIMessage) or not message.id:
+            continue
+        for call in message.tool_calls:
+            call_id = call.get("id")
+            if (
+                not call_id
+                or call_id not in journal
+                or journal[call_id].name != call["name"]
+            ):
+                continue
+            candidate = (call["name"], call["args"])
+            if call_id in calls and calls[call_id] != candidate:
+                conflicts.add(call_id)
+            calls[call_id] = candidate
+    details: dict[str, ActivityDetail] = {}
+    for call_id, (name, args) in calls.items():
+        if (
+            call_id in conflicts
+            or name not in codes
+            or not connections
+            or journal[call_id].status not in {"started", "succeeded", "failed"}
+        ):
+            continue
+        activity_id = "act_" + safe_progress_id(
+            "tool-activity", *scope, call_id, call_id
+        )
+        event = activities.get(activity_id)
+        if event is None or event.get("display_code") != codes[name]:
+            continue
+        target: ToolDisplayDetail | None = None
+        if name == "mcp_list_tools":
+            if args:
+                continue
+            input_value: object = {}
+        else:
+            if (
+                args.get("server") not in connections
+                or type(args.get("tool")) is not str
+            ):
+                continue
+            try:
+                target = ToolDisplayDetail(kind="mcp_tool", name=args["tool"])
+            except ValueError:
+                continue
+            input_value = (
+                args.get("arguments") if name == "mcp_call" else {"tool": args["tool"]}
+            )
+            if not isinstance(input_value, dict):
+                continue
+        values: dict[str, Any] = {"activity_id": activity_id, "tool_name": name}
+        if target is not None:
+            values["target"] = target
+        input_preview = preview(
+            TypeAdapter(dict[str, Any]).validate_python(input_value, strict=True),
+            limit=2048,
+        )
+        if input_preview is not None:
+            values["input_preview"] = input_preview
+        row = journal[call_id]
+        if row.status in {"succeeded", "failed"}:
+            output = (
+                mcp_output(row.result)
+                if name == "mcp_call"
+                else (
+                    preparation_output(
+                        row.result,
+                        name=name,
+                        connections=connections,
+                        server=args.get("server"),
+                        tool=args.get("tool"),
+                    )
+                    if row.status == "succeeded"
+                    and not row.is_error
+                    and not row.result.startswith("error:")
+                    else None
+                )
+            )
+            if output is not None:
+                values["output_preview"] = output
+        details[activity_id] = ActivityDetail.model_validate(values)
+    # File targets remain in original display_detail/tool_paths; category alone
+    # does not establish the actual native function name (write_file vs edit_file).
+    return [details[key] for key in activities if key in details][:128]
+
+
+def _fit_display(value: RunDisplay) -> RunDisplay:
+    # Leave room for both HTTP envelopes; count actual JSON escapes, not raw text.
+    def size() -> int:
+        return len(
+            json.dumps(value.model_dump(mode="json"), ensure_ascii=False).encode()
+        )
+
+    if size() <= 1000000:
+        return value
+    details = list(value.activity_details)
+    for index in range(len(details) - 1, -1, -1):
+        for field in ("output_preview", "input_preview"):
+            old: ToolPreview | None = getattr(details[index], field)
+            if old is None:
+                continue
+            values = details[index].model_dump(mode="json")
+            values[field] = {
+                "text": clip_text(old.text, 128),
+                "truncated": True,
+                "redacted": old.redacted,
+            }
+            details[index] = ActivityDetail.model_validate(values)
+            value = value.model_copy(update={"activity_details": details})
+            if size() <= 1000000:
+                return value
+    return value  # Original HTTP total budget still rejects an oversized base.

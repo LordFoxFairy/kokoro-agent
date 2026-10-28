@@ -1,3 +1,15 @@
+## 2026-10-28 HTTP8.5 私有工具详情（Root 已批准；候选）
+
+复用本人已授权 Run 的现有 GET `/v1/runs/{run_id}/display`，仅增加 `activity_details`；不改 Chat/SSE、worker执行、数据库或授权。每项通过原 Run activity、typed AIMessage tool-call、journal 与 frozen selection 精确绑定；未知来源不输出。运行中只输出有证据的输入，terminal journal 才输出结果；旧 tool_facts/失败证明/首帧 detail 和活动顺序不变。GET只读，不补历史、不查询当前连接器目录、不生成连接器名。文件仅承接已证明的安全 virtual target。
+
+严格 DTO 为 activity_id、tool_name、可选 target（复用原ToolDisplayDetail安全域）、input_preview/output_preview。preview严格为 text/truncated/redacted；输入最多2048 UTF-8字节，输出4096；activity_details最多128且ID唯一。纯文本/代码展示，不执行、不autolink、不作为指令，不进入Share/公开快照。缺证缺省，不伪造正常元数据。原5秒、32locator、8MiB输入、1MiB完整JSON响应预算保持；预览按稳定顺序在序列化预算内缩短并标truncated。
+
+本次产品裁决允许本人Run有限参数/结果正文预览；结构化敏感键删除，文本疑似秘密、凭据、内部host路径/配置或traceback时整块省略。只投影模型参数，不取runtime注入/transport material/env/reasoning；MCP仅text及structuredContent，binary/resource/metadata不公开。深度6、每容器32项、总节点128，JSON反序列化先作深度/字节预检，重复键/非法Unicode拒绝。generic redaction是受控私有公开策略，不是任意文本不含秘密的证明；未知格式/编码秘密仍有残余风险。缺少可显示内容时保缺省，不把省略声称空结果。
+
+discover/describe仅按现正式wrapper格式投影：discover逐行核冻结connection前缀，去掉connection ID后保selector/description；describe核本调用exact server/tool首行，去ID后保说明与解析后的input_schema，结构敏感键继续删除；非格式字符串省略。文件继续沿原display_detail/tool_paths，不按类别编造read_file/write_file等函数名。
+
+读取仍为原RR read-only同Run定位，不扫描session。扩大原locator到discover，并允许started journal读取冻结配方以取得运行中输入；每次输入/输出只绑定自身call ID，成功兄弟调用不证明本调用参数/结果。现known legacy describe错误只按原精确SHA/常量/typed message证据承接，不开放任意错误栈。Agent正式8.5原件/生成物/provenance先交付，BFF固定消费后App接Canvas；不先发新Chat/SSE字段。
+
 ## 2026-10-28 历史 MCP 真实动作对象（Root 已批准；HTTP8.4候选）
 
 旧describe仅对已审源SHA `f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea`，exactRun原native调用与同ID/name的typed ToolMessage、journal完整结果同时等于该版本内建三错误常量，才补该activity的failed事实；其它版本、substring、远端内容与无typed证据均不归类。

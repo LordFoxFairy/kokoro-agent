@@ -113,8 +113,8 @@ def http73_parent_bytes(document: dict[str, object]) -> bytes:
 
 
 def validate_openapi_document(document: dict[str, object]) -> None:
-    if _object(document.get("info"), source="info").get("version") != "8.4.0":
-        raise ValueError("Agent HTTP contract version must be 8.4.0")
+    if _object(document.get("info"), source="info").get("version") != "8.5.0":
+        raise ValueError("Agent HTTP contract version must be 8.5.0")
     document = _object(
         json.loads(http82_display_parent_bytes(document)),
         source="HTTP8.2 display parent",

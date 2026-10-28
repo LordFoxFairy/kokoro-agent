@@ -40,6 +40,8 @@ HTTP8.6正式增量只加该optional字段及其mcp目标条件；生成/消费�
 
 本次产品裁决允许本人Run有限参数/结果正文预览；结构化敏感键删除，文本疑似秘密、凭据、内部host路径/配置或traceback时整块省略。只投影模型参数，不取runtime注入/transport material/env/reasoning；MCP仅text及structuredContent，binary/resource/metadata不公开。深度6、每容器32项、总节点128，JSON反序列化先作深度/字节预检，重复键/非法Unicode拒绝。generic redaction是受控私有公开策略，不是任意文本不含秘密的证明；未知格式/编码秘密仍有残余风险。缺少可显示内容时保缺省，不把省略声称空结果。
 
+MCP 结果只在单个 text block 与 `structuredContent == {"result": 原文本}` 严格重复时直接预览该自然语言原文，避免重复 envelope 消耗 4096 字节预算。有效 JSON、疑似 JSON 起始文本、额外结构键、不同值及多文本块保留原表示；过滤、截断、非文本省略标记仍适用。此为只读投影，不修改 journal 或工具执行事实。
+
 discover/describe仅按现正式wrapper格式投影：discover逐行核冻结connection前缀，去掉connection ID后保selector/description；describe核本调用exact server/tool首行，去ID后保说明与解析后的input_schema，结构敏感键继续删除；非格式字符串省略。文件继续沿原display_detail/tool_paths，不按类别编造read_file/write_file等函数名。
 
 读取仍为原RR read-only同Run定位，不扫描session。扩大原locator到discover，并允许started journal读取冻结配方以取得运行中输入；每次输入/输出只绑定自身call ID，成功兄弟调用不证明本调用参数/结果。现known legacy describe错误只按原精确SHA/常量/typed message证据承接，不开放任意错误栈。Agent正式8.5原件/生成物/provenance先交付，BFF固定消费后App接Canvas；不先发新Chat/SSE字段。

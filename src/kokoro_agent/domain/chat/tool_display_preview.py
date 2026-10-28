@@ -204,13 +204,33 @@ def bounded_json(raw: str) -> object:
     return json.loads(raw, object_pairs_hook=unique, parse_constant=constant)
 
 
+def _plain_prose(value: str) -> bool:
+    # The Web reader interprets JSON-shaped previews. Keep that representation
+    # enveloped so a literal JSON text block is never decoded for a second time.
+    if not value.strip() or value.lstrip().startswith(("{", "[", '"')):
+        return False
+    try:
+        json.loads(value)
+    except ValueError:
+        return True
+    return False
+
+
 def mcp_output(raw: str) -> ToolPreview | None:
     """Only standard MCP text/structuredContent, never resource bytes or metadata."""
     try:
         result = CallToolResult.model_validate(bounded_json(raw))
         blocks = [block.text for block in result.content if block.type == "text"]
         # Filter each content block independently; unsupported content is omitted.
-        if result.structuredContent is not None:
+        if (
+            len(blocks) == 1
+            and result.structuredContent == {"result": blocks[0]}
+            and _plain_prose(blocks[0])
+        ):
+            # Exact duplicate representation only: no extra keys, joining,
+            # output inference or removal of distinct structured information.
+            projected = preview(blocks[0], limit=4096, plain=True)
+        elif result.structuredContent is not None:
             projected = preview(
                 {"text": blocks, "structured_content": result.structuredContent},
                 limit=4096,

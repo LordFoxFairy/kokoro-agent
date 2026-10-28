@@ -417,3 +417,120 @@ def test_omitted_mcp_media_and_signed_url_text_are_not_unmarked_complete_preview
         }
     )
     assert "output_preview" not in recover(args, result)["activity_details"][0]
+
+
+def test_exact_mirrored_mcp_text_is_not_truncated_by_a_duplicate_representation() -> (
+    None
+):
+    text = "原始结果\n" + "检查项：会话恢复\n" * 90
+    assert len(text.encode()) < 4096
+    result = {
+        "content": [{"type": "text", "text": text}],
+        "structuredContent": {"result": text},
+        "isError": False,
+    }
+    details = recover(
+        {"server": "connection", "tool": "query", "arguments": {}},
+        json.dumps(result, ensure_ascii=False),
+    )["activity_details"]
+    assert details[0]["output_preview"] == {
+        "text": text,
+        "truncated": False,
+        "redacted": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "structured", [{"result": "same", "count": 1}, {"result": "different"}]
+)
+def test_distinct_structured_mcp_result_is_not_discarded(
+    structured: dict[str, object],
+) -> None:
+    raw = json.dumps(
+        {"content": [{"type": "text", "text": "same"}], "structuredContent": structured}
+    )
+    details = recover({"server": "connection", "tool": "query", "arguments": {}}, raw)[
+        "activity_details"
+    ]
+    assert json.loads(details[0]["output_preview"]["text"]) == {
+        "text": ["same"],
+        "structured_content": structured,
+    }
+
+
+def test_mirrored_mcp_text_keeps_real_bound_and_does_not_expose_private_text() -> None:
+    for text in ["字" * 3000, "Bearer SECRET"]:
+        raw = json.dumps(
+            {
+                "content": [{"type": "text", "text": text}],
+                "structuredContent": {"result": text},
+            }
+        )
+        item = recover({"server": "connection", "tool": "query", "arguments": {}}, raw)[
+            "activity_details"
+        ][0]
+        if text == "Bearer SECRET":
+            assert "output_preview" not in item
+        else:
+            output = item["output_preview"]
+            assert output["text"] == text.encode()[:4096].decode(errors="ignore")
+            assert output["truncated"] is True
+
+
+def test_mirrored_mcp_text_still_marks_omitted_nontext_content() -> None:
+    raw = json.dumps(
+        {
+            "content": [
+                {"type": "text", "text": "same"},
+                {"type": "image", "data": "aGVsbG8=", "mimeType": "image/png"},
+            ],
+            "structuredContent": {"result": "same"},
+        }
+    )
+    item = recover({"server": "connection", "tool": "query", "arguments": {}}, raw)[
+        "activity_details"
+    ][0]
+    assert item["output_preview"] == {
+        "text": "same",
+        "truncated": False,
+        "redacted": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    ['{"text":["inside"]}', "42", "null", '["inside"]', '"quoted"', '{"unfinished', ""],
+)
+def test_json_like_mcp_text_keeps_its_outer_representation(text: str) -> None:
+    raw = json.dumps(
+        {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": {"result": text},
+        }
+    )
+    item = recover({"server": "connection", "tool": "query", "arguments": {}}, raw)[
+        "activity_details"
+    ][0]
+    assert json.loads(item["output_preview"]["text"]) == {
+        "text": [text],
+        "structured_content": {"result": text},
+    }
+
+
+def test_multiple_mcp_text_blocks_are_not_joined_or_deduplicated() -> None:
+    raw = json.dumps(
+        {
+            "content": [
+                {"type": "text", "text": "same"},
+                {"type": "text", "text": "same"},
+            ],
+            "structuredContent": {"result": "same"},
+        }
+    )
+    item = recover({"server": "connection", "tool": "query", "arguments": {}}, raw)[
+        "activity_details"
+    ][0]
+    assert json.loads(item["output_preview"]["text"]) == {
+        "text": ["same", "same"],
+        "structured_content": {"result": "same"},
+    }

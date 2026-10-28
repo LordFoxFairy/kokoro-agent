@@ -1,3 +1,7 @@
+## 2026-10-28 MCP 重复结果预览修复
+
+只读投影消除严格重复的自然语言 text/result；JSON形状、多块与额外键保留，权限、敏感过滤、字节预算与执行记录不变。旧同Run实际回读：2347字节正文曾被重复envelope推到4095字节并标截断，现原文完整；11条活动保留。候选 owner 验证：focused77、默认3112（923资源marker未选）、独立PG display25、ruff/pyright/lock/contract/build通过。首次用系统Python运行PG脚本缺psycopg，改用本仓冻结venv后通过，未改测试。只读复核无确定P0–P2；正常激活和浏览器证据由Root续记，不代表整个Manus展示或产品闭环。
+
 ## 2026-10-28 模型侧行动字段约束补充
 
 明确指导后第二个真实新Run仍省略字段，故不将“加提示词”报为修复完成。现只在已qualified的模型schema副本required尾部追加自有_kokoro_action；原业务required逐项保留，read_file的offset/limit仍可选，mounted schema和执行参数不变。非法required、strict、字段冲突继续跳过；HTTP字段保持optional，历史不回填，省略也不自动重试模型。

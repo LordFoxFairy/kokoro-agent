@@ -1,3 +1,11 @@
+## 2026-10-28 Skill display 及旧Run只读恢复 D0（Root 已批准，候选实施中）
+
+无DDL／新表／列／索引／cache／独立日志／checkpoint state或数据回填。新Run有限展示随原fenced安全Chat activity `payload_json` 首次持久，沿既有outbox/replay保留；内部Redis SkillPhase/SkillProgressPayload及worker command/event网络形状不变，展示仅从本地sink参数进入安全Chat投影。原file basename、tool错误／状态／opaque IDs／顺序与lease围栏不变，returned只复用原事实。 MCP title/selector回退及peer共同声明只影响未来首次safe Chat展示，不更改原声明、执行授权或旧event/digest。
+
+旧Run展示只在新具名GET只读派生：原RunRequest定位trusted namespace+session，exact checkpoint还核metadata.kokoro_run_id。Root实际确认目标旧Run10份metadata name/path一致；SDK channel不含typed ResolvedSkill revision/digest，缺证继续unknown。checkpoint versions/blobs/writes属于原native state：messages由原生DeltaChannel恢复，不因单表无messages blob就称缺失，不自建delta decoder。只提取已证loader后的name/path；工具再以该Run journal ID／原safe activity及原virtual来源绑定后，定向提取file_path/path，不复制任意args/result。journal现仅name/status/result/is_error，不伪称已有path列。
+
+新read projection不改旧Chat event/id/digest、不补写旧worker事件，不污染原ingestion source身份；合法缺省／已清理保持unknown，不由当前catalog或新模型反推。5秒／32 checkpoint／8MiB输入及1MiB输出有界，无后台刷新任务；API闭集与reader-first见[API首节](API_CONTRACT.md)。资源和真实旧Run后验仍由Root独占，本D0不启动服务／模型或操作正常数据。
+
 ## 2026-10-27 具体动作对象 D0（HTTP8.2 候选，Root 已核；实施中）
 
 绑定Agent源码 `38c294d38cf05149c320622f52490f82fb1fff91`／HTTP8.1基线。本门无DDL、新表／列／索引、独立日志、journal字段或checkpoint state；仅拟在现 `kokoro_agent_chat_event.payload_json` 的安全tool activity新增optional闭合display_detail，形状／有界公开域见同日期API_CONTRACT。无null／默认值、历史回填或旧JSON规范化；原bytes／source_index／seq／opaque ID不变。详情仍随原Chat事实保留／清理，不设新TTL、镜像或财务／执行事实owner。

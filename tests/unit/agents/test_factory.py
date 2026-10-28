@@ -1111,7 +1111,7 @@ async def test_selected_native_skill_coverage_failure_stops_before_model(
 
     durable_progress = await _r93_progress(repository, request, lease)
 
-    async def progress(phase: SkillPhase) -> SkillProgressCommitted:
+    async def progress(phase: SkillPhase, **_display: object) -> SkillProgressCommitted:
         if native_gap == "progress-store-unavailable" and phase.phase == "failed":
             raise ProgressPersistenceError("native phase store unavailable")
         return await durable_progress(phase)
@@ -1152,8 +1152,9 @@ async def test_selected_native_skill_coverage_failure_stops_before_model(
             and json.loads(row.payload_json).get("activity") == "skill"
         ]
         if native_gap == "progress-store-unavailable":
-            assert phases[-1]["phase"] == "ready"
-            assert all(phase["phase"] != "failed" for phase in phases)
+            # A failed native load never publishes ready; failed ACK loss keeps loading.
+            assert phases[-1]["phase"] == "loading"
+            assert all(phase["phase"] not in {"failed", "ready"} for phase in phases)
         else:
             assert phases[-1]["phase"] == "failed"
             assert phases[-1]["error_code"] == "skill_load_failed"
@@ -1253,7 +1254,7 @@ async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutatin
 
     from kokoro_agent.protocol import SkillPhase, SkillProgressCommitted
 
-    async def progress(phase: SkillPhase) -> SkillProgressCommitted:
+    async def progress(phase: SkillPhase, **_display: object) -> SkillProgressCommitted:
         assert phase.phase == "failed"
         return SkillProgressCommitted(source_index=1)
 
@@ -1797,9 +1798,16 @@ async def test_r91_real_factory_skill_io_observes_durable_phase(
         ], "real Skill I/O must see its phase already committed"
         assert phases() == ["resolving", "loading", "ready"]
         facts = repository.chat_repository.records
-        assert next(
+        started = next(
             i for i, row in enumerate(facts) if row.event_type == "run.started"
-        ) > max(i for i, row in enumerate(facts) if row.event_type == "activity")
+        )
+        skill_positions = [
+            i
+            for i, row in enumerate(facts)
+            if row.event_type == "activity"
+            and json.loads(row.payload_json).get("activity") == "skill"
+        ]
+        assert skill_positions[0] < skill_positions[1] < started < skill_positions[2]
 
 
 @pytest.mark.parametrize("failure", ["write_error", "fence_rejected"])
@@ -1874,7 +1882,7 @@ async def test_r91_mcp_failure_does_not_relabel_successful_skill_preflight(
         if row.event_type == "activity"
         and json.loads(row.payload_json).get("activity") == "skill"
     ]
-    assert [item["phase"] for item in skills] == ["resolving", "loading", "ready"]
+    assert [item["phase"] for item in skills] == ["resolving", "loading"]
     assert all("error_code" not in item for item in skills)
 
 
@@ -2933,3 +2941,109 @@ async def test_swarm_does_not_borrow_a_tool_category_from_another_peer(
     assert "web_fetch" not in {source.name for source in handle.tool_display_sources}
     assert dict(handle.tool_display_codes)["mcp_call"] == "tool.mcp.call"
     await handle.aclose()
+
+
+async def test_display_ready_waits_for_native_loader_and_preserves_exact_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    model = PromptRecordingModel()
+
+    def make_display_model(*_args: object, **_kwargs: object) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", make_display_model)
+    request = _request("chat").model_copy(
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:alpha",)}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+
+    def skill_rows() -> list[dict[str, Any]]:
+        return [
+            json.loads(row.payload_json)
+            for row in repository.chat_repository.records
+            if row.event_type == "activity"
+            and json.loads(row.payload_json).get("activity") == "skill"
+        ]
+
+    try:
+        assert [row["phase"] for row in skill_rows()] == ["resolving", "loading"]
+        run = await handle.runnable.astream_events(
+            {"messages": [HumanMessage(content="start")]},
+            version="v3",
+            config={"configurable": {"thread_id": "native-display-ready"}},
+            transformers=[CustomTransformer],
+        )
+        async with run:
+            await asyncio.gather(
+                _collect_messages(run.messages),
+                _drain(run.tool_calls),
+                _drain(run.subagents),
+                _drain(run.custom),
+            )
+        ready = [row for row in skill_rows() if row["phase"] == "ready"]
+        assert ready
+        assert ready[-1]["display_skills"] == [
+            {
+                "source_ref": "skill:alpha",
+                "name": "alpha",
+                "virtual_path": "/.skills/YWxwaGE/SKILL.md",
+                "revision": "1",
+            }
+        ]
+        assert model.observed
+    finally:
+        await handle.aclose()
+
+
+async def test_shared_skill_ready_keeps_one_identity_and_rejects_changed_actual_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from kokoro_agent.protocol import SkillPhase
+
+    _unused_factory, repository = _factory(monkeypatch, RouteResolver())
+    run = _request("chat").model_copy(
+        update={"selected_skill_source_refs": ("skill:alpha",)}
+    )
+    lease = await repository.try_claim(run)
+    assert lease is not None
+    progress = await _r93_progress(repository, run, lease)
+    await progress(SkillPhase(phase="resolving"))
+    await progress(SkillPhase(phase="loading"))
+    display = (
+        {
+            "source_ref": "skill:alpha",
+            "name": "actual",
+            "virtual_path": "/.skills/YWxwaGE/SKILL.md",
+            "revision": "1",
+        },
+    )
+    await progress(SkillPhase(phase="ready"), display_skills=display)
+    await progress(SkillPhase(phase="ready"), display_skills=display)
+    with pytest.raises(ValueError, match="display binding"):
+        await progress(
+            SkillPhase(phase="ready"), display_skills=({**display[0], "revision": "2"},)
+        )
+    facts = [
+        json.loads(row.payload_json)
+        for row in repository.chat_repository.records
+        if row.event_type == "activity"
+    ]
+    ready = [fact for fact in facts if fact["phase"] == "ready"]
+    assert len(ready) == 2
+    assert len({fact["activity_id"] for fact in ready}) == 1
+    assert len({fact["preflight_id"] for fact in ready}) == 1
+    assert all(fact["display_skills"] == list(display) for fact in ready)

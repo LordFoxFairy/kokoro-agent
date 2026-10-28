@@ -1,3 +1,11 @@
+## 2026-10-28 Skill display／Run display D0（Root 已批准，候选实施中）
+
+唯一机器源拟发布HTTP8.3，保完整8.2父证明及全部旧操作；Redis worker协议不变。安全Skill activity仅在native loader成功后的ready附optional `display_skills`（最多16，按source_ref唯一且属于原source_refs）：`{source_ref,name,virtual_path,revision?}`；revision为已取得的exact正十进制字符串，不接受null，不取包frontmatter.version。name复用1–120 scalar／480 UTF8 bytes的NFC／控制／敏感文本边界；virtual_path最多4096 UTF8 bytes且必须通过原来源与路径安全校验。旧file `display_detail={kind:"file",name:<basename>,virtual_path?:<真实公共虚拟路径>}` 不放宽name；mcp_tool及其它activity不接该字段。unsafe／缺事实省略，不合成名称或截断。 MCP仍原`kind:mcp_tool,name`闭集，无新server kind；name只来自本Run批准public title或同public selector，非法title不输出，discovery不伪指单tool。
+
+新增 `GET /v1/runs/{run_id}/display`：沿现service bearer＋可信tenant/actor/subject/assertion；`get_request_scoped` 不匹配统一404。严格无query／body／Transfer-Encoding／Content-Length／Idempotency-Key，不开放任意thread/checkpoint/tool args读取。200沿原 `{data,meta:{request_id}}`，data闭集为 `{run_id,display_skills:[{source_ref,name,virtual_path,revision?}],tool_paths:[{activity_id,virtual_path}]}`；同Run至多16／128项，无分页或后台poll，整UTF8 JSON至多1MiB。两个清单仅列有证明的展示事实，缺项表示unknown，不表示没有Skill／工具或已读完整；旧baf57可恢复native name/path，revision保持absent。tool只用原safe activity opaque ID，不公开tool_call_id、checkpoint locator、description或raw args。公开文字仅纯文本，不授执行／文件读取授权，不生成href。
+
+5秒绝对read期限／32个同Run checkpoint locator／8MiB累计native输入；内部取消关闭自有连接。畸形请求400，缺service/trusted identity401，not-found／跨主体统一404；依赖、损坏、超界／超时503，原error envelope，不输出底层内容。合法缺失或清理过的历史仅缺省展示，不猜测。原Chat event_id／payload_json／seq／digest、事件分页、command／control、Share原件均不改；新GET是独立read projection，不把hint塞旧ingestion source。BFF显式消费正式后继并在当前Session／Conversation准入后才读，App按exact Run/source/activity关联；匿名Share剔除展示。先reader再producer，新持久事实出现后不得降回旧严格reader。旧Run与未来事实的来源／原生Delta规则见[技术首节](TECHNICAL_DESIGN.md)。
+
 ## 2026-10-27 HTTP8.2 具体动作对象 D0（候选，Root 已核；实施中）
 
 基线源码 `38c294d38cf05149c320622f52490f82fb1fff91`，HTTP8.1.0完整OpenAPI SHA256 `1642829ccf5364692051e836938ef33b36cffeca25f2b7766ad95cd44a1542c9`、provenance SHA256 `879695cfacd55014b9f6a28e3138d88bc009ba9d46acfac27497a26f0025acad`。本门拟发8.2.0，只在 `ChatActivity.oneOf` 的 tool 分支增加 optional `display_detail`；九值display_code、原required、状态、opaque身份、其它分支和所有请求不变。后文旧版本不公开名称的限制保留在其原切片，不覆盖本门增量。

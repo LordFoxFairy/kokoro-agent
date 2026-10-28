@@ -134,6 +134,7 @@ HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 
 - `POST /v1/runs`：launch，先写 durable dispatch admission，再投递给 `kokoro-agent-worker`；
 - `POST /v1/runs/{run_id}/control`：cancel/resume/steer；
 - `GET /v1/runs/{run_id}/events`：Run evidence；
+- `GET /v1/runs/{run_id}/display`：HTTP8.3有限safe Skill名／exact revision／virtual path展示读；旧事实缺省为unknown，不修改历史事件；
 - `GET /v1/sessions`：按 trusted identity 查询持久化 session list，支持 `project_ref`、`limit`、`cursor`；
 - `GET /v1/sessions/{session_id}/messages`：安全 session history；
 - `GET /v1/sessions/{session_id}/events`：安全 session replay；

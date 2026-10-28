@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from kokoro_agent.chat_contract_check import http82_display_parent_bytes
+
 import pytest
 from jsonschema import ValidationError, validate
 import kokoro_agent.contract_check as checks
@@ -14,7 +16,11 @@ PARENT_SHA = "c096eab9f2aa392215351a106a670692d5f58f945980a5e028b3a83d17509731"
 
 
 def _document():
-    return json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+    return json.loads(
+        http82_display_parent_bytes(
+            json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+        )
+    )
 
 
 def test_http74_adds_only_optional_exact_connection_selection():
@@ -41,7 +47,7 @@ def test_http74_adds_only_optional_exact_connection_selection():
     assert (
         hashlib.sha256(checks.http73_parent_bytes(document)).hexdigest() == PARENT_SHA
     )
-    checks.validate_openapi_document(document)
+    checks.validate_http82_parent_document(document)
 
 
 @pytest.mark.parametrize(

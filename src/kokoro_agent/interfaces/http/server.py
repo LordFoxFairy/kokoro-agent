@@ -27,6 +27,13 @@ from pydantic import SecretStr, TypeAdapter
 
 from kokoro_agent.application.chat.dto import ChatQueryRequest, ChatSessionListRequest
 from kokoro_agent.application.chat.service import ChatService
+from kokoro_agent.application.run_display import RunDisplay
+from kokoro_agent.infrastructure.checkpoint_display import read_run_display
+from kokoro_agent.interfaces.http.run_display import (
+    display_resource,
+    validate_display_transport,
+)
+from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, REQUESTS_STREAM
 from kokoro_agent.protocol.control import IdentityKind
 from kokoro_agent.interfaces.http.ingress import AgentIngress, IngressError
@@ -53,6 +60,7 @@ LOGGER = logging.getLogger(__name__)
 _Request = socket.socket | tuple[bytes, socket.socket]
 _ClientAddress = tuple[str, int] | str | bytes
 _RUN_CONTROL = re.compile(r"^/v1/runs/([^/]+)/control$")
+_RUN_DISPLAY = re.compile(r"^/v1/runs/([^/]+)/display$")
 _RUN_EVENTS = re.compile(r"^/v1/runs/([^/]+)/events$")
 _SESSION_MESSAGES = re.compile(r"^/v1/sessions/([^/]+)/messages$")
 _SESSION_EVENTS = re.compile(r"^/v1/sessions/([^/]+)/events$")
@@ -85,7 +93,12 @@ def _known_business_route(method: str, path: str) -> bool:
             or path in {"/healthz", "/readyz", "/v1/sessions"}
             or any(
                 pattern.fullmatch(path) is not None
-                for pattern in (_RUN_EVENTS, _SESSION_MESSAGES, _SESSION_EVENTS)
+                for pattern in (
+                    _RUN_DISPLAY,
+                    _RUN_EVENTS,
+                    _SESSION_MESSAGES,
+                    _SESSION_EVENTS,
+                )
             )
         )
     if method == "POST":
@@ -445,6 +458,34 @@ async def dispatch_request(
         return error.status, _error(error.code, error.message, request_id)
     if not _known_business_route(method, path):
         return 404, _error("route_not_found", "Agent route was not found", request_id)
+    display_match = _RUN_DISPLAY.fullmatch(path) if method == "GET" else None
+    if display_match is not None:
+
+        async def read_display(request: RunRequest) -> RunDisplay:
+            return await read_run_display(
+                config.database_url, config.database_schema, request
+            )
+
+        try:
+            validate_display_transport(headers, query, body)
+            async with asyncio.timeout(5):
+                async with make_run_repository(config.run_repository) as repository:
+                    result = await display_resource(
+                        display_match.group(1),
+                        execution_identity or _identity(headers),
+                        headers,
+                        query,
+                        body,
+                        repository,
+                        read_display,
+                    )
+                    return 200, _envelope(result, request_id)
+        except IngressError as error:
+            return error.status, _error(error.code, error.message, request_id)
+        except Exception:
+            return 503, _error(
+                "agent_unavailable", "Run display facts are unavailable", request_id
+            )
     bus = make_stream(config.stream)
     try:
         async with (

@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from kokoro_agent import model_usage_contract, model_usage_v2_contract
 from kokoro_agent.chat_contract_check import (
     failure_model_bytes,
+    http82_display_parent_bytes,
     http72_parent_bytes,
     http74_parent_bytes,
     generate_failure_models,
@@ -112,6 +113,17 @@ def http73_parent_bytes(document: dict[str, object]) -> bytes:
 
 
 def validate_openapi_document(document: dict[str, object]) -> None:
+    if _object(document.get("info"), source="info").get("version") != "8.3.0":
+        raise ValueError("Agent HTTP contract version must be 8.3.0")
+    document = _object(
+        json.loads(http82_display_parent_bytes(document)),
+        source="HTTP8.2 display parent",
+    )
+    validate_http82_parent_document(document)
+
+
+def validate_http82_parent_document(document: dict[str, object]) -> None:
+    """The preserved HTTP8.2 validator, also used for historical risk fixtures."""
     openapi = document.get("openapi")
     if not isinstance(openapi, str) or not openapi.startswith("3."):
         raise ValueError("OpenAPI 3 document is required")

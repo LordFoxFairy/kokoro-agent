@@ -360,7 +360,9 @@ async def test_detail_sources_require_actual_native_schema_and_run_file_backend(
             {field: "/docs/report.md", "title": "SECRET", "content": "SECRET"}
         )
         assert (detail.model_dump() if detail else None) == (
-            {"kind": "file", "name": "report.md"} if virtual else None
+            {"kind": "file", "name": "report.md", "virtual_path": "/docs/report.md"}
+            if virtual
+            else None
         )
     declared = sources["mcp_call"].detail({"server": "conn", "tool": "search"})
     assert declared is not None
@@ -478,6 +480,7 @@ async def test_real_declared_skill_mount_exposes_only_safe_basename() -> None:
     assert read is not None and read.model_dump() == {
         "kind": "file",
         "name": "SKILL.md",
+        "virtual_path": prefix + "SKILL.md",
     }
     assert (
         sources["read_file"].detail({"file_path": "/.skills/unknown/SKILL.md"}) is None

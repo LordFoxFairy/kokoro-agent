@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.2.0"
+    "version": "8.3.0"
   },
   "servers": [
     {
@@ -1619,6 +1619,14 @@
                     "maxLength": 120,
                     "x-kokoro-utf8-byte-limit": 480,
                     "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs"
+                  },
+                  "virtual_path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "x-kokoro-utf8-byte-limit": 4096,
+                    "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+                    "description": "Validated absolute virtual backend path; never a host path, URL, secret or unproven raw argument."
                   }
                 },
                 "additionalProperties": false
@@ -1682,6 +1690,13 @@
                         "tool.mcp.describe",
                         "tool.mcp.call"
                       ]
+                    },
+                    "display_detail": {
+                      "not": {
+                        "required": [
+                          "virtual_path"
+                        ]
+                      }
                     }
                   }
                 }
@@ -1784,6 +1799,15 @@
                   "skill_resolve_failed",
                   "skill_load_failed"
                 ]
+              },
+              "display_skills": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "$ref": "#/components/schemas/SkillDisplay"
+                },
+                "x-kokoro-unique-by": "source_ref",
+                "x-kokoro-binding": "unique source_ref subset of original ready source_refs; no current catalog lookup"
               }
             },
             "additionalProperties": false,
@@ -1808,7 +1832,23 @@
                   "error_code"
                 ]
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "display_skills"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "phase": {
+                      "const": "ready"
+                    }
+                  }
+                }
+              }
+            ]
           }
         ]
       },
@@ -1986,6 +2026,114 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/PreparedModelCallSnapshot"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SkillDisplay": {
+        "type": "object",
+        "required": [
+          "source_ref",
+          "name",
+          "virtual_path"
+        ],
+        "properties": {
+          "source_ref": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 197,
+            "pattern": "^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "x-kokoro-utf8-byte-limit": 480,
+            "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs"
+          },
+          "virtual_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "x-kokoro-utf8-byte-limit": 4096,
+            "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+            "description": "Validated absolute virtual backend path; never a host path, URL, secret or unproven raw argument."
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,18}(?![\\s\\S])",
+            "x-kokoro-int64-decimal": true
+          }
+        },
+        "additionalProperties": false,
+        "x-kokoro-binding": "virtual_path must equal /.skills/{base64url(ASCII source_ref suffix)}/SKILL.md; revision only from this Run exact ResolvedSkill, absent if unproven"
+      },
+      "RunDisplay": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "display_skills",
+          "tool_paths"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "display_skills": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/SkillDisplay"
+            },
+            "x-kokoro-unique-by": "source_ref",
+            "x-kokoro-binding": "unique source_ref subset of original ready source_refs; no current catalog lookup"
+          },
+          "tool_paths": {
+            "type": "array",
+            "maxItems": 128,
+            "x-kokoro-unique-by": "activity_id",
+            "items": {
+              "type": "object",
+              "required": [
+                "activity_id",
+                "virtual_path"
+              ],
+              "properties": {
+                "activity_id": {
+                  "type": "string",
+                  "minLength": 68,
+                  "maxLength": 68,
+                  "pattern": "^act_[0-9a-f]{64}(?![\\s\\S])"
+                },
+                "virtual_path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "x-kokoro-utf8-byte-limit": 4096,
+                  "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+                  "description": "Validated absolute virtual backend path; never a host path, URL, secret or unproven raw argument."
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false,
+        "description": "Recovered safe display facts only. Missing facts remain unknown; source events and execution authority are unchanged. No completeness assertion."
+      },
+      "RunDisplayEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RunDisplay"
           },
           "meta": {
             "$ref": "#/components/schemas/Meta"
@@ -3120,6 +3268,87 @@
           }
         },
         "description": "Dedicated Billing observation, not a dispatch permit or supplier cost bound. No query or request body. Only current usage2 prepared/pending/authorized attempts with live matching Run fence are visible as successful snapshots. Existing Billing receipt recovery does not require this read to remain available."
+      }
+    },
+    "/v1/runs/{run_id}/display": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Read bounded identity-scoped Run display facts",
+        "operationId": "getRunDisplay",
+        "security": [
+          {
+            "AgentServiceBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/TenantRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectRef"
+          },
+          {
+            "$ref": "#/components/parameters/SubjectKind"
+          },
+          {
+            "$ref": "#/components/parameters/ActorRef"
+          },
+          {
+            "$ref": "#/components/parameters/ActorKind"
+          },
+          {
+            "$ref": "#/components/parameters/AssertionRef"
+          }
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+          "200": {
+            "description": "Safe recovered display facts, at most 1MiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDisplayEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        },
+        "x-kokoro-read-budget": {
+          "total_timeout_seconds": 5,
+          "checkpoint_locators": 32,
+          "native_input_bytes": 8388608,
+          "query_body": "forbidden; Content-Length, Transfer-Encoding and Idempotency-Key forbidden"
+        }
       }
     }
   }

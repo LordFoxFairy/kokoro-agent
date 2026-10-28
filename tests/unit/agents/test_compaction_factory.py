@@ -469,7 +469,7 @@ async def _handle(
     )
     progress_count = 0
 
-    async def progress(_phase: object) -> SkillProgressCommitted:
+    async def progress(_phase: object, **_display: object) -> SkillProgressCommitted:
         nonlocal progress_count
         progress_count += 1
         return SkillProgressCommitted(source_index=progress_count)

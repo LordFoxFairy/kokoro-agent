@@ -363,7 +363,7 @@ def _request() -> RunRequest:
     )
 
 
-async def _progress(_phase: SkillPhase) -> SkillProgressCommitted:
+async def _progress(_phase: SkillPhase, **_display: object) -> SkillProgressCommitted:
     return SkillProgressCommitted(source_index=0)
 
 

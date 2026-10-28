@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
-from typing import Annotated, Literal, Union, Self
+from collections.abc import Awaitable, Mapping
+from typing import Annotated, Literal, Protocol, Union, Self
 
 from pydantic import (
     BaseModel,
@@ -169,7 +169,15 @@ class SkillProgressCommitted(StrictModel):
     source_index: NonNegInt
 
 
-SkillProgressSink = Callable[[SkillPhase], Awaitable[SkillProgressCommitted]]
+class SkillProgressSink(Protocol):
+    # Local safe-Chat side channel only: never part of SkillPhase/Redis payloads.
+    def __call__(
+        self,
+        phase: SkillPhase,
+        /,
+        *,
+        display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
+    ) -> Awaitable[SkillProgressCommitted]: ...
 
 
 class SubagentStartedPayload(StrictModel):

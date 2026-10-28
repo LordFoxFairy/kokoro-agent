@@ -169,5 +169,9 @@ async def test_check_omits_invalid_public_metadata_without_changing_authorizatio
         with pytest.raises(McpClientError):
             await client.check(refs)
     else:
-        assert await client.check(refs) == ()
+        declarations = await client.check(refs)
+        assert [(item.selector, item.display_name) for item in declarations] == [
+            ("echo", "echo")
+        ]
+        assert all(item.display_name != name for item in declarations)
     assert len(owner.requests) == 3

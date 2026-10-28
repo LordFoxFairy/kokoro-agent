@@ -19,3 +19,4 @@
 这里不定义 Agent 运行用例，也不承载业务 owner 数据；它实现 `domain/<context>/` 的 repository port、
 application port 的具体技术 adapter，以及 canonical schema。`application/schema.py` 是 schema apply 的稳定
 operator boundary，负责配置映射和调用这里的 DDL 实现。
+- `checkpoint_display.py`：同owner RR READ ONLY的有界native exact tuple展示恢复，先核32locator/8MiB全channel输入，不重建Delta、不执行graph、不改旧Chat。

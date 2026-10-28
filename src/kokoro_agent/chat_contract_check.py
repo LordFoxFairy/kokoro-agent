@@ -210,6 +210,8 @@ def validate_chat_response_contract(
 ) -> None:
     """Keep the two BFF-consumed response types out of the generic envelope."""
 
+    document = _display_parent(document)
+    paths = _object(document.get("paths"), source="paths")
     components = _object(document.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
     _validate_hitl_shapes(schemas)
@@ -321,7 +323,7 @@ _TOOL_DETAIL_CONDITIONS: list[dict[str, object]] = [
 
 def http82_basename_parent_bytes(document: dict[str, object]) -> bytes:
     """Undo only file-name semantics, preserving the complete first HTTP8.2 graph."""
-    parent = copy.deepcopy(document)
+    parent = copy.deepcopy(_display_parent(document))
     if _object(parent.get("info"), source="info").get("version") != "8.2.0":
         raise ValueError("file basename correction requires HTTP 8.2.0")
     components = _object(parent.get("components"), source="components")
@@ -521,6 +523,7 @@ def failure_model_bytes(
     document: dict[str, object], *, source_sha256: str = ""
 ) -> bytes:
     """Compile only the approved two failure profiles; reject unsupported shapes."""
+    document = _display_parent(document)
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
     if _object(document.get("info"), source="info").get("version") != "8.2.0":
@@ -620,9 +623,11 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     """Generate/check all failure bytes and their direct provenance without writing in check mode."""
     source = root / OPENAPI_RELATIVE
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    expected = failure_model_bytes(
-        read_contract_document(source), source_sha256=source_hash
-    )
+    document = read_contract_document(source)
+    # Current generation must contain the complete exact child, not merely a
+    # compatible historical failure tuple with an invented new provenance tag.
+    http82_display_parent_bytes(document)
+    expected = failure_model_bytes(document, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
     provenance = read_contract_document(provenance_path)
@@ -652,7 +657,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.2.0",
+        "version": "8.3.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -847,3 +852,280 @@ def _validate_progress_shapes(
     validate_decoded_chat_payload(
         document, event_type="todo.updated", payload_json='{"todos":[]}'
     )
+
+
+# HTTP8.3 exact named display delta; old parent guards remain unmodified.
+_DISPLAY_PATH = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 4096,
+    "x-kokoro-utf8-byte-limit": 4096,
+    "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+    "description": "Validated absolute virtual backend path; never a host path, URL, "
+    "secret or unproven raw argument.",
+}
+
+_DISPLAY_SKILLS = {
+    "type": "array",
+    "maxItems": 16,
+    "items": {"$ref": "#/components/schemas/SkillDisplay"},
+    "x-kokoro-unique-by": "source_ref",
+    "x-kokoro-binding": "unique source_ref subset of original ready source_refs; no "
+    "current catalog lookup",
+}
+
+_SKILL_DISPLAY_SCHEMA = {
+    "type": "object",
+    "required": ["source_ref", "name", "virtual_path"],
+    "properties": {
+        "source_ref": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 197,
+            "pattern": "^skill:(?!skill:)[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])",
+        },
+        "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "x-kokoro-utf8-byte-limit": 480,
+            "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+        },
+        "virtual_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "x-kokoro-utf8-byte-limit": 4096,
+            "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+            "description": "Validated absolute virtual backend "
+            "path; never a host path, URL, secret "
+            "or unproven raw argument.",
+        },
+        "revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,18}(?![\\s\\S])",
+            "x-kokoro-int64-decimal": True,
+        },
+    },
+    "additionalProperties": False,
+    "x-kokoro-binding": "virtual_path must equal /.skills/{base64url(ASCII source_ref "
+    "suffix)}/SKILL.md; revision only from this Run exact "
+    "ResolvedSkill, absent if unproven",
+}
+
+_RUN_DISPLAY_SCHEMA = {
+    "type": "object",
+    "required": ["run_id", "display_skills", "tool_paths"],
+    "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "display_skills": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {"$ref": "#/components/schemas/SkillDisplay"},
+            "x-kokoro-unique-by": "source_ref",
+            "x-kokoro-binding": "unique source_ref subset of "
+            "original ready source_refs; no "
+            "current catalog lookup",
+        },
+        "tool_paths": {
+            "type": "array",
+            "maxItems": 128,
+            "x-kokoro-unique-by": "activity_id",
+            "items": {
+                "type": "object",
+                "required": ["activity_id", "virtual_path"],
+                "properties": {
+                    "activity_id": {
+                        "type": "string",
+                        "minLength": 68,
+                        "maxLength": 68,
+                        "pattern": "^act_[0-9a-f]{64}(?![\\s\\S])",
+                    },
+                    "virtual_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096,
+                        "x-kokoro-utf8-byte-limit": 4096,
+                        "x-kokoro-unicode-domain": "NFC "
+                        "Unicode "
+                        "scalars; "
+                        "no "
+                        "Cc, "
+                        "Cf "
+                        "or "
+                        "Cs",
+                        "description": "Validated "
+                        "absolute "
+                        "virtual "
+                        "backend "
+                        "path; "
+                        "never "
+                        "a "
+                        "host "
+                        "path, "
+                        "URL, "
+                        "secret "
+                        "or "
+                        "unproven "
+                        "raw "
+                        "argument.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    "additionalProperties": False,
+    "description": "Recovered safe display facts only. Missing facts remain unknown; "
+    "source events and execution authority are unchanged. No completeness "
+    "assertion.",
+}
+
+_RUN_DISPLAY_ENVELOPE = {
+    "type": "object",
+    "required": ["data", "meta"],
+    "properties": {
+        "data": {"$ref": "#/components/schemas/RunDisplay"},
+        "meta": {"$ref": "#/components/schemas/Meta"},
+    },
+    "additionalProperties": False,
+}
+
+_RUN_DISPLAY_ROUTE: dict[str, object] = {
+    "get": {
+        "tags": ["runs"],
+        "summary": "Read bounded identity-scoped Run display facts",
+        "operationId": "getRunDisplay",
+        "security": [{"AgentServiceBearer": []}],
+        "parameters": [
+            {
+                "name": "run_id",
+                "in": "path",
+                "required": True,
+                "schema": {"type": "string", "minLength": 1},
+            },
+            {"$ref": "#/components/parameters/RequestId"},
+            {"$ref": "#/components/parameters/TenantRef"},
+            {"$ref": "#/components/parameters/SubjectRef"},
+            {"$ref": "#/components/parameters/SubjectKind"},
+            {"$ref": "#/components/parameters/ActorRef"},
+            {"$ref": "#/components/parameters/ActorKind"},
+            {"$ref": "#/components/parameters/AssertionRef"},
+        ],
+        "x-kokoro-owner": "kokoro-agent",
+        "x-kokoro-visibility": "internal-owner",
+        "x-kokoro-stability": "stable",
+        "x-kokoro-idempotency": "read-only",
+        "x-kokoro-permission": "agent-service",
+        "responses": {
+            "200": {
+                "description": "Safe recovered display facts, at most 1MiB.",
+                "content": {
+                    "application/json": {
+                        "schema": {"$ref": "#/components/schemas/RunDisplayEnvelope"}
+                    }
+                },
+            },
+            "401": {"$ref": "#/components/responses/Unauthorized"},
+            "404": {"$ref": "#/components/responses/NotFound"},
+            "503": {"$ref": "#/components/responses/Unavailable"},
+            "400": {"$ref": "#/components/responses/BadRequest"},
+        },
+        "x-kokoro-read-budget": {
+            "total_timeout_seconds": 5,
+            "checkpoint_locators": 32,
+            "native_input_bytes": 8388608,
+            "query_body": "forbidden; Content-Length, "
+            "Transfer-Encoding and Idempotency-Key "
+            "forbidden",
+        },
+    }
+}
+
+_DISPLAY_READY_CONDITION = {
+    "if": {"required": ["display_skills"]},
+    "then": {"properties": {"phase": {"const": "ready"}}},
+}
+
+_DISPLAY_MCP_CONDITION = {
+    "properties": {"display_detail": {"not": {"required": ["virtual_path"]}}}
+}
+
+
+def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the issued display nodes, then prove every HTTP8.2 byte."""
+    parent = copy.deepcopy(document)
+    if _object(parent.get("info"), source="info").get("version") != "8.3.0":
+        raise ValueError("display delta requires HTTP 8.3.0")
+    paths = _object(parent.get("paths"), source="paths")
+    if paths.pop("/v1/runs/{run_id}/display", None) != _RUN_DISPLAY_ROUTE:
+        raise ValueError("Run display resource differs")
+    schemas = _object(
+        _object(parent.get("components"), source="components").get("schemas"),
+        source="schemas",
+    )
+    for name, expected in (
+        ("SkillDisplay", _SKILL_DISPLAY_SCHEMA),
+        ("RunDisplay", _RUN_DISPLAY_SCHEMA),
+        ("RunDisplayEnvelope", _RUN_DISPLAY_ENVELOPE),
+    ):
+        if schemas.pop(name, None) != expected:
+            raise ValueError("Run display schema differs")
+    branches = TypeAdapter(list[dict[str, object]]).validate_python(
+        _object(schemas.get("ChatActivity"), source="ChatActivity").get("oneOf")
+    )
+    tool = _object(branches[0].get("properties"), source="tool")
+    detail = _object(
+        _object(tool.get("display_detail"), source="detail").get("properties"),
+        source="detail properties",
+    )
+    if detail.pop("virtual_path", None) != _DISPLAY_PATH:
+        raise ValueError("file virtual display path differs")
+    conditions = TypeAdapter(list[dict[str, object]]).validate_python(
+        branches[0].get("allOf")
+    )
+    then = _object(conditions[1].get("then"), source="MCP condition")
+    mcp_properties = _object(then.get("properties"), source="MCP properties")
+    if (
+        mcp_properties.pop("display_detail", None)
+        != _DISPLAY_MCP_CONDITION["properties"]["display_detail"]
+    ):
+        raise ValueError("MCP virtual path exclusion differs")
+    skill_properties = _object(branches[2].get("properties"), source="Skill")
+    if skill_properties.pop("display_skills", None) != _DISPLAY_SKILLS or branches[
+        2
+    ].pop("allOf", None) != [_DISPLAY_READY_CONDITION]:
+        raise ValueError("Skill display delta differs")
+    # TypeAdapter may copy nested containers; assign changed exact nodes back.
+    detail_schema = _object(tool.get("display_detail"), source="detail")
+    detail_schema["properties"] = detail
+    tool["display_detail"] = detail_schema
+    branches[0]["properties"] = tool
+    then["properties"] = mcp_properties
+    conditions[1]["then"] = then
+    branches[0]["allOf"] = conditions
+    branches[2]["properties"] = skill_properties
+    schemas["ChatActivity"] = {"oneOf": branches}
+    components = _object(parent.get("components"), source="components")
+    components["schemas"] = schemas
+    parent["components"] = components
+    parent["paths"] = paths
+    info = _object(parent.get("info"), source="info")
+    info["version"] = "8.2.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "8a0b9973661205b8e29020934c39e5c7ab629b4c42db4e79c845a410d96efa2a"
+    ):
+        raise ValueError("complete HTTP8.2 display parent differs")
+    return raw
+
+
+def _display_parent(document: dict[str, object]) -> dict[str, object]:
+    if _object(document.get("info"), source="info").get("version") == "8.3.0":
+        return _object(
+            json.loads(http82_display_parent_bytes(document)),
+            source="HTTP8.2 display parent",
+        )
+    return document

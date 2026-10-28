@@ -23,6 +23,12 @@ def _object(value: object) -> dict[str, object]:
     return _OBJECT.validate_python(value)
 
 
+def _parent_document() -> dict[str, object]:
+    from kokoro_agent.chat_contract_check import http82_display_parent_bytes
+
+    return _object(json.loads(http82_display_parent_bytes(_document())))
+
+
 def _document() -> dict[str, object]:
     return _object(json.loads(CONTRACT.read_text(encoding="utf-8")))
 
@@ -31,7 +37,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "8.2.0"
+    assert _object(document["info"])["version"] == "8.3.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -98,6 +104,7 @@ def test_http_route_set_is_explicit() -> None:
         "/v1/runs",
         "/v1/runs/{run_id}/control",
         "/v1/runs/{run_id}/events",
+        "/v1/runs/{run_id}/display",
         "/v1/sessions",
         "/v1/sessions/{session_id}/messages",
         "/v1/sessions/{session_id}/events",
@@ -531,9 +538,11 @@ def test_hitl4_machine_rejects_invalid_pause_revision(bad_revision: object) -> N
 def test_owner_checker_rejects_relaxed_hitl_required_fields(
     component: str, field: str
 ) -> None:
-    from kokoro_agent.contract_check import validate_openapi_document
+    from kokoro_agent.contract_check import (
+        validate_http82_parent_document as validate_openapi_document,
+    )
 
-    document = _document()
+    document = _parent_document()
     schemas = _object(_object(document["components"])["schemas"])
     shape = _object(schemas[component])
     required = TypeAdapter(list[str]).validate_python(shape["required"])
@@ -553,7 +562,7 @@ def test_current_http7_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "8.2.0"
+    assert _object(document["info"])["version"] == "8.3.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -988,7 +997,7 @@ def test_agent8_tool_display_is_a_closed_output_extension_with_full_parent_proof
 ):
     import hashlib
 
-    document = json.loads(CONTRACT.read_bytes())
+    document = json.loads(json.dumps(_parent_document()))
     tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
     codes = [
         "tool.execution",
@@ -1034,7 +1043,7 @@ def test_agent8_tool_display_is_a_closed_output_extension_with_full_parent_proof
 def test_http81_file_tool_categories_preserve_the_complete_http8_parent() -> None:
     import hashlib
 
-    document = json.loads(CONTRACT.read_bytes())
+    document = json.loads(json.dumps(_parent_document()))
     assert document["info"]["version"] == "8.2.0"
     tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
     assert tool["properties"]["display_code"]["enum"][-2:] == [
@@ -1072,7 +1081,7 @@ def test_http81_file_tool_categories_preserve_the_complete_http8_parent() -> Non
 def test_http81_full_parent_proof_rejects_any_other_delta(mutation: str) -> None:
     from kokoro_agent.chat_contract_check import http80_parent_bytes
 
-    document = json.loads(CONTRACT.read_bytes())
+    document = json.loads(json.dumps(_parent_document()))
     tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
     if mutation == "unknown_code":
         tool["properties"]["display_code"]["enum"].append("raw.private-tool")
@@ -1094,7 +1103,7 @@ def test_http82_detail_is_typed_and_restores_complete_http81_parent() -> None:
     import hashlib
     from kokoro_agent.chat_contract_check import validate_decoded_chat_payload
 
-    document = json.loads(CONTRACT.read_bytes())
+    document = json.loads(json.dumps(_parent_document()))
     payload = {
         "activity": "tool",
         "activity_id": "act_" + "a" * 64,
@@ -1143,7 +1152,7 @@ def test_http82_detail_rejects_wrong_domain_and_cross_category(
     }
     with pytest.raises(ValueError):
         validate_decoded_chat_payload(
-            json.loads(CONTRACT.read_bytes()),
+            json.loads(json.dumps(_parent_document())),
             event_type="activity",
             payload_json=json.dumps(payload),
         )
@@ -1155,7 +1164,7 @@ def test_http82_detail_rejects_wrong_domain_and_cross_category(
 def test_http82_inverse_rejects_unapproved_delta(mutation: str) -> None:
     from kokoro_agent.chat_contract_check import http81_parent_bytes
 
-    document = json.loads(CONTRACT.read_bytes())
+    document = json.loads(json.dumps(_parent_document()))
     tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
     if mutation == "detail_budget":
         tool["properties"]["display_detail"]["properties"]["name"]["maxLength"] = 999
@@ -1175,9 +1184,9 @@ def test_http82_inverse_rejects_unapproved_delta(mutation: str) -> None:
 def test_file_basename_machine_rejects_what_agent_already_rejects(name: str) -> None:
     from kokoro_agent.domain.chat.projection import ToolDisplayDetail
 
-    tool = json.loads(CONTRACT.read_bytes())["components"]["schemas"]["ChatActivity"][
-        "oneOf"
-    ][0]
+    tool = json.loads(json.dumps(_parent_document()))["components"]["schemas"][
+        "ChatActivity"
+    ]["oneOf"][0]
     payload = {
         "activity": "tool",
         "activity_id": "act_" + "a" * 64,
@@ -1196,7 +1205,7 @@ def test_basename_correction_restores_complete_first_http82_parent() -> None:
     import hashlib
     from kokoro_agent.chat_contract_check import http82_basename_parent_bytes
 
-    document = json.loads(CONTRACT.read_bytes())
+    document = json.loads(json.dumps(_parent_document()))
     assert document["info"]["version"] == "8.2.0"
     parent = http82_basename_parent_bytes(document)
     assert (
@@ -1211,7 +1220,7 @@ def test_basename_correction_restores_complete_first_http82_parent() -> None:
 def test_basename_correction_inverse_rejects_any_other_delta(mutation: str) -> None:
     from kokoro_agent.chat_contract_check import http82_basename_parent_bytes
 
-    document = json.loads(CONTRACT.read_bytes())
+    document = json.loads(json.dumps(_parent_document()))
     tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
     detail = tool["allOf"][0]["then"]["properties"]["display_detail"]
     if mutation == "pattern":
@@ -1234,9 +1243,9 @@ def test_basename_correction_inverse_rejects_any_other_delta(mutation: str) -> N
 def test_file_basename_machine_retains_valid_unicode_targets(name: str) -> None:
     from kokoro_agent.domain.chat.projection import ToolDisplayDetail
 
-    tool = json.loads(CONTRACT.read_bytes())["components"]["schemas"]["ChatActivity"][
-        "oneOf"
-    ][0]
+    tool = json.loads(json.dumps(_parent_document()))["components"]["schemas"][
+        "ChatActivity"
+    ]["oneOf"][0]
     payload = {
         "activity": "tool",
         "activity_id": "act_" + "a" * 64,
@@ -1253,9 +1262,9 @@ def test_file_basename_machine_retains_valid_unicode_targets(name: str) -> None:
 def test_mcp_public_name_is_not_subject_to_file_basename_policy(name: str) -> None:
     from kokoro_agent.domain.chat.projection import ToolDisplayDetail
 
-    tool = json.loads(CONTRACT.read_bytes())["components"]["schemas"]["ChatActivity"][
-        "oneOf"
-    ][0]
+    tool = json.loads(json.dumps(_parent_document()))["components"]["schemas"][
+        "ChatActivity"
+    ]["oneOf"][0]
     payload = {
         "activity": "tool",
         "activity_id": "act_" + "a" * 64,

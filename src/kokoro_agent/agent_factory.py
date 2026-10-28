@@ -387,6 +387,7 @@ async def build_deep_agent(
                     backend=native_backend,
                     sources=[SKILLS_ROOT],
                     progress=progress,
+                    display_sources=resolved_skills,
                     discovery_backends=tuple(
                         (
                             f"{SKILLS_ROOT}{skill.path_segment}/SKILL.md",
@@ -529,8 +530,7 @@ class AgentFactory:
             )
             for peer in prepared.peers
         }
-        if request.selected_skill_source_refs:
-            await confirm_skill_progress(progress, SkillPhase(phase="ready"))
+        # Native Skill metadata is not ready until RunSkillsMiddleware loads it.
         # MCP is not a Skill phase. All peer Skill preflights precede MCP assembly.
         capabilities: dict[str, _ResolvedCapabilities] = {}
         for peer in prepared.peers:
@@ -601,9 +601,19 @@ class AgentFactory:
         common_codes: dict[str, ToolDisplayCode] = dict(
             built_agents[0].tool_display_codes
         )
-        common_sources = set(built_agents[0].tool_display_sources)
+        common_sources = {
+            source.name: source for source in built_agents[0].tool_display_sources
+        }
         for built in built_agents:
-            common_sources.intersection_update(built.tool_display_sources)
+            peer_sources = {
+                source.name: source for source in built.tool_display_sources
+            }
+            common_sources = {
+                name: shared
+                for name, source in common_sources.items()
+                if name in peer_sources
+                and (shared := source.shared_with(peer_sources[name])) is not None
+            }
             descriptions.update(built.tool_descriptions)
             resources.extend(built.resources)
             peer_codes = dict(built.tool_display_codes)
@@ -620,7 +630,7 @@ class AgentFactory:
                 sorted(
                     (
                         source
-                        for source in common_sources
+                        for source in common_sources.values()
                         if common_codes.get(source.name) == source.code
                     ),
                     key=lambda source: source.name,

@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
 import unicodedata
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     JsonValue,
     TypeAdapter,
     field_validator,
@@ -77,6 +80,9 @@ ToolDisplayCode = Literal[
 class ToolDisplayDetail(_Payload):
     kind: Literal["file", "mcp_tool"]
     name: str
+    virtual_path: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("name")
     @classmethod
@@ -93,6 +99,13 @@ class ToolDisplayDetail(_Payload):
             self.name in {".", ".."} or any(c in self.name for c in "/\\:")
         ):
             raise ValueError("display file must be a basename")
+        if "virtual_path" in self.model_fields_set and (
+            self.kind != "file"
+            or self.virtual_path is None
+            or not safe_virtual_path(self.virtual_path)
+            or self.virtual_path.rsplit("/", 1)[-1] != self.name
+        ):
+            raise ValueError("invalid public virtual path")
         return self
 
 
@@ -119,6 +132,58 @@ def sensitive_display_text(value: str) -> bool:
     )
 
 
+def safe_virtual_path(value: str) -> bool:
+    if (
+        not value.startswith("/")
+        or len(value.encode("utf-8", errors="surrogatepass")) > 4096
+        or unicodedata.normalize("NFC", value) != value
+        or any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)
+        or any(c in value for c in "\\:?#%")
+        or value.startswith(("//", "~"))
+    ):
+        return False
+    parts = value.removeprefix("/").split("/")
+    return (
+        not any(part in {"", ".", ".."} or part.startswith("~") for part in parts)
+        and parts[0].casefold()
+        not in {"users", "home", "private", "etc", "proc", "sys", "var"}
+        and not sensitive_display_text(value)
+    )
+
+
+class SkillDisplay(_Payload):
+    source_ref: str
+    name: str
+    virtual_path: str
+    revision: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def exact_native_source(self) -> Self:
+        if (
+            re.fullmatch(r"skill:[A-Za-z0-9][A-Za-z0-9._:-]{0,190}", self.source_ref)
+            is None
+        ):
+            raise ValueError("invalid display Skill source")
+        segment = (
+            base64.urlsafe_b64encode(self.source_ref[6:].encode("ascii"))
+            .decode("ascii")
+            .rstrip("=")
+        )
+        if self.virtual_path != f"/.skills/{segment}/SKILL.md" or not safe_virtual_path(
+            self.virtual_path
+        ):
+            raise ValueError("Skill display path differs from source")
+        if not safe_display_name(self.name) or sensitive_display_text(self.name):
+            raise ValueError("invalid display Skill name")
+        if "revision" in self.model_fields_set and (
+            self.revision is None
+            or re.fullmatch(r"[1-9][0-9]{0,18}", self.revision) is None
+            or int(self.revision) > 9223372036854775807
+        ):
+            raise ValueError("invalid display Skill revision")
+        return self
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ToolDisplaySource:
     """Factory-observed source; never constructed from event metadata."""
@@ -130,8 +195,20 @@ class ToolDisplaySource:
     skill_prefixes: tuple[str, ...] = ()
     mcp_names: tuple[tuple[str, str, str], ...] = ()
 
+    def shared_with(self, other: ToolDisplaySource) -> ToolDisplaySource | None:
+        """Keep only facts independently proved by every possible native peer."""
+        if self == other:
+            return self
+        if self.origin != "mcp" or replace(self, mcp_names=()) != replace(
+            other, mcp_names=()
+        ):
+            return None
+        names = tuple(sorted(set(self.mcp_names).intersection(other.mcp_names)))
+        return replace(self, mcp_names=names) if names else None
+
     def detail(self, args: dict[str, JsonValue]) -> ToolDisplayDetail | None:
         value: object = None
+        virtual_path: str | None = None
         kind: Literal["file", "mcp_tool"]
         if self.origin in {"native", "delivery"} and self.code in {
             "tool.file.read",
@@ -173,6 +250,7 @@ class ToolDisplaySource:
                     return None
             elif self.file_scope != "virtual":
                 return None
+            virtual_path = value if safe_virtual_path(value) else None
             value, kind = parts[-1], "file"
         elif self.origin == "mcp" and self.code in {
             "tool.mcp.describe",
@@ -189,7 +267,11 @@ class ToolDisplaySource:
         else:
             return None
         try:
-            return ToolDisplayDetail(kind=kind, name=value)
+            return ToolDisplayDetail(
+                kind=kind,
+                name=value,
+                **({"virtual_path": virtual_path} if virtual_path is not None else {}),
+            )
         except ValueError:
             return None
 
@@ -216,7 +298,7 @@ class ToolActivity(_Payload):
 
 def read_tool_activity(payload_json: str) -> ToolActivity:
     # Both original opaque-only activities and the new bounded detail fit here.
-    if len(payload_json) > 4096 or len(payload_json.encode("utf-8")) > 4096:
+    if len(payload_json) > 8192 or len(payload_json.encode("utf-8")) > 8192:
         raise ValueError("safe activity history exceeds its bounded shape")
 
     def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -262,6 +344,22 @@ class _SkillActivity(_Payload):
     source_refs: list[str]
     phase: Literal["resolving", "loading", "ready", "failed"]
     error_code: Literal["skill_resolve_failed", "skill_load_failed"] | None = None
+    display_skills: list[SkillDisplay] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def exact_displays(self) -> Self:
+        if self.display_skills is not None:
+            refs = [item.source_ref for item in self.display_skills]
+            if (
+                self.phase != "ready"
+                or len(refs) > 16
+                or len(set(refs)) != len(refs)
+                or not set(refs).issubset(self.source_refs)
+            ):
+                raise ValueError("Skill display differs from ready selection")
+        return self
 
 
 class _Delivery(_Payload):
@@ -331,9 +429,14 @@ def project_chat_fact(
     payload: ProjectablePayload,
     tool_display_code: ToolDisplayCode = "tool.execution",
     tool_display_detail: ToolDisplayDetail | None = None,
+    skill_display_skills: Sequence[Mapping[str, JsonValue]] | None = None,
 ) -> ChatProjection | None:
     """Project only allowlisted product semantics; unknown/private payloads disappear."""
 
+    if skill_display_skills is not None and not isinstance(
+        payload, SkillProgressPayload
+    ):
+        raise ValueError("Skill display requires Skill progress")
     event_type: str
     chat_message_id: str | None = None
     safe_payload: _Payload | ChatFailure | TodoUpdatedPayload
@@ -356,6 +459,12 @@ def project_chat_fact(
             source_refs=payload.source_refs,
             phase=payload.phase,
             error_code=payload.error_code,
+            display_skills=[
+                SkillDisplay.model_validate(item, strict=True)
+                for item in skill_display_skills
+            ]
+            if skill_display_skills is not None
+            else None,
         )
     elif isinstance(payload, RunStartedPayload):
         event_type = "run.started"

@@ -51,6 +51,7 @@ from kokoro_agent.domain.chat.projection import (
     ToolDisplayCode,
     ToolDisplaySource,
     ToolDisplayDetail,
+    SkillDisplay,
     read_tool_activity,
     safe_progress_id,
 )
@@ -142,9 +143,16 @@ class ProgressPersistenceError(RuntimeError):
 
 
 async def confirm_skill_progress(
-    progress: SkillProgressSink, phase: SkillPhase
+    progress: SkillProgressSink,
+    phase: SkillPhase,
+    *,
+    display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
 ) -> None:
-    confirmation = await progress(phase)
+    confirmation = (
+        await progress(phase)
+        if display_skills is None
+        else await progress(phase, display_skills=display_skills)
+    )
     try:
         SkillProgressCommitted.model_validate(confirmation)
     except ValueError as error:
@@ -349,8 +357,13 @@ class RunEmitter:
         """One real build round; committed anchor is never borrowed from old ready."""
         refs = list(source_refs)
         anchor: int | None = None
+        known_display: dict[str, SkillDisplay] = {}
 
-        async def report(observation: SkillPhase) -> SkillProgressCommitted:
+        async def report(
+            observation: SkillPhase,
+            *,
+            display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
+        ) -> SkillProgressCommitted:
             nonlocal anchor
             if self._chat_repository is None or self._outbox is None:
                 raise ProgressPersistenceError(
@@ -361,6 +374,18 @@ class RunEmitter:
                     raise ValueError("a Skill round must begin with resolving")
                 if anchor is not None and observation.phase == "resolving":
                     raise ValueError("a new resolving phase requires a new round")
+                next_display = dict(known_display)
+                if display_skills is not None:
+                    if observation.phase != "ready":
+                        raise ValueError("Skill display binding requires ready")
+                    for value in display_skills:
+                        fact = SkillDisplay.model_validate(value)
+                        if fact.source_ref not in refs or (
+                            fact.source_ref in next_display
+                            and next_display[fact.source_ref] != fact
+                        ):
+                            raise ValueError("Skill display binding changed")
+                        next_display[fact.source_ref] = fact
                 await self._require_progress_lease("skill.progress")
                 index = await self._reserve_index()
                 payload = SkillProgressPayload(
@@ -368,7 +393,19 @@ class RunEmitter:
                     anchor_source_index=index if anchor is None else anchor,
                     source_refs=refs,
                 )
-                await self._emit_ordinary(payload, index, _now_ms())
+                await self._emit_ordinary(
+                    payload,
+                    index,
+                    _now_ms(),
+                    skill_display_skills=tuple(
+                        next_display[ref].model_dump(mode="json", exclude_none=True)
+                        for ref in refs
+                        if ref in next_display
+                    )
+                    if display_skills is not None
+                    else None,
+                )
+                known_display.update(next_display)
                 if anchor is None:
                     anchor = index
                 return SkillProgressCommitted(source_index=index)
@@ -490,7 +527,12 @@ class RunEmitter:
         await self._emit_ordinary(payload, index, timestamp)
 
     async def _emit_ordinary(
-        self, payload: AgentEventPayload, index: int, timestamp: int
+        self,
+        payload: AgentEventPayload,
+        index: int,
+        timestamp: int,
+        *,
+        skill_display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
     ) -> None:
         kind = _KIND_BY_PAYLOAD[type(payload)]
         event = agent_event_adapter.validate_python(
@@ -503,7 +545,13 @@ class RunEmitter:
             }
         )
         chat_mode: ChatFenceMode | None = "active" if self._outbox is not None else None
-        if not await self._persist_chat(payload, index, timestamp, mode=chat_mode):
+        if not await self._persist_chat(
+            payload,
+            index,
+            timestamp,
+            mode=chat_mode,
+            skill_display_skills=skill_display_skills,
+        ):
             raise ProgressAuthorityLost("original progress append fence lost")
         self._next_index = max(self._next_index, index + 1)
         try:
@@ -532,6 +580,7 @@ class RunEmitter:
         timestamp: int,
         *,
         mode: ChatFenceMode | None,
+        skill_display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
     ) -> bool:
         if (
             self._chat_repository is None
@@ -555,6 +604,7 @@ class RunEmitter:
             payload=payload,
             tool_display_code=tool_code,
             tool_display_detail=tool_detail,
+            skill_display_skills=skill_display_skills,
         )
         if projection is None:
             return True

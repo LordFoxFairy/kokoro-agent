@@ -459,7 +459,7 @@ async def test_detail_freezes_safe_basename_and_recovers_original_chat() -> None
     )
     values = [json.loads(row.payload_json) for row in store.records]
     assert [value["display_detail"] for value in values] == [
-        {"kind": "file", "name": "report.md"}
+        {"kind": "file", "name": "report.md", "virtual_path": "/docs/report.md"}
     ] * 2
     assert [value["status"] for value in values] == ["running", "failed"]
     assert "NEVER_PUBLISH" not in str(values)

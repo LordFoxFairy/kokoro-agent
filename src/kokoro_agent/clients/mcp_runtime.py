@@ -224,7 +224,16 @@ class PlatformMcpClient:
                             kind="mcp_tool", name=cap.display_name
                         )
                     except ValueError:
-                        continue  # Invalid metadata never changes execution authorization.
+                        # Selector is the owner's public tool declaration name;
+                        # _tools requires exact equality with native tool.name.
+                        # Never interpret a private registry key or raw args.
+                        try:
+                            detail = ToolDisplayDetail(
+                                kind="mcp_tool", name=cap.selector
+                            )
+                        except ValueError:
+                            continue  # Unsafe optional labels never grant execution.
+
                     declarations.append(
                         McpDisplayDeclaration(
                             connection_id=reference.connection_id,

@@ -1,3 +1,7 @@
+## 2026-10-28 正常整轮配对验证（单任务切片）
+
+正常组合 App e7b93c7e／BFF15cc9e1／Agent2e61b85已加载，BFF具名final nullable列演进已确认current；无历史回填。真实新只读任务正常完成，Agent final与BFF parts逐字/身份/顺序一致，正常网页收展及硬刷新保持最终答复独立。2模型attempt sealed、unknown0，usage仍partial。旧MCP历史、Canvas回焦、正常Swarm及整体产品验收仍OPEN，不能将本片成功等同整体完成。原始截图、精确运行前像和回退配置在Root ignored whole-turn-normal-20261028；唯一Root计划记载完整实际范围。无合并或Root版本提升。
+
 ## 2026-10-28 Swarm 候选默认复验结果（未正常激活）
 
 停写452项输入的最终默认复跑：3151 passed、930 deselected、2882 warnings，195.44秒。此前架构例外与cast失败保留记录，精确导入约束和真实类型校验修正后本次通过。资源marker未运行，不代表真实Provider、正常页面或Manus验收；补充停写复核：452项输入无漂移；ruff check、366份格式、显式0.6.7解释器pyright、lock、contract、wheel/sdist打包及仓外安装contract/native registry/production manifest均通过。正常激活仍待，不把安装smoke当成真实模型执行。日志 `/tmp/kokoro-swarm-default-final2.log`，冻结清单 `/tmp/kokoro-swarm-final-inputs2.json`。

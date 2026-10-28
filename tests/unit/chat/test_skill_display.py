@@ -179,3 +179,66 @@ def test_peer_mcp_display_intersects_actual_declarations_not_whole_name_sets() -
         is None
     )
     assert source.shared_with(replace(peer, origin="web")) is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ask_question",
+        "task_read",
+        "desk_tool",
+        "1sk_name",
+        "ASK_QUESTION",
+        "namespace/task_read",
+    ],
+)
+def test_embedded_sk_in_a_real_tool_word_is_not_a_secret_prefix(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import (
+        ToolDisplayDetail,
+        safe_virtual_path,
+        sensitive_display_text,
+    )
+
+    assert not sensitive_display_text(name)
+    assert ToolDisplayDetail(kind="mcp_tool", name=name).name == name
+    assert safe_virtual_path(f"/workspace/{name}.md")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "sk-token",
+        "sk_token",
+        "SK-token",
+        " sk_token",
+        "/sk-token",
+        ".sk_token",
+        "_sk_token",
+        ":sk-token",
+        "(sk_token)",
+        "name sk-token",
+        "credentials",
+        "secret.txt",
+        "/.ssh/id_rsa",
+        "/.env",
+        "Bearer value",
+        "ghp_value",
+        "github_pat_value",
+        "id_ed25519",
+        "key.pem",
+        "eyJabc.def.ghi",
+    ],
+)
+def test_real_secret_prefix_boundaries_and_all_other_sensitive_families_stay_rejected(
+    name: str,
+) -> None:
+    from kokoro_agent.domain.chat.projection import (
+        ToolDisplayDetail,
+        safe_virtual_path,
+        sensitive_display_text,
+    )
+
+    assert sensitive_display_text(name)
+    with pytest.raises(ValueError):
+        ToolDisplayDetail(kind="mcp_tool", name=name)
+    assert not safe_virtual_path(f"/workspace/{name}")

@@ -125,7 +125,7 @@ def sensitive_display_text(value: str) -> bool:
             r"(?i)(?:^|[._ /-])(?:credentials?|secrets?|tokens?|passwords?|private[_-]?key)(?:$|[._ /-])"
             r"|(?:^|/)\.(?:ssh|aws|gnupg|kube)(?:/|$)|(?:^|/)\.env(?:[./_-]|$)"
             r"|(?:^|/)(?:\.netrc|\.npmrc|\.git-credentials|service[_-]account\.json)(?:$|/)"
-            r"|(?:id_rsa|id_ed25519|\.pem$|\.p12$|\.pfx$|bearer\s|sk[-_]|gh[pousr]_|github_pat_|AKIA[A-Z0-9]{16}|-----BEGIN)"
+            r"|(?:id_rsa|id_ed25519|\.pem$|\.p12$|\.pfx$|bearer\s|(?<![A-Za-z0-9])sk[-_]|gh[pousr]_|github_pat_|AKIA[A-Z0-9]{16}|-----BEGIN)"
             r"|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
             value,
         )

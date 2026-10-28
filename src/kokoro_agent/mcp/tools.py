@@ -217,17 +217,17 @@ def make_mcp_tools(
     async def describe_tool(server: str, tool: str) -> str:
         reference = granted.get(server)
         if reference is None or client is None:
-            return "error: MCP_CONNECTION_NOT_DECLARED"
+            raise ToolException("error: MCP_CONNECTION_NOT_DECLARED")
         try:
             tools = await client.list_tools(reference)
             found = next((value for value in tools if value.name == tool), None)
             if found is None:
-                return "error: MCP_TOOL_NOT_ALLOWED"
+                raise ToolException("error: MCP_TOOL_NOT_ALLOWED")
             return f"{server}/{tool}\n{found.description}\n参数 schema：{json.dumps(found.input_schema, ensure_ascii=False)}"
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GraphInterrupt, ToolException):
             raise
         except Exception:
-            return "error: MCP_CURRENT_READ_FAILED"
+            raise ToolException("error: MCP_CURRENT_READ_FAILED") from None
 
     async def call_tool(
         server: str,
@@ -277,6 +277,7 @@ def make_mcp_tools(
             description=MCP_1_DESCRIPTION,
             args_schema=DescribeToolArgs,
             coroutine=describe_tool,
+            handle_tool_error=True,
         ),
         StructuredTool(
             name=MCP_TOOL_METADATA[2][0],

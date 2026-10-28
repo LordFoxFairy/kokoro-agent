@@ -89,11 +89,12 @@ def test_schema_copy_keeps_original_tool_and_required_business_fields() -> None:
     schema = visible[0]
     assert isinstance(schema, dict)
     assert schema["function"]["name"] == tool.name
-    assert schema["function"]["parameters"]["required"] == ["path"]
+    assert schema["function"]["parameters"]["required"] == ["path", ACTION_FIELD]
     assert ACTION_FIELD in schema["function"]["parameters"]["properties"]
     convert: Any = getattr(function_calling, "convert_to_openai_tool")
     expected = deepcopy(convert(tool))
     del schema["function"]["parameters"]["properties"][ACTION_FIELD]
+    schema["function"]["parameters"]["required"].remove(ACTION_FIELD)
     assert schema == expected
     assert tool.get_input_schema().model_json_schema() == original
 
@@ -639,3 +640,86 @@ async def test_checkpoint_metadata_is_not_sent_on_actual_openai_message_wire() -
     assert "response_metadata" not in wire
     assert "kokoro_action_source_v1" not in str(wire)
     assert ACTION_FIELD in wire["tool_calls"][0]["function"]["arguments"]
+
+
+async def test_native_filesystem_action_schema_reaches_actual_sdk_request() -> None:
+    import json
+
+    import deepagents
+    import httpx
+    from langchain_openai import ChatOpenAI
+    from pydantic import SecretStr
+
+    captured: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "action-wire",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "fixture",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "done",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        model = ChatOpenAI(
+            model="fixture",
+            api_key=SecretStr("local-fixture"),
+            base_url="https://fixture.invalid/v1",
+            http_async_client=client,
+        )
+        create: Any = getattr(deepagents, "create_deep_agent")
+        graph = create(
+            model=model,
+            middleware=[
+                ActionDisplayMiddleware(
+                    frozenset({"read_file"}), lambda _: None, run_id="wire-run"
+                )
+            ],
+        )
+        await graph.ainvoke(
+            {"messages": [HumanMessage(content="Read the existing checklist")]}
+        )
+    assert len(captured) == 1
+    functions = [tool["function"] for tool in captured[0]["tools"]]
+    read = next(tool for tool in functions if tool["name"] == "read_file")
+    assert read["parameters"]["required"] == ["file_path", ACTION_FIELD]
+    assert "offset" in read["parameters"]["properties"]
+    assert "limit" in read["parameters"]["properties"]
+    assert ACTION_FIELD in str(captured[0]["messages"][0]["content"])
+
+
+@pytest.mark.parametrize("required", [None, "path", [1]])
+def test_malformed_business_required_is_not_rewritten(required: object) -> None:
+    schema = {
+        "type": "function",
+        "function": {
+            "name": "lookup",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": required,
+            },
+        },
+    }
+    original = deepcopy(schema)
+    assert model_action_tools([schema], frozenset({"lookup"})) == [original]
+    assert schema == original

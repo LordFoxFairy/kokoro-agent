@@ -1,3 +1,9 @@
+## 2026-10-28 模型侧行动字段约束补充
+
+明确指导后第二个真实新Run仍省略字段，故不将“加提示词”报为修复完成。现只在已qualified的模型schema副本required尾部追加自有_kokoro_action；原业务required逐项保留，read_file的offset/limit仍可选，mounted schema和执行参数不变。非法required、strict、字段冲突继续跳过；HTTP字段保持optional，历史不回填，省略也不自动重试模型。
+
+新增真实DeepAgents→ChatOpenAI SDK→本机MockTransport证明实际出站payload携带required与system指导（没有外部模型）；原业务对象不变及非法required负控已补。真实模型是否遵从仍需新Run证明，不把此传输测试冒称模型验收。
+
 ## 2026-10-28 真实调用省略行动标题的后继修复
 
 已激活5394后，真实只读文件任务成功，但原生checkpoint中 read_file 只有 file_path，同行source calls为空；不是Web丢字段。仅属性description不足以要求实际模型填写可选字段。ActionDisplayMiddleware现在仅对实际装饰成功的工具附加system指导：每次含该字段的调用填写简短公开行动+对象，不是额外正文、推理或成功声明。保持原system内容、原业务required和运行参数，未支持字段工具不添加指导。无额外模型请求、HTTP/Schema变化；已有recipe源码冻结承接。

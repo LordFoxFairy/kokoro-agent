@@ -84,8 +84,15 @@ def _decorated(
         or ACTION_FIELD in parameters["properties"]
     ):
         return None
+    try:
+        required = TypeAdapter(list[str]).validate_python(
+            parameters.get("required", []), strict=True
+        )
+    except ValidationError:
+        return None
     result = deepcopy(schema)
     result["function"]["parameters"]["properties"][ACTION_FIELD] = dict(_ACTION_SCHEMA)
+    result["function"]["parameters"]["required"] = [*required, ACTION_FIELD]
     return result
 
 

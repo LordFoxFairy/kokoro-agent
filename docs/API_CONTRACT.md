@@ -1,3 +1,9 @@
+## 2026-10-28 HTTP8.4 Run display 后继（Root 已批准；候选）
+
+旧describe仅对已审源SHA `f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea`，exactRun原native调用与同ID/name的typed ToolMessage、journal完整结果同时等于该版本内建三错误常量，才补该activity的failed事实；其它版本、substring、远端内容与无typed证据均不归类。
+
+既有GET `/v1/runs/{run_id}/display`保原准入／transport／5s与1MiB界，RunDisplay仅增加必需`tool_facts`数组（返回缺证时[]，max128、activity_id唯一）。严格项为`{activity_id, display_detail?:{kind:"mcp_tool",name}, status?:"failed"}`，至少一个可选字段存在；name复用原安全公开名域，拒null、路径、server人工名与额外键。display_detail仅用于原MCPcall/describe，status只是该原tool的已证明失败，不是Run/assistant状态，也不授重试。保持原run_id/display_skills/tool_paths不变；完整HTTP8.3逐字逆证后正规发行，旧8.3原件不重发。没有独立endpoint、数据库变更或新权限。
+
 ## 2026-10-28 Skill display／Run display D0（Root 已批准，候选实施中）
 
 唯一机器源拟发布HTTP8.3，保完整8.2父证明及全部旧操作；Redis worker协议不变。安全Skill activity仅在native loader成功后的ready附optional `display_skills`（最多16，按source_ref唯一且属于原source_refs）：`{source_ref,name,virtual_path,revision?}`；revision为已取得的exact正十进制字符串，不接受null，不取包frontmatter.version。name复用1–120 scalar／480 UTF8 bytes的NFC／控制／敏感文本边界；virtual_path最多4096 UTF8 bytes且必须通过原来源与路径安全校验。旧file `display_detail={kind:"file",name:<basename>,virtual_path?:<真实公共虚拟路径>}` 不放宽name；mcp_tool及其它activity不接该字段。unsafe／缺事实省略，不合成名称或截断。 MCP仍原`kind:mcp_tool,name`闭集，无新server kind；name只来自本Run批准public title或同public selector，非法title不输出，discovery不伪指单tool。

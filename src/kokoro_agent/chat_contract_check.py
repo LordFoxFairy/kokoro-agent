@@ -626,7 +626,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     document = read_contract_document(source)
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
-    http82_display_parent_bytes(document)
+    http83_tool_facts_parent_bytes(document)
     expected = failure_model_bytes(document, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
@@ -657,7 +657,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.3.0",
+        "version": "8.4.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -1052,8 +1052,84 @@ _DISPLAY_MCP_CONDITION = {
 }
 
 
+_TOOL_FACTS = {
+    "type": "array",
+    "maxItems": 128,
+    "x-kokoro-unique-by": "activity_id",
+    "items": {
+        "type": "object",
+        "required": ["activity_id"],
+        "properties": {
+            "activity_id": {
+                "type": "string",
+                "minLength": 68,
+                "maxLength": 68,
+                "pattern": "^act_[0-9a-f]{64}(?![\\s\\S])",
+            },
+            "display_detail": {
+                "type": "object",
+                "required": ["kind", "name"],
+                "properties": {
+                    "kind": {"type": "string", "enum": ["mcp_tool"]},
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120,
+                        "x-kokoro-utf8-byte-limit": 480,
+                        "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "status": {"type": "string", "enum": ["failed"]},
+        },
+        "anyOf": [{"required": ["display_detail"]}, {"required": ["status"]}],
+        "additionalProperties": False,
+    },
+    "description": "Read-only exact original MCP activity facts: safe public names witnessed by successful same-Run calls, or independently proved failed journal outcomes. No source event or Run status mutation.",
+}
+
+
+def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the exact historical MCP display delta; prove all HTTP8.3 bytes."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.4.0":
+        raise ValueError("tool facts require HTTP 8.4.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    display = _object(schemas.get("RunDisplay"), source="RunDisplay")
+    properties = _object(display.get("properties"), source="RunDisplay properties")
+    if properties.pop("tool_facts", None) != _TOOL_FACTS or display.get("required") != [
+        "run_id",
+        "display_skills",
+        "tool_paths",
+        "tool_facts",
+    ]:
+        raise ValueError("exact historical tool facts delta differs")
+    display["properties"] = properties
+    display["required"] = ["run_id", "display_skills", "tool_paths"]
+    schemas["RunDisplay"] = display
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.3.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "be642c2313fbaf447d4e37bda2a7920f867c3a06d39f7e0e82efaf212e7080d6"
+    ):
+        raise ValueError("complete HTTP8.3 tool facts parent differs")
+    return raw
+
+
 def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the issued display nodes, then prove every HTTP8.2 byte."""
+    if _object(document.get("info"), source="info").get("version") == "8.4.0":
+        document = _object(
+            json.loads(http83_tool_facts_parent_bytes(document)),
+            source="HTTP8.3 tool facts parent",
+        )
     parent = copy.deepcopy(document)
     if _object(parent.get("info"), source="info").get("version") != "8.3.0":
         raise ValueError("display delta requires HTTP 8.3.0")
@@ -1123,7 +1199,10 @@ def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
 
 
 def _display_parent(document: dict[str, object]) -> dict[str, object]:
-    if _object(document.get("info"), source="info").get("version") == "8.3.0":
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.3.0",
+        "8.4.0",
+    }:
         return _object(
             json.loads(http82_display_parent_bytes(document)),
             source="HTTP8.2 display parent",

@@ -101,6 +101,7 @@ def test_old_display_requires_ready_exact_selected_path_and_matching_tool_proven
         "tool_paths": [
             {"activity_id": activity_id, "virtual_path": "/.skills/YWxwaGE/SKILL.md"}
         ],
+        "tool_facts": [],
     }
     assert "revision" not in result.display_skills[0].model_dump()
     assert (

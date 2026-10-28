@@ -219,20 +219,12 @@ class PlatformMcpClient:
             for reference in references:
                 binding = await self._binding(reference)
                 for cap in binding.capabilities:
+                    # The actual approved public selector is the tool name;
+                    # display_name can be an explanatory sentence, not an identity.
                     try:
-                        detail = ToolDisplayDetail(
-                            kind="mcp_tool", name=cap.display_name
-                        )
+                        detail = ToolDisplayDetail(kind="mcp_tool", name=cap.selector)
                     except ValueError:
-                        # Selector is the owner's public tool declaration name;
-                        # _tools requires exact equality with native tool.name.
-                        # Never interpret a private registry key or raw args.
-                        try:
-                            detail = ToolDisplayDetail(
-                                kind="mcp_tool", name=cap.selector
-                            )
-                        except ValueError:
-                            continue  # Unsafe optional labels never grant execution.
+                        continue  # Unsafe optional labels never grant execution.
 
                     declarations.append(
                         McpDisplayDeclaration(

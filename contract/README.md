@@ -1,3 +1,5 @@
+<!-- HTTP8.4：现GET RunDisplay增加required bounded tool_facts；完整8.3父逆证，不改旧Chat/worker/Schema。 -->
+
 ## HTTP 7.4 MCP 选择候选（2026-10-24）
 
 唯一 OpenAPI 在 LaunchRequest 增加 optional selected_mcp_connection_ids，缺省／空选择保持旧 Run 字节和 fence，非空冻结 exact Connection IDs；这不是授权或 Agent 图配置。完整7.3父 SHA 逆证，再沿原7.2／7.1证明链保留全部旧边界。BFF/App 固定 artifact 与配对前不激活正常 producer；没有新Schema。

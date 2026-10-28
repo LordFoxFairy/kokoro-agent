@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from mcp.types import CallToolResult
+from kokoro_agent.domain.run.models import ToolJournalRecord
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from typing import Self
 
@@ -31,11 +33,47 @@ class ToolPath(BaseModel):
         return self
 
 
+class ToolFact(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    activity_id: str = Field(
+        pattern=r"^act_[0-9a-f]{64}$", min_length=68, max_length=68
+    )
+    display_detail: ToolDisplayDetail | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    status: Literal["failed"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def meaningful_mcp_fact(self) -> Self:
+        if not self.model_fields_set.intersection({"display_detail", "status"}):
+            raise ValueError("empty tool fact")
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("null tool fact status")
+        if "display_detail" in self.model_fields_set and (
+            self.display_detail is None
+            or self.display_detail.kind != "mcp_tool"
+            or "virtual_path" in self.display_detail.model_fields_set
+        ):
+            raise ValueError("tool fact requires an exact MCP name")
+        return self
+
+
 class RunDisplay(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
     run_id: str
     display_skills: list[SkillDisplay] = Field(max_length=16)
     tool_paths: list[ToolPath] = Field(max_length=128)
+    tool_facts: list[ToolFact] = Field(
+        default_factory=lambda: list[ToolFact](), max_length=128
+    )
+
+    @model_validator(mode="after")
+    def unique_facts(self) -> Self:
+        if len({fact.activity_id for fact in self.tool_facts}) != len(self.tool_facts):
+            raise ValueError("duplicate tool display fact")
+        return self
 
 
 def recover_display(
@@ -46,6 +84,9 @@ def recover_display(
     metadata: Sequence[Mapping[str, Any]],
     messages: Sequence[BaseMessage],
     journal: Mapping[str, str],
+    journal_records: Mapping[str, ToolJournalRecord] | None = None,
+    mcp_connections: tuple[str, ...] = (),
+    mcp_source_sha256: str | None = None,
 ) -> RunDisplay:
     """Intersect native facts with original ready/activity and real journal IDs.
 
@@ -155,4 +196,126 @@ def recover_display(
         run_id=scope[3],
         display_skills=list(skills.values()),
         tool_paths=list(tools.values()),
+        tool_facts=_mcp_facts(
+            scope,
+            activities,
+            messages,
+            journal_records or {},
+            mcp_connections,
+            mcp_source_sha256,
+        ),
     )
+
+
+def _mcp_facts(
+    scope: tuple[str, str, str, str],
+    activities: Mapping[str, Mapping[str, Any]],
+    messages: Sequence[BaseMessage],
+    journal: Mapping[str, ToolJournalRecord],
+    connections: tuple[str, ...],
+    mcp_source_sha256: str | None,
+) -> list[ToolFact]:
+    codes = {
+        "mcp_call": "tool.mcp.call",
+        "mcp_describe_tool": "tool.mcp.describe",
+        "mcp_list_tools": "tool.mcp.discover",
+    }
+    matched: dict[str, tuple[str, ToolJournalRecord]] = {}
+    for call_id, row in journal.items():
+        activity_id = "act_" + safe_progress_id(
+            "tool-activity", *scope, call_id, call_id
+        )
+        activity = activities.get(activity_id)
+        if (
+            row.name in codes
+            and activity is not None
+            and activity.get("display_code") == codes[row.name]
+        ):
+            matched[call_id] = (activity_id, row)
+    targets: dict[str, tuple[str, str]] = {}
+    for message in messages:
+        if not isinstance(message, AIMessage) or not message.id:
+            continue
+        for call in message.tool_calls:
+            call_id = call.get("id")
+            if not call_id:
+                continue
+            pair = matched.get(call_id)
+            if (
+                pair is None
+                or call["name"] != pair[1].name
+                or call["name"] not in {"mcp_call", "mcp_describe_tool"}
+            ):
+                continue
+            args = call["args"]
+            if (
+                type(args.get("server")) is not str
+                or args["server"] not in connections
+                or type(args.get("tool")) is not str
+            ):
+                continue
+            try:
+                ToolDisplayDetail(kind="mcp_tool", name=args["tool"])
+            except ValueError:
+                continue
+            target = (args["server"], args["tool"])
+            if call_id in targets and targets[call_id] != target:
+                raise ValueError("conflicting native MCP call target")
+            targets[call_id] = target
+    approved: set[tuple[str, str]] = set()
+    for call_id, target in targets.items():
+        row = matched[call_id][1]
+        if row.name != "mcp_call" or row.status != "succeeded" or row.is_error:
+            continue
+        try:
+            result = CallToolResult.model_validate_json(row.result)
+        except ValueError:
+            continue
+        if not result.isError:
+            approved.add(target)
+    legacy_failed: set[str] = set()
+    if (
+        mcp_source_sha256
+        == "f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea"
+    ):
+        # This exact reviewed implementation returned these local errors as
+        # successful ToolMessages. No arbitrary output or other version is parsed.
+        constants = {
+            "error: MCP_CONNECTION_NOT_DECLARED",
+            "error: MCP_TOOL_NOT_ALLOWED",
+            "error: MCP_CURRENT_READ_FAILED",
+        }
+        for message in messages:
+            if (
+                not isinstance(message, ToolMessage)
+                or message.name != "mcp_describe_tool"
+            ):
+                continue
+            call_id = message.tool_call_id
+            pair = matched.get(call_id)
+            if pair is None or call_id not in targets:
+                continue
+            row = pair[1]
+            content = message.model_dump().get("content")
+            if (
+                row.name == "mcp_describe_tool"
+                and row.status == "succeeded"
+                and not row.is_error
+                and row.result in constants
+                and isinstance(content, str)
+                and content == row.result
+            ):
+                legacy_failed.add(call_id)
+    facts: dict[str, ToolFact] = {}
+    for call_id, (activity_id, row) in matched.items():
+        values: dict[str, Any] = {"activity_id": activity_id}
+        if (row.status == "failed" and row.is_error) or call_id in legacy_failed:
+            values["status"] = "failed"
+        target = targets.get(call_id)
+        if target is not None and target in approved:
+            values["display_detail"] = ToolDisplayDetail(
+                kind="mcp_tool", name=target[1]
+            )
+        if len(values) > 1:
+            facts[activity_id] = ToolFact.model_validate(values)
+    return [facts[activity_id] for activity_id in activities if activity_id in facts]

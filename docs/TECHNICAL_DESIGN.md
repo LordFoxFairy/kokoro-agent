@@ -1,3 +1,11 @@
+## 2026-10-28 历史 MCP 真实动作对象（Root 已批准；HTTP8.4候选）
+
+旧describe仅对已审源SHA `f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea`，exactRun原native调用与同ID/name的typed ToolMessage、journal完整结果同时等于该版本内建三错误常量，才补该activity的failed事实；其它版本、substring、远端内容与无typed证据均不归类。
+
+沿 Agent669 既有 exact Run display owner，只读扩展原GET，不改Schema、权限、worker协议、Chat source/id/digest或Run终态。旧截图11条活动中，原journal独立证明的失败可与原safe activity精确相交；名字只由同Run成功mcp_call的native typed调用、成功CallToolResult、frozen peer连接与原journal共同见证，再按exact(server,tool)关联describe。旧failed／describe错误字符串不授名字，旧server人工名缺证不造。未来check输出优先实际批准public selector，不把cap.display_name说明长句当工具名。
+
+MCP读取独立于Skill缺省补全，禁止Skill齐全／未选择Skill的early-return跳过MCP。保总5s、32相关locator、8MiB native输入与1MiB输出；原序列化pending-write的call-id token仅筛候选，解码仍用锁定native saver serde，随后严格验证typed AIMessage、原journal与safe activity；不重建Delta、不扫描完整session、不查当前Platform目录。journal失败可不依赖native args恢复；缺证字段缺省，合法空tool_facts只表示无可恢复事实。source不回填，BFF/App后继reader-first按原activity ID提供独立展示overlay，Share不接。
+
 ## 2026-10-28 Skill 名称／虚拟路径 D0（Root 已批准，候选实施中）
 
 **Owner／基线及实证。** 基于 Agent `fc8b0f09f3cfd96211b33d863d5e629bbed13e46`／HTTP8.2；不改 Platform owner／Schema／依赖／Redis worker 协议。Root 已只读解码用户正看的旧 baf57 Run：13 个同 Run checkpoint 中10份 native `skills_metadata` 一致，name 为 `kokoro-pin-consistency-20261016`，path 为本次 `/.skills/{exact-segment}/SKILL.md`，没有 revision/version；全 session 的latest state不作旧Run真值。当前 `ResolvedSkill` 有 exact source_ref/revision/asset/digest/manifest 与mount映射，没有title；原SDK已从验包后的SKILL.md解析name/path并核expected集合，不查当前catalog补名。SDK包名不冒充Product display_name，也不按名字定位（同名不同source合法）。

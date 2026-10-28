@@ -1,3 +1,9 @@
+## 2026-10-28 真实调用省略行动标题的后继修复
+
+已激活5394后，真实只读文件任务成功，但原生checkpoint中 read_file 只有 file_path，同行source calls为空；不是Web丢字段。仅属性description不足以要求实际模型填写可选字段。ActionDisplayMiddleware现在仅对实际装饰成功的工具附加system指导：每次含该字段的调用填写简短公开行动+对象，不是额外正文、推理或成功声明。保持原system内容、原业务required和运行参数，未支持字段工具不添加指导。无额外模型请求、HTTP/Schema变化；已有recipe源码冻结承接。
+
+定向用例新增 RED 后修复；最终验证和真实新调用在Root执行记录续接。本修复不为旧记录补造标题、不宣称Manus整页一致。
+
 ## 2026-10-28 HTTP8.7 行动标题原链接线（未激活）
 
 同一次模型 tool-call schema 增加可选公开行动标题，checkpoint 绑定原 Run/call/name/参数摘要，审批改参不沿用原标题，执行前剥离展示参数。factory/worker 显式连接本 Run emitter；原 Chat 首条活动冻结标题及缺省，完成/失败与恢复承接原事实，不新增表/端点/解释请求。正式 HTTP8.7 仅新增 tool activity optional action_title，8.6 能力说明仍独立。

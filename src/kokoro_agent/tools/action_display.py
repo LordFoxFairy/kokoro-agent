@@ -18,7 +18,7 @@ from langchain.agents.middleware.types import (
     ModelResponse,
     ToolCallRequest,
 )
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_core.utils import function_calling
 from langgraph.types import Command
@@ -32,6 +32,13 @@ from kokoro_agent.domain.chat.action_intent import (
 
 ACTION_FIELD = "_kokoro_action"
 _CHECKPOINT_KEY = "kokoro_action_source_v1"
+_ACTION_GUIDANCE = (
+    "For each tool call whose definition includes _kokoro_action, fill that field "
+    "with a brief public action and its object in the user's language. This is the "
+    "tool row's action title, not an extra prose message, internal reasoning, the "
+    "tool's general description, or a claim that the action succeeded. Do not include "
+    "secrets or raw arguments. Do not add this field to tools that do not define it."
+)
 _ACTION_SCHEMA = {
     "type": "string",
     "minLength": 1,
@@ -118,7 +125,27 @@ class ActionDisplayMiddleware(AgentMiddleware):
             visible.append(decorated if decorated is not None else tool)
             if decorated is not None:
                 qualified.add(decorated["function"]["name"])
-        response = await handler(request.override(tools=visible))
+        system = request.system_message
+        if qualified:
+            if system is None:
+                system = SystemMessage(content=_ACTION_GUIDANCE)
+            else:
+                content_adapter: TypeAdapter[str | list[str | dict[str, Any]]] = (
+                    TypeAdapter(str | list[str | dict[str, Any]])
+                )
+                content = content_adapter.validate_python(
+                    getattr(system, "content"), strict=True
+                )
+                guided = (
+                    content + "\n\n" + _ACTION_GUIDANCE
+                    if isinstance(content, str)
+                    else [
+                        *deepcopy(content),
+                        {"type": "text", "text": _ACTION_GUIDANCE},
+                    ]
+                )
+                system = system.model_copy(update={"content": guided})
+        response = await handler(request.override(tools=visible, system_message=system))
         result: list[BaseMessage] = []
         for message in response.result:
             if not isinstance(message, AIMessage):

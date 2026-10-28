@@ -20,7 +20,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolCallTransformer, ToolNode
 from langgraph.prebuilt.tool_node import ToolRuntime
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from kokoro_agent.tools.action_display import (
     ACTION_FIELD,
@@ -143,6 +143,41 @@ async def test_model_override_is_one_call_without_mutating_the_request() -> None
     assert len(seen) == 1 and seen[0] is not original
     assert original.tools == [tool]
     assert isinstance(seen[0].tools[0], dict)
+
+
+async def test_action_guidance_preserves_system_content_and_only_targets_qualified_tools() -> (
+    None
+):
+    from langchain_core.messages import SystemMessage
+
+    system = SystemMessage(
+        content=[{"type": "text", "text": "Original execution rules"}]
+    )
+    original = ModelRequest(
+        model=LocalFakeChatModel(),
+        messages=[],
+        tools=[lookup_tool()],
+        system_message=system,
+    )
+    before = deepcopy(system)
+    seen: list[ModelRequest[Any]] = []
+
+    async def handler(request: ModelRequest[Any]) -> ModelResponse:
+        seen.append(request)
+        return ModelResponse(result=[AIMessage(content="done")])
+
+    for selected in [frozenset({"lookup"}), frozenset[str]()]:
+        middleware = ActionDisplayMiddleware(selected, lambda _: None, run_id="run-1")
+        await middleware.awrap_model_call(original, handler)
+    assert original.system_message == before
+    guided = seen[0].system_message
+    assert guided is not None
+    guided_content = TypeAdapter(list[Any]).validate_python(
+        getattr(guided, "content"), strict=True
+    )
+    assert guided_content[0] == {"type": "text", "text": "Original execution rules"}
+    assert ACTION_FIELD in str(guided_content[1:])
+    assert seen[1].system_message is system
 
 
 async def test_strip_binds_exact_original_call_without_forwarding_or_mutating_title() -> (

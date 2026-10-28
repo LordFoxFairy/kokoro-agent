@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 from langchain_core.messages import AIMessage
@@ -14,17 +14,23 @@ from langgraph.stream import StreamTransformer
 from langgraph.types import Interrupt
 
 
+class TextProjection(AsyncIterable[str], Awaitable[str], Protocol):
+    """SDK text projection: deltas while iterating, authoritative text when awaited."""
+
+
 @runtime_checkable
 class ModelStream(Protocol):
     """单次模型调用的 v3 流（AsyncChatModelStream）：原生 .text/.reasoning projection。"""
 
-    namespace: list[str]
-    node: str | None
+    @property
+    def namespace(self) -> list[str]: ...
+    @property
+    def node(self) -> str | None: ...
 
     @property
     def message_id(self) -> str | None: ...
     @property
-    def text(self) -> AsyncIterable[str]: ...
+    def text(self) -> TextProjection: ...
     @property
     def reasoning(self) -> AsyncIterable[str]: ...
     @property

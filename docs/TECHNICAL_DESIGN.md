@@ -1,3 +1,9 @@
+## 2026-10-28 流式阶段正文完成帧修复
+
+新真实 Run 已观察到公开文本 delta 非空、随后 assistant.completed 为空，阶段文字被擦除。根因为发布器将 assembled AIMessage.text 当作 SDK 文本投影终值；已 finalized 的工具块可使 assembled message 不含尚未 finalized 的文本块。修复保持四路并发 drain，但保存同一 text projection，迭代 delta 后 await SDK 权威终值；不采用 `final.text or deltas`，以保留非追加式文本修订。SDK 终值非字符串按错误传播，不伪装为空。
+
+此为既有消息内容语义的局部修复，无网络契约、Schema、依赖或历史回填。真实 AsyncChatModelStream dispatch 回归复现混合文本/工具块擦除，并覆盖权威修订与真正 tool-only 空段；原取消、无输出及 replay 测试保留。原生模型脚本测试只覆盖完整 AIMessage，不能替代流式块回归；新模型 Run 的端到端观察作为激活后验收。
+
 ## 2026-10-28 General 公开阶段说明（原行为内补齐）
 
 沿Root现有Agent展示计划及Manus实测：通用Agent在多步任务首组实质操作、关键结果/目的变化时输出简短公开说明；直接回答/简单单步不强加前言，同目的操作不逐项播报。不披露推理、不生成空泛状态、不预称成功。复用现GENERAL_PROMPT和原TEXT_MESSAGE投影，不新增API、事件字段、持久状态或历史回填；MCP行标题仍只消费原事实，不把说明推断为工具成功。

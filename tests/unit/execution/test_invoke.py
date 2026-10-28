@@ -35,6 +35,7 @@ from support.fakes import (
     FakeAgent,
     FakeBus,
     FakeModel,
+    FakeTextProjection,
     FakeRunStream,
     FakeState,
     FakeSubagentRun,
@@ -1725,8 +1726,8 @@ async def test_projection_cleanup_does_not_repeat_cancel_owned_coroutines(
         output_message: AIMessage | None = None
 
         @property
-        def text(self) -> AsyncIterator[Never]:
-            return held("text")
+        def text(self) -> FakeTextProjection:
+            return FakeTextProjection(held("text"), "")
 
         @property
         def reasoning(self) -> AsyncIterator[Never]:
@@ -1956,8 +1957,8 @@ async def test_r94_native_projection_failure_joins_started_leaf_consumers(
             return self.model.output_message
 
         @property
-        def text(self) -> AsyncIterable[str]:
-            return held_projection(self.model.text, "text")
+        def text(self) -> FakeTextProjection:
+            return FakeTextProjection(held_projection(self.model.text, "text"), "")
 
         @property
         def reasoning(self) -> AsyncIterable[str]:

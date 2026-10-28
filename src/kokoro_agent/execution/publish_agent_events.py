@@ -132,8 +132,9 @@ async def _consume_messages(
             continue
         segment_id = model.message_id or ""
         # 原生 .text/.reasoning projection 并发消费（共享 pump、replay-buffer 安全）。
+        text_projection = model.text
         text_task = asyncio.create_task(
-            _pump_text(model.text, queue, segment_id, subagent_id)
+            _pump_text(text_projection, queue, segment_id, subagent_id)
         )
         reasoning_task = asyncio.create_task(
             _pump_reasoning(model.reasoning, queue, segment_id, subagent_id)
@@ -150,9 +151,10 @@ async def _consume_messages(
         if final is None and not text_full:
             # 投影没有任何终值/文本，不凭空制造空完成；真实空 AIMessage 则必须发。
             continue
-        # 终态帧全文覆盖累积，包括 tool-only/空最终文本；空 delta 仍不上 wire。
-        # text 用原生 message.text（排除 tool 块）；thinking 无 completed kind。
-        text_final = final.text if final is not None else text_full
+        # The assembled message can contain finalized tool blocks but omit a
+        # streamed text block. The SDK text projection owns the final public
+        # text, including authoritative revisions to earlier deltas.
+        text_final = _require_text(await text_projection)
         completed = (
             subagent_text_completed_payload(
                 text_final, segment_id=seg, subagent_id=subagent_id
@@ -162,6 +164,12 @@ async def _consume_messages(
         )
         if completed is not None:
             await queue.put(completed)
+
+
+def _require_text(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("model text projection must complete with text")
+    return value
 
 
 async def _pump_text(

@@ -65,6 +65,7 @@ from kokoro_agent.protocol import (
 )
 from collections.abc import (
     AsyncIterator,
+    AsyncIterable,
     Awaitable,
     Callable,
     Mapping,
@@ -97,7 +98,7 @@ from kokoro_agent.domain.run.models import RunUsageSegment
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.execution.protocols import AgentRunnable
+from kokoro_agent.execution.protocols import AgentRunnable, ModelStream
 from kokoro_agent.infrastructure.checkpoint_interactions import (
     PauseReadTarget,
     ResumeReadTarget,
@@ -1817,6 +1818,23 @@ class FakeToolCall:
         return aiter_items(tuple(self.deltas))
 
 
+class FakeTextProjection:
+    """Test double for the SDK's iterable and awaitable text view."""
+
+    def __init__(self, deltas: AsyncIterable[str], final: str) -> None:
+        self.deltas = deltas
+        self.final = final
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self.deltas.__aiter__()
+
+    def __await__(self) -> Generator[object, None, str]:
+        async def complete() -> str:
+            return self.final
+
+        return complete().__await__()
+
+
 @dataclass
 class FakeModel:
     text_deltas: Sequence[str] = ()
@@ -1827,8 +1845,13 @@ class FakeModel:
     node: str | None = "model"
 
     @property
-    def text(self) -> AsyncIterator[str]:
-        return aiter_items(self.text_deltas)
+    def text(self) -> FakeTextProjection:
+        final = (
+            self.output_message.text
+            if self.output_message is not None
+            else "".join(self.text_deltas)
+        )
+        return FakeTextProjection(aiter_items(self.text_deltas), final)
 
     @property
     def reasoning(self) -> AsyncIterator[str]:
@@ -1841,11 +1864,11 @@ class FakeSubagentRun:
     trigger_call_id: str | None = "sub-call-1"
     task_input: str | None = "investigate"
     status: str = "success"
-    models: Sequence[FakeModel] = ()
+    models: Sequence[ModelStream] = ()
     tool_views: Sequence[FakeToolCall] = ()
 
     @property
-    def messages(self) -> AsyncIterator[FakeModel]:
+    def messages(self) -> AsyncIterator[ModelStream]:
         return aiter_items(self.models)
 
     @property
@@ -1863,7 +1886,7 @@ class FakeSubagentRun:
 
 @dataclass
 class FakeRunStream:
-    models: Sequence[FakeModel] = ()
+    models: Sequence[ModelStream] = ()
     tool_views: Sequence[FakeToolCall] = ()
     subagent_runs: Sequence[FakeSubagentRun] = ()
     custom_items: Sequence[object] = ()
@@ -1872,7 +1895,7 @@ class FakeRunStream:
     context_exited: bool = False
 
     @property
-    def messages(self) -> AsyncIterator[FakeModel]:
+    def messages(self) -> AsyncIterator[ModelStream]:
         if self.raise_on_messages:
             raise RuntimeError("boom")
         return aiter_items(self.models)

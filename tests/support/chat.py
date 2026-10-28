@@ -27,6 +27,24 @@ class FakeChatRepository:
         self.messages: dict[tuple[str, str], ChatMessageRecord] = {}
         self.sessions: dict[tuple[str, str, str], ChatSessionRecord] = {}
 
+    async def completed_message_exists(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        chat_message_id: str,
+    ) -> bool:
+        record = self.messages.get((tenant_id, chat_message_id))
+        return bool(
+            record
+            and record.namespace == namespace
+            and record.session_id == session_id
+            and record.run_id == run_id
+            and record.role == "assistant"
+            and record.status == "completed"
+        )
+
     async def ensure_session(
         self,
         tenant_id: str,

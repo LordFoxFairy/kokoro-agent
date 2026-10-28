@@ -20,13 +20,13 @@
     "src/kokoro_agent/clients/bff_admission_generated.py",
     "scripts/generate_bff_admission_models.py"
   ],
-  "combined_sha256": "e97846bd15e39e9d901c2a4c902caa181acc3ef07d94b5df36bbce5bb21fa7e2",
+  "combined_sha256": "289505419e3f82e0ec793c99c2f114420e2a3bf60a2ae973008dfab253b70f50",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
-      "sha256": "e6516fcd2877bbc4be17f8c82ef6b058b6cb827503ef5310e7274091dd39e89e",
+      "sha256": "44dac870bc86fb5cea016beb8ac8eedad79a000e66fba75ab6770d5944441c22",
       "source": "contract/openapi/v1/openapi.json",
-      "source_sha256": "74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc",
+      "source_sha256": "fd8b2857ecbc9577bd98ca73234e4d81c53d4fe189ba86badcf35c774b9a6830",
       "generator": "scripts/generate_failure_models.py"
     },
     {
@@ -103,8 +103,8 @@
     }
   },
   "http_contract": {
-    "version": "8.7.0",
+    "version": "8.8.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc"
+    "sha256": "fd8b2857ecbc9577bd98ca73234e4d81c53d4fe189ba86badcf35c774b9a6830"
   }
 }

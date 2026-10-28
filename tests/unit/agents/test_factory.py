@@ -2045,6 +2045,9 @@ async def test_terminal_supervisor_closes_factory_owned_s3_client_after_drain(
         async def interrupted(self) -> bool:
             return await self._delegate.interrupted()
 
+        async def output(self) -> dict[str, Any] | None:
+            return await self._delegate.output()
+
         async def __aenter__(self) -> DrainWitnessRun:
             await self._delegate.__aenter__()
             return self

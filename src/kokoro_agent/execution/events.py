@@ -57,7 +57,7 @@ from kokoro_agent.domain.chat.projection import (
 )
 from kokoro_agent.domain.chat.action_intent import ActionObservation
 from kokoro_agent.domain.chat.display_text import public_action_title
-from kokoro_agent.domain.chat.models import ChatEventRecord
+from kokoro_agent.domain.chat.models import ChatEventRecord, assistant_message_id
 from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatRepository
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.domain.run.repository import (
@@ -225,6 +225,28 @@ class RunEmitter:
         ] = {}
         self._tool_display_sources: tuple[ToolDisplaySource, ...] | None = None
         self._tool_actions: dict[str, ActionObservation | None] = {}
+
+    async def proven_final_segment(self, segment_id: str) -> str | None:
+        """Require the same Run's persisted public completion, including replay."""
+        if (
+            self._chat_repository is None
+            or self._tenant_id is None
+            or self._namespace is None
+            or self._session_id is None
+        ):
+            return None
+        try:
+            async with asyncio.timeout(2):
+                exists = await self._chat_repository.completed_message_exists(
+                    self._tenant_id,
+                    self._namespace,
+                    self._session_id,
+                    self._run_id,
+                    assistant_message_id(self._namespace, self._run_id, segment_id),
+                )
+        except Exception as error:
+            raise ProgressPersistenceError("final answer proof read failed") from error
+        return segment_id if exists else None
 
     def observe_tool_action(self, observation: ActionObservation) -> None:
         """Transient exact-call evidence; the original Chat activity owns history."""

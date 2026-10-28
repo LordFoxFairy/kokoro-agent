@@ -1,3 +1,11 @@
+## HTTP8.8 最终公开答复身份（设计门，候选）
+
+父为 HTTP8.7.0 / OpenAPI SHA256 `74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc`。唯一 canonical `contract/openapi/v1/openapi.json` 增 decoded `run.completed` → `ChatRunCompleted`，required status=completed|cancelled，原 optional token_usage 不变；新增 optional final_message_id 非空公开 ChatMessage 身份，只允许 status=completed。缺省为未提供已证身份，null 不作为新的业务状态；历史 payload bytes 不补字段。HTTP 返回此绑定仍只在已有本人 Chat replay，不增加 endpoint 或匿名分享字段。
+
+内部 `RunCompletedPayload.final_segment_id` 为 optional，模型原生身份不直出安全 HTTP。原生最终 state 与同 Run completed Chat 记录双证、唯一 terminal 事务固定后，由原 assistant_message_id 转为 final_message_id。取消/失败无绑定；空最终段仍可引用其自身。不能用最后一页、文本 completed、Run完成或任意末段替代绑定。
+
+8.8 只移除该 decoded mapping/schema 并还原版本应逐字恢复完整8.7父，原所有父证明保持。沿既有 failure/provenance 生成与固定产物发行；BFF/App reader-first 之后才启新producer。完整线下/真实持久与浏览器证据另记，当前未发布或激活。
+
 ## 2026-10-28 HTTP8.7 逐调用公开行动说明（候选，未激活）
 
 原 `ChatActivity` 的 tool 分支增加 optional `action_title`，纯文本1–256 UTF-8字节，不含首尾空白、控制/格式/代理字符或已识别私密文本；非法/缺失/不匹配省略，不用相邻正文、工具能力描述或返回内容猜测。不是执行权限、思考过程或结果状态。原 activity/segment身份、顺序、状态及端点不变，无DDL。这里只扩既有公开主Agent tool activity，子代理私有 `subagent.tool.*` 通道不变。

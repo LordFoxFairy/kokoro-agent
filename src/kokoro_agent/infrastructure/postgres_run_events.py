@@ -6,7 +6,9 @@ import hashlib
 import json
 from typing import Any
 
-from kokoro_agent.domain.chat.models import chat_event_id
+from kokoro_agent.domain.chat.models import chat_event_id, assistant_message_id
+from kokoro_agent.domain.chat.repositories import ChatIdentityConflict
+from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRepository
 from kokoro_agent.domain.chat.projection import project_chat_fact
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.protocol import RunRequest, RunCompletedPayload, RunFailedPayload
@@ -37,6 +39,30 @@ from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 class PostgresRunEvents:
     def __init__(self, context: PostgresRunRepositoryContext) -> None:
         self._context = context
+
+    async def validate_final_answer_on_cursor(
+        self,
+        cur: object,
+        request: RunRequest,
+        payload: RunCompletedPayload,
+    ) -> None:
+        """Recheck public evidence inside the original terminal Run lock."""
+        if payload.final_segment_id is None:
+            return
+        scope = RunScope.of(request)
+        chat = PostgresChatRepository(self._context.database_url, self._context.schema)
+        exists = await chat.completed_message_exists_on_cursor(
+            cur,
+            request.execution_identity.tenant_ref,
+            scope.namespace,
+            request.session_id,
+            request.run_id,
+            assistant_message_id(
+                scope.namespace, request.run_id, payload.final_segment_id
+            ),
+        )
+        if not exists:
+            raise ChatIdentityConflict("final answer lacks same-Run public completion")
 
     async def stage_critical_frame(
         self,

@@ -872,8 +872,10 @@ async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
 
 
 @pytest.mark.parametrize("with_tools", [False, True])
+@pytest.mark.parametrize("empty_final", [False, True])
 async def test_native_public_stage_text_and_tools_keep_their_replay_boundaries(
     with_tools: bool,
+    empty_final: bool,
 ) -> None:
     """Real native graph, deterministic model; not a live-provider compliance test."""
     from kokoro_agent.prompts import GENERAL_PROMPT
@@ -894,7 +896,7 @@ async def test_native_public_stage_text_and_tools_keep_their_replay_boundaries(
         )
         for index, text in enumerate(stages)
     ]
-    final = "这是实际最终回答。"
+    final = "" if empty_final else "这是实际最终回答。"
     replies.append(AIMessage(content=final, id="stage-final"))
     agent = create_test_deep_agent(
         model=LocalFakeChatModel.with_script(replies),
@@ -977,6 +979,21 @@ async def test_native_public_stage_text_and_tools_keep_their_replay_boundaries(
         for event in visible
         if event.event_type == "assistant.completed"
     ] == [*stages, final]
+    completed = find_event(events, RunCompleted)
+    final_message = find_events(events, MessageCompleted)[-1]
+    assert (
+        completed.payload.model_dump().get("final_segment_id")
+        == final_message.payload.segment_id
+    )
+    terminal = next(event for event in replay if event.event_type == "run.completed")
+    assert (
+        json.loads(terminal.payload_json).get("final_message_id")
+        == visible[-1].chat_message_id
+    )
+    assert (
+        json.loads(terminal.payload_json)["final_message_id"]
+        != final_message.payload.segment_id
+    )
     actions = [
         json.loads(event.payload_json)
         for event in visible
@@ -1756,6 +1773,9 @@ async def test_projection_cleanup_does_not_repeat_cancel_owned_coroutines(
         async def interrupted(self) -> bool:
             return False
 
+        async def output(self) -> dict[str, object] | None:
+            return None
+
         async def __aenter__(self) -> HeldRun:
             return self
 
@@ -1967,6 +1987,9 @@ async def test_r94_native_projection_failure_joins_started_leaf_consumers(
     class InstrumentedRun:
         async def interrupted(self) -> bool:
             return await native.interrupted()
+
+        async def output(self) -> dict[str, object] | None:
+            return await native.output()
 
         async def __aenter__(self) -> InstrumentedRun:
             await native.__aenter__()

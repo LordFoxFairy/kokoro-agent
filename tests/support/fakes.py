@@ -1893,6 +1893,7 @@ class FakeRunStream:
     is_interrupted: bool = False
     raise_on_messages: bool = False
     context_exited: bool = False
+    output_state: dict[str, object] | None = None
 
     @property
     def messages(self) -> AsyncIterator[ModelStream]:
@@ -1914,6 +1915,9 @@ class FakeRunStream:
 
     async def interrupted(self) -> bool:
         return self.is_interrupted
+
+    async def output(self) -> dict[str, object] | None:
+        return self.output_state
 
     async def __aenter__(self) -> "FakeRunStream":
         self.context_exited = False
@@ -2055,6 +2059,7 @@ def terminal_emitter(
         if isinstance(payload, RunCompletedPayload) and payload.status == "completed":
             payload = RunCompletedPayload(
                 status="completed",
+                final_segment_id=payload.final_segment_id,
                 token_usage=(
                     TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
                     if any(totals)

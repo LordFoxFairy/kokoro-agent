@@ -1,3 +1,9 @@
+## 2026-10-28 最终答复身份与原终态原子保存（设计门，候选）
+
+Agent 不新增表、列、索引或 checkpoint 状态。最终答复绑定随既有 terminal outbox 的 payload_json、同事务安全 Chat terminal payload_json 保存；公开引用使用原 ChatMessage 身份。首次写入前核 tenant/namespace/session/Run、assistant role 与 completed status；已有 Chat 主键及 Run 范围约束复用，禁止跨 owner SQL。
+
+正常流和 checkpoint 完成后的恢复均只核同 Run 已持久正文；无证据省略绑定，不根据目前可见的最后一段填补。cancel/failed 不绑定，token usage 补齐和幂等 replay 不丢字段，异值沿原终态冲突规则拒绝。旧 payload/source_index/seq/digest 与数据原样保留；没有补写历史、自动 GC 或正常库升级。
+
 ## 2026-10-28 Skill display 及旧Run只读恢复 D0（Root 已批准，候选实施中）
 
 无DDL／新表／列／索引／cache／独立日志／checkpoint state或数据回填。新Run有限展示随原fenced安全Chat activity `payload_json` 首次持久，沿既有outbox/replay保留；内部Redis SkillPhase/SkillProgressPayload及worker command/event网络形状不变，展示仅从本地sink参数进入安全Chat投影。原file basename、tool错误／状态／opaque IDs／顺序与lease围栏不变，returned只复用原事实。 MCP title/selector回退及peer共同声明只影响未来首次safe Chat展示，不更改原声明、执行授权或旧event/digest。

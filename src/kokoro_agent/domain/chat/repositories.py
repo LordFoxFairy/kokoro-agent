@@ -80,6 +80,15 @@ class ChatRepository(Protocol):
         activity_id: str,
     ) -> ChatEventRecord | None: ...
 
+    async def completed_message_exists(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        chat_message_id: str,
+    ) -> bool: ...
+
     async def history(
         self,
         tenant_id: str,

@@ -390,6 +390,45 @@ class PostgresChatRepository:
         value = row["source_index"] if row is not None else None
         return 0 if value is None else int(value) + 1
 
+    async def completed_message_exists(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        chat_message_id: str,
+    ) -> bool:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                return await self.completed_message_exists_on_cursor(
+                    cur,
+                    tenant_id,
+                    namespace,
+                    session_id,
+                    run_id,
+                    chat_message_id,
+                )
+
+    async def completed_message_exists_on_cursor(
+        self,
+        cur: object,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        chat_message_id: str,
+    ) -> bool:
+        await execute_sql(
+            cur,
+            """SELECT 1 FROM {} WHERE tenant_id=%s AND namespace=%s
+            AND session_id=%s AND run_id=%s AND chat_message_id=%s
+            AND role='assistant' AND status='completed'""".format(
+                qualified(self._schema, CHAT_MESSAGES_TABLE)
+            ),
+            (tenant_id, namespace, session_id, run_id, chat_message_id),
+        )
+        return await fetch_one(cur) is not None
+
     async def watermark(self, tenant_id: str, namespace: str, session_id: str) -> int:
         _validate_scope(tenant_id, namespace, session_id)
         async with connect_pg(self._database_url) as conn:

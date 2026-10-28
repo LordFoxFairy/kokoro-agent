@@ -27,6 +27,35 @@ _DECODED_PROFILES = {
     "todo.updated": "#/components/schemas/ChatTodo",
 }
 
+_CURRENT_DECODED_PROFILES = {
+    **_DECODED_PROFILES,
+    "run.completed": "#/components/schemas/ChatRunCompleted",
+}
+_FINAL_ANSWER_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["status"],
+    "properties": {
+        "status": {"type": "string", "enum": ["completed", "cancelled"]},
+        "token_usage": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["input_tokens", "output_tokens"],
+            "properties": {
+                "input_tokens": {"type": "integer", "minimum": 0},
+                "output_tokens": {"type": "integer", "minimum": 0},
+            },
+        },
+        "final_message_id": {"type": "string", "minLength": 1},
+    },
+    "allOf": [
+        {
+            "if": {"required": ["final_message_id"]},
+            "then": {"properties": {"status": {"const": "completed"}}},
+        }
+    ],
+}
+
 _TYPED_SCHEMAS: dict[str, object] = {
     "Meta": {
         "type": "object",
@@ -626,7 +655,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     document = read_contract_document(source)
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
-    http86_action_title_parent_bytes(document)
+    http87_final_answer_parent_bytes(document)
     expected = failure_model_bytes(document, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
@@ -657,7 +686,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.7.0",
+        "version": "8.8.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -727,12 +756,17 @@ def _local_schema_references(value: object, schemas: dict[str, object]) -> None:
 def validate_decoded_chat_payload(
     document: dict[str, object], *, event_type: str, payload_json: str
 ) -> None:
-    """Validate the four mapped raw Chat profiles without I/O or normalization.
+    """Validate the mapped raw Chat profiles without I/O or normalization.
 
     Ordinary Message/Delivery profiles are outside this entry's scope. Callers
     dispatch only declared profiles; unknown/missing bindings fail closed.
     """
-    if event_type not in _DECODED_PROFILES:
+    profiles = (
+        _CURRENT_DECODED_PROFILES
+        if _object(document.get("info"), source="info").get("version") == "8.8.0"
+        else _DECODED_PROFILES
+    )
+    if event_type not in profiles:
         raise ValueError("unsupported decoded Chat event type")
     components = _object(document.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
@@ -741,7 +775,7 @@ def validate_decoded_chat_payload(
     if binding != {
         "discriminator": "event_type",
         "property": "payload_json",
-        "mapping": _DECODED_PROFILES,
+        "mapping": profiles,
     }:
         raise ValueError("decoded Chat profile mapping is invalid")
     _local_schema_references(schemas, schemas)
@@ -755,7 +789,7 @@ def validate_decoded_chat_payload(
         raise ValueError("malformed decoded payload JSON") from error
     value = _object(decoded, source="decoded payload")
     canonical = _canonical_payload_bytes(value)
-    reference = _DECODED_PROFILES[event_type]
+    reference = profiles[event_type]
     try:
         validate_schema_instance(
             value,
@@ -1249,8 +1283,44 @@ _ACTION_TITLE = {
 }
 
 
+def http87_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the successful final-answer identity; prove issued HTTP8.7."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.8.0":
+        raise ValueError("final answer identity requires HTTP 8.8.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    if schemas.pop("ChatRunCompleted", None) != _FINAL_ANSWER_SCHEMA:
+        raise ValueError("final answer decoded schema differs")
+    event = _object(schemas.get("ChatEvent"), source="ChatEvent")
+    decoded = _object(event.get("x-kokoro-decoded-payloads"), source="decoded")
+    mapping = _object(decoded.get("mapping"), source="mapping")
+    if mapping.pop("run.completed", None) != "#/components/schemas/ChatRunCompleted":
+        raise ValueError("final answer decoded mapping differs")
+    decoded["mapping"] = mapping
+    event["x-kokoro-decoded-payloads"] = decoded
+    schemas["ChatEvent"] = event
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.7.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc"
+    ):
+        raise ValueError("complete HTTP8.7 final answer parent differs")
+    return raw
+
+
 def http86_action_title_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact per-call intent field; prove all issued HTTP8.6 bytes."""
+    if _object(document.get("info"), source="info").get("version") == "8.8.0":
+        document = _object(
+            json.loads(http87_final_answer_parent_bytes(document)),
+            source="HTTP8.7 parent",
+        )
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.7.0":
@@ -1282,7 +1352,10 @@ def http86_action_title_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the bounded capability description; prove issued HTTP8.5."""
-    if _object(document.get("info"), source="info").get("version") == "8.7.0":
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.7.0",
+        "8.8.0",
+    }:
         document = _object(
             json.loads(http86_action_title_parent_bytes(document)),
             source="HTTP8.6 parent",
@@ -1329,6 +1402,7 @@ def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
     if _object(document.get("info"), source="info").get("version") in {
         "8.6.0",
         "8.7.0",
+        "8.8.0",
     }:
         document = _object(
             json.loads(http85_tool_description_parent_bytes(document)),
@@ -1368,6 +1442,7 @@ def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
         "8.5.0",
         "8.6.0",
         "8.7.0",
+        "8.8.0",
     }:
         document = _object(
             json.loads(http84_activity_details_parent_bytes(document)),
@@ -1411,6 +1486,7 @@ def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
         "8.5.0",
         "8.6.0",
         "8.7.0",
+        "8.8.0",
     }:
         document = _object(
             json.loads(http83_tool_facts_parent_bytes(document)),
@@ -1491,6 +1567,7 @@ def _display_parent(document: dict[str, object]) -> dict[str, object]:
         "8.5.0",
         "8.6.0",
         "8.7.0",
+        "8.8.0",
     }:
         return _object(
             json.loads(http82_display_parent_bytes(document)),

@@ -516,17 +516,16 @@ class PostgresRunLeases:
                             isinstance(replay_payload, RunCompletedPayload)
                             and replay_payload.status == "completed"
                         ):
-                            replay_payload = RunCompletedPayload(
-                                status="completed",
-                                token_usage=(
-                                    TokenUsage(
+                            replay_payload = replay_payload.model_copy(
+                                update={
+                                    "token_usage": TokenUsage(
                                         input_tokens=int(row["usage_input_total"]),
                                         output_tokens=int(row["usage_output_total"]),
                                     )
                                     if row["usage_input_total"]
                                     or row["usage_output_total"]
-                                    else None
-                                ),
+                                    else None,
+                                }
                             )
                         replay_projection = project_chat_fact(
                             tenant_id=request.execution_identity.tenant_ref,
@@ -637,15 +636,17 @@ class PostgresRunLeases:
                         isinstance(payload, RunCompletedPayload)
                         and payload.status == "completed"
                     ):
-                        payload = RunCompletedPayload(
-                            status="completed",
-                            token_usage=(
-                                TokenUsage(
+                        payload = payload.model_copy(
+                            update={
+                                "token_usage": TokenUsage(
                                     input_tokens=total_in, output_tokens=total_out
                                 )
                                 if total_in or total_out
-                                else None
-                            ),
+                                else None,
+                            }
+                        )
+                        await events.validate_final_answer_on_cursor(
+                            cur, request, payload
                         )
                     seq, index = (
                         int(row["durable_counter"]),

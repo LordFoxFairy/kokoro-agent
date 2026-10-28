@@ -1,3 +1,9 @@
+## 2026-10-28 最终答复边界：候选实现，未激活
+
+普通单 Agent 在原生输出和同 Run 持久公开完成记录双证后绑定最终答复，原 terminal 事务重核并冻结；HTTP8.8 只增加可选公开身份，旧记录不回填、无 DDL。真实 native 纯文本/多步/空 final、HITL 重建恢复、return_direct、checkpoint 无新流均通过；真实 PostgreSQL 定向 12 项通过，涵盖绑定/usage/replay/取消及写失败回滚。ruff/format/pyright/lock/contract/build 通过。
+
+默认套件 **3141 passed、1 failed、930 deselected**，不宣称全门通过。唯一失败是新增 native Swarm handoff 正控：原外层流缺 peer 投影，早于 final 判定失败；保留 RED 不 skip/xfail，独立接线修复待完成。四条初次 contract 断言仍指向旧版本已按新正式字段收敛，最终复跑没有其它失败。BFF/App 尚未消费，页面未变化、不得正常激活或合并；Root 原计划继续负责界面闭环。
+
 ## 2026-10-28 MCP 重复结果预览修复
 
 只读投影消除严格重复的自然语言 text/result；JSON形状、多块与额外键保留，权限、敏感过滤、字节预算与执行记录不变。旧同Run实际回读：2347字节正文曾被重复envelope推到4095字节并标截断，现原文完整；11条活动保留。候选 owner 验证：focused77、默认3112（923资源marker未选）、独立PG display25、ruff/pyright/lock/contract/build通过。首次用系统Python运行PG脚本缺psycopg，改用本仓冻结venv后通过，未改测试。只读复核无确定P0–P2；正常激活和浏览器证据由Root续记，不代表整个Manus展示或产品闭环。

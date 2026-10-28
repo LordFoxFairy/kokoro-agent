@@ -377,6 +377,7 @@ class _Delivery(_Payload):
 
 class _Terminal(_Payload):
     status: Literal["completed", "cancelled"]
+    final_message_id: str | None = None
     token_usage: dict[str, JsonValue] | None = None
 
 
@@ -528,6 +529,11 @@ def project_chat_fact(
         event_type = "run.completed"
         safe_payload = _Terminal(
             status=payload.status,
+            final_message_id=(
+                assistant_message_id(namespace, run_id, payload.final_segment_id)
+                if payload.final_segment_id is not None
+                else None
+            ),
             token_usage=None
             if payload.token_usage is None
             else payload.token_usage.model_dump(mode="json"),

@@ -1,3 +1,17 @@
+## 2026-10-28 整轮过程与最终答复边界（设计门，候选）
+
+目标为用户指定 Manus 任务中已实测的“整轮过程披露 → 有序公开正文/动作组”，最终答复独立显示。Agent 只发布执行事实，不拥有折叠 UI。基线 ba6c5a5 / HTTP8.7；不改 SDK、图、模型提示词、工具权限、计费或执行结果，不重写旧记录。
+
+最终答复由已批准原生图的正常终止语义判定：v3 四投影完全排空后，`await run.output()` 的末项必须为有稳定 ID、无 tool_calls/invalid_tool_calls 的 AIMessage；不向前搜索非空正文。先按同 tenant/namespace/session/Run 的原持久公开 assistant completed 记录核验，再由原唯一终态事务重新核验、与成功终态一同冻结。子代理/摘要/此前 Run、return_direct 的 ToolMessage、未知输出不绑定；空最终 AI 可绑定其自身空段，不晋升前一阶段文字。HITL waiting/unknown、失败、取消不发布 final；resume 使用同一判定，checkpoint 已完成而本次没有新流时仍核对同 Run 已持久记录。
+
+内部 RunCompletedPayload 可选 final_segment_id 只承载原生段 ID；安全 Chat 终态转为已有 assistant_message_id 派生的 final_message_id，不公开原生 ID。仅已证绑定有值；缺省统一表示没有可证明的最终答复身份，不额外建立“已知无答复”状态。旧事件/恢复保持缺省，禁止倒推或回填。现 token usage 补全/terminal replay 必须保留绑定，重复终态异值冲突。
+
+写区为 execution 的原生输出判定、RunEmitter 的同 Run 公开事实核验、protocol/events、Chat projection/repository 与既有 terminal transaction。HTTP canonical 发布 8.8 decoded run.completed profile；BFF 固定发行物后贯穿原 ledger/ordered history，App 最后消费。reader-first 配对前不激活正常 producer；回滚只回程序，保留能读取新字段的消费者。Agent 无 Schema/数据迁移，BFF 持久边界由其设计门单独承接。
+
+验证必须覆盖真实原生图的多步/纯文本/空最终段/HITL resume/return_direct，错 Run/子代理/不存在记录、租约/取消竞争、checkpoint 后重建、终态原子性及 replay；mock 不称真实持久集成。此设计不是 UI 已完成或正常环境已生效。
+
+实施发现独立既存缺口：官方 Swarm 外层未承接 peer stream transformers，`pump_run` 在读取 `tool_calls` 时即失败，早于本片最终输出判定。新增 native handoff 正控保留 RED、不 skip/xfail；不能声称 Swarm 已验收。其完整修复须接官方 subgraphs 的已声明 peer 流并保留嵌套子代理隔离，不用空迭代器或仅消除 AttributeError 冒通过；普通单 Agent 的本片证据不因此作废，也不激活未配对 producer。
+
 ## 2026-10-28 逐调用公开行动说明：生产与绑定设计门（源码已接线，未激活）
 
 用户要求以 Manus 的具体行动而非内部调用日志组织主线。Agent 保持唯一执行展示 owner：同一次模型 tool call 的模型可见 schema 增加可选保留字段 `_kokoro_action`，表达简短公开行动/对象，不含推理、秘密或成功断言；不是 provider description。使用官方 ModelRequest/ToolCallRequest override，不替换 mounted 工具、循环或远端 schema，不增加模型请求。保留键冲突/非对象/strict schema不扩展、不剥离原业务字段。

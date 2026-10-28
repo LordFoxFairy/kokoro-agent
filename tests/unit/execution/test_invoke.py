@@ -870,6 +870,127 @@ async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
     ] == ["draft", ""]
 
 
+@pytest.mark.parametrize("with_tools", [False, True])
+async def test_native_public_stage_text_and_tools_keep_their_replay_boundaries(
+    with_tools: bool,
+) -> None:
+    """Real native graph, deterministic model; not a live-provider compliance test."""
+    from kokoro_agent.prompts import GENERAL_PROMPT
+
+    stages = ["先读取项目清单。", "清单已返回，再核对文件。"] if with_tools else []
+    replies = [
+        AIMessage(
+            content=text,
+            id=f"stage-{index}",
+            tool_calls=[
+                {
+                    "name": "noop",
+                    "args": {},
+                    "id": f"call-{index}",
+                    "type": "tool_call",
+                }
+            ],
+        )
+        for index, text in enumerate(stages)
+    ]
+    final = "这是实际最终回答。"
+    replies.append(AIMessage(content=final, id="stage-final"))
+    agent = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(replies),
+        tools=[
+            StructuredTool(
+                name="noop",
+                description="no-op",
+                args_schema=_NoopArgs,
+                func=lambda: "ok",
+            )
+        ],
+        system_prompt=GENERAL_PROMPT,
+        subagents=[],
+        checkpointer=InMemorySaver(),
+        permissions=[],
+        interrupt_on={},
+    )
+    bus, chat = FakeBus(), FakeChatRepository()
+    run_id = "public-stage-order"
+    emitter = await RunEmitter.attach(
+        bus,
+        run_id,
+        tenant_id="tenant",
+        namespace="tenant:subject",
+        session_id="session-stage",
+        chat_repository=chat,
+    )
+    assert (
+        await invoke_once(
+            emitter,
+            agent,
+            "stage-thread",
+            {"messages": [HumanMessage(content="go")]},
+            initial=True,
+            approval_tool_names=frozenset(),
+            source_for=_runtime_custom,
+            finalize_terminal=terminal_emitter(
+                emitter, _always_claim, usage_recorder()[0]
+            ),
+            record_usage=usage_recorder()[0],
+            on_native_settled=settled_state_callback(agent, "stage-thread"),
+        )
+        is True
+    )
+    events = bus.run_events(run_id)
+    assert [
+        event.kind
+        for event in events
+        if event.kind in {"message.completed", "tool.invoked", "tool.returned"}
+    ] == [
+        *(
+            kind
+            for _ in stages
+            for kind in ("message.completed", "tool.invoked", "tool.returned")
+        ),
+        "message.completed",
+    ]
+    assert [
+        event.payload.content for event in find_events(events, MessageCompleted)
+    ] == [*stages, final]
+    assert [event.payload.tool_id for event in find_events(events, ToolInvoked)] == [
+        f"call-{index}" for index in range(len(stages))
+    ]
+    replay = await chat.replay("tenant", "tenant:subject", "session-stage")
+    visible = [
+        event
+        for event in replay
+        if event.event_type in {"assistant.completed", "activity"}
+    ]
+    assert [event.event_type for event in visible] == [
+        *(
+            kind
+            for _ in stages
+            for kind in ("assistant.completed", "activity", "activity")
+        ),
+        "assistant.completed",
+    ]
+    assert [
+        json.loads(event.payload_json)["content"]
+        for event in visible
+        if event.event_type == "assistant.completed"
+    ] == [*stages, final]
+    actions = [
+        json.loads(event.payload_json)
+        for event in visible
+        if event.event_type == "activity"
+    ]
+    assert [action["status"] for action in actions] == [
+        status for _ in stages for status in ("running", "completed")
+    ]
+    assert len({action["activity_id"] for action in actions}) == len(stages)
+    assert [
+        message.content
+        for message in await chat.history("tenant", "tenant:subject", "session-stage")
+    ] == [*stages, final]
+
+
 class _LoopingModel(LocalFakeChatModel):
     """每轮都发同一工具调用：制造无限图循环，验证 recursion_limit 熔断。"""
 

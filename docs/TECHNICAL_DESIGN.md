@@ -1,3 +1,9 @@
+## 2026-10-28 General 公开阶段说明（原行为内补齐）
+
+沿Root现有Agent展示计划及Manus实测：通用Agent在多步任务首组实质操作、关键结果/目的变化时输出简短公开说明；直接回答/简单单步不强加前言，同目的操作不逐项播报。不披露推理、不生成空泛状态、不预称成功。复用现GENERAL_PROMPT和原TEXT_MESSAGE投影，不新增API、事件字段、持久状态或历史回填；MCP行标题仍只消费原事实，不把说明推断为工具成功。
+
+原生DeepAgents测试已覆盖同AIMessage正文+tool_calls；本片补两段公开说明/两个实际离线工具/最终正文与Chat replay/history次序、直接回答无合成阶段说明。此证明是确定性模型＋真实原生图，ChatRepository为测试double，不是实际provider顺从性、真实持久化或任意投影调度保序证明。生产闭环还须新Run真实模型与浏览器观察。prompt原字节已在现runtime recipe来源内，切换仅在无非终态Run时进行，不用新prompt恢复旧冻结Run；不改依赖或模型profile。
+
 ## 2026-10-28 HTTP8.5 私有工具详情（Root 已批准；候选）
 
 复用本人已授权 Run 的现有 GET `/v1/runs/{run_id}/display`，仅增加 `activity_details`；不改 Chat/SSE、worker执行、数据库或授权。每项通过原 Run activity、typed AIMessage tool-call、journal 与 frozen selection 精确绑定；未知来源不输出。运行中只输出有证据的输入，terminal journal 才输出结果；旧 tool_facts/失败证明/首帧 detail 和活动顺序不变。GET只读，不补历史、不查询当前连接器目录、不生成连接器名。文件仅承接已证明的安全 virtual target。

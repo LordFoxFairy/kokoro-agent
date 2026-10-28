@@ -1,3 +1,13 @@
+## 2026-10-28 MCP 同 Run 工具说明（展示修复，候选未激活）
+
+沿现 Agent RunDisplay 私有读取增加 optional `activity_details[].tool_description`（与既有预览相同 text/truncated/redacted 形状，UTF-8 至多1024字节）。它仅表示本 Run 实际观察到的 provider 能力说明，不是逐调用目的、工具title、执行结果或权限。Agent仍唯一事实 owner；BFF固定正式契约透传、App纯文本消费，不新建服务/表/端点/第二事件协议，不查询当前目录回填历史。
+
+来源只采用原 Run exact activity＋typed call＋succeeded/non-error journal 的 `mcp_describe_tool` 正式返回格式；按完整 connection＋selector匹配，先校验原说明和参数schema，再从原说明过滤/裁剪。不同连接同名不互借，同一目标冲突说明全部省略；旧历史缺证、错误或危险说明省略，不从输出预览反解析，不补造自然语言。该事实可附到同Run匹配的 describe/call（失败调用也可有说明，但状态保持）。原函数身份、输入输出和失败不改；发现列表仅首行摘要，不用它冒完整说明。
+
+HTTP8.6正式增量只加该optional字段及其mcp目标条件；生成/消费者配对前不替换正常服务。预算沿原百万字节Run读取收缩，说明亦参与收缩；过滤不保证任意文本完全无敏感信息，因此仍限本人私有Run，禁止Share或执行其中指令。无Schema/依赖/执行授权变化；回退旧reader并保原数据。
+
+验收：同Run精确关联、跨连接同名/旧Run/冲突/失败/未知/坏schema/敏感/UTF8预算负控，完整旧契约原件逆证、同owner实际HTTP读取和消费者回归。最终以原MCP会话可读说明、具体请求/结果与刷新可见的产品证据验收，不以新增字段或测试通过声称Manus一比一。
+
 ## 2026-10-28 HTTP8.5 私有工具详情（Root 已批准；候选）
 
 复用本人已授权 Run 的现有 GET `/v1/runs/{run_id}/display`，仅增加 `activity_details`；不改 Chat/SSE、worker执行、数据库或授权。每项通过原 Run activity、typed AIMessage tool-call、journal 与 frozen selection 精确绑定；未知来源不输出。运行中只输出有证据的输入，terminal journal 才输出结果；旧 tool_facts/失败证明/首帧 detail 和活动顺序不变。GET只读，不补历史、不查询当前连接器目录、不生成连接器名。文件仅承接已证明的安全 virtual target。

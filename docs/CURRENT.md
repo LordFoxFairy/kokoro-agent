@@ -1,3 +1,9 @@
+## 2026-10-28 MCP 工具说明：HTTP8.6 候选
+
+既有私有 RunDisplay 的 activity_details 可选 tool_description，仅绑定同 Run、冻结 Connection 与精确 selector 的成功 describe 记录；全原文冲突即省略，1024 UTF8 bytes、脱敏/截断及总响应预算保持。它是观察到的能力说明，不是动作目的或调用时版本，不改原 Run/工具状态，也不补造历史正文。BFF/App 配对与正常加载仍待。
+
+主方基线894e605停写验证：default 3039 PASS、921 deselected；相关919 PASS；真实隔离 PostgreSQL 24 PASS；contract、ruff format/check、pyright(0 errors)、uv lock --check、sdist/wheel build通过。前序缺字段 RED、完整父契约逆证修补与类型修补均保留诊断；8.6→8.5全字节SHA验证保持，不放宽旧契约。独立只读审查未发现确定P0–P2，产品覆盖限制如上。只证明owner切片，不以测试数量宣称展示完成。
+
 ## 2026-10-25 StateBackend 原生文件 checkpoint 恢复修复（候选，正常未激活）
 
 实际生产 Factory 图在 tool journal 已确认而 files channel 尚未 checkpoint 的边界恢复时，write_file/edit_file 可能仅重放文本 ACK、丢失文件状态。现由受信 backend 装配仅为 StateBackend 原生文件写使用 checkpoint 重放，不将该类纯 channel 更新当外部副作用；MCP/deliver/外部 backend journal、lease、权限、审批与预算保持。真实缺陷 RED 2，完整生产图/持久 journal 边界及外部 effect-once 负控承接于现 factory/tool-journal 回归。ToolResultReview 独立文本缓存的恢复缺口仍存在（当前通用默认无 review_tools），未据此称全部策略恢复。

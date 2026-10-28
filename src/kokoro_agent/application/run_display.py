@@ -26,6 +26,7 @@ from kokoro_agent.domain.chat.tool_display_preview import (
     ActivityDetail,
     ToolPreview,
     clip_text,
+    described_tool,
     mcp_output,
     preparation_output,
     preview,
@@ -375,6 +376,8 @@ def _activity_details(
                 conflicts.add(call_id)
             calls[call_id] = candidate
     details: dict[str, ActivityDetail] = {}
+    targets: dict[str, tuple[str, str]] = {}
+    descriptions: dict[tuple[str, str], set[str]] = {}
     for call_id, (name, args) in calls.items():
         if (
             call_id in conflicts
@@ -419,6 +422,17 @@ def _activity_details(
         if input_preview is not None:
             values["input_preview"] = input_preview
         row = journal[call_id]
+        if target is not None:
+            binding = (args["server"], args["tool"])
+            targets[activity_id] = binding
+            if (
+                name == "mcp_describe_tool"
+                and row.status == "succeeded"
+                and not row.is_error
+            ):
+                parsed = described_tool(row.result, server=binding[0], tool=binding[1])
+                if parsed is not None:
+                    descriptions.setdefault(binding, set()).add(parsed[0])
         if row.status in {"succeeded", "failed"}:
             output = (
                 mcp_output(row.result)
@@ -440,6 +454,17 @@ def _activity_details(
             if output is not None:
                 values["output_preview"] = output
         details[activity_id] = ActivityDetail.model_validate(values)
+    # Capability documentation observed in this Run, not this call's purpose.
+    # Compare untruncated originals: a shared prefix is not proof of agreement.
+    for activity_id, binding in targets.items():
+        observed = descriptions.get(binding, set())
+        if len(observed) != 1:
+            continue
+        description = preview(next(iter(observed)), limit=1024, plain=True)
+        if description is not None:
+            values = details[activity_id].model_dump(mode="json")
+            values["tool_description"] = description.model_dump(mode="json")
+            details[activity_id] = ActivityDetail.model_validate(values)
     # File targets remain in original display_detail/tool_paths; category alone
     # does not establish the actual native function name (write_file vs edit_file).
     return [details[key] for key in activities if key in details][:128]
@@ -456,7 +481,7 @@ def _fit_display(value: RunDisplay) -> RunDisplay:
         return value
     details = list(value.activity_details)
     for index in range(len(details) - 1, -1, -1):
-        for field in ("output_preview", "input_preview"):
+        for field in ("output_preview", "input_preview", "tool_description"):
             old: ToolPreview | None = getattr(details[index], field)
             if old is None:
                 continue

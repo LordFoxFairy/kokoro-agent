@@ -626,7 +626,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     document = read_contract_document(source)
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
-    http84_activity_details_parent_bytes(document)
+    http85_tool_description_parent_bytes(document)
     expected = failure_model_bytes(document, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
@@ -657,7 +657,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.5.0",
+        "version": "8.6.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -1206,8 +1206,86 @@ _ACTIVITY_DETAILS = {
 }
 
 
+_TOOL_DESCRIPTION = {
+    "type": "object",
+    "required": ["text", "truncated", "redacted"],
+    "properties": {
+        "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "x-kokoro-utf8-byte-limit": 1024,
+        },
+        "truncated": {"type": "boolean"},
+        "redacted": {"type": "boolean"},
+    },
+    "additionalProperties": False,
+    "description": "Provider capability documentation observed in this Run, "
+    "matched by connection and selector. Not a per-call purpose, "
+    "execution result, title or authorization. Missing or "
+    "conflicting evidence is omitted; private display only.",
+}
+
+_TOOL_DESCRIPTION_CONDITION = [
+    {
+        "if": {"required": ["tool_description"]},
+        "then": {
+            "required": ["target"],
+            "properties": {
+                "tool_name": {"enum": ["mcp_call", "mcp_describe_tool"]},
+                "target": {"properties": {"kind": {"const": "mcp_tool"}}},
+            },
+        },
+    }
+]
+
+
+def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the bounded capability description; prove issued HTTP8.5."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.6.0":
+        raise ValueError("tool descriptions require HTTP 8.6.0")
+    schemas = _object(
+        _object(parent.get("components"), source="components").get("schemas"),
+        source="schemas",
+    )
+    display = _object(schemas.get("RunDisplay"), source="RunDisplay")
+    properties = _object(display.get("properties"), source="RunDisplay properties")
+    details = _object(properties.get("activity_details"), source="activity details")
+    item = _object(details.get("items"), source="activity detail")
+    fields = _object(item.get("properties"), source="activity detail fields")
+    if (
+        fields.pop("tool_description", None) != _TOOL_DESCRIPTION
+        or item.pop("allOf", None) != _TOOL_DESCRIPTION_CONDITION
+    ):
+        raise ValueError("tool description delta differs")
+    item["properties"] = fields
+    details["items"] = item
+    properties["activity_details"] = details
+    display["properties"] = properties
+    schemas["RunDisplay"] = display
+    components = _object(parent["components"], source="components")
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.5.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "b000f24e88bf5e4f20718ae7f6b29c94ef96b2c6fe42f73ef7231695f438e897"
+    ):
+        raise ValueError("complete HTTP8.5 tool description parent differs")
+    return raw
+
+
 def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only private details and prove every byte of the issued HTTP8.4."""
+    if _object(document.get("info"), source="info").get("version") == "8.6.0":
+        document = _object(
+            json.loads(http85_tool_description_parent_bytes(document)),
+            source="HTTP8.5 parent",
+        )
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.5.0":
@@ -1238,7 +1316,10 @@ def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact historical MCP display delta; prove all HTTP8.3 bytes."""
-    if _object(document.get("info"), source="info").get("version") == "8.5.0":
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.5.0",
+        "8.6.0",
+    }:
         document = _object(
             json.loads(http84_activity_details_parent_bytes(document)),
             source="HTTP8.4 parent",
@@ -1279,6 +1360,7 @@ def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
     if _object(document.get("info"), source="info").get("version") in {
         "8.4.0",
         "8.5.0",
+        "8.6.0",
     }:
         document = _object(
             json.loads(http83_tool_facts_parent_bytes(document)),
@@ -1357,6 +1439,7 @@ def _display_parent(document: dict[str, object]) -> dict[str, object]:
         "8.3.0",
         "8.4.0",
         "8.5.0",
+        "8.6.0",
     }:
         return _object(
             json.loads(http82_display_parent_bytes(document)),

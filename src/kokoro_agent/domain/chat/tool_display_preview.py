@@ -79,6 +79,10 @@ class ActivityDetail(BaseModel):
         default=None, exclude_if=lambda v: v is None
     )
 
+    tool_description: ToolPreview | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+
     @field_validator("tool_name")
     @classmethod
     def valid_name(cls, value: str) -> str:
@@ -93,7 +97,14 @@ class ActivityDetail(BaseModel):
             and len(self.input_preview.text.encode()) > 2048
         ):
             raise ValueError("private input preview too large")
-        for name in ("target", "input_preview", "output_preview"):
+        if self.tool_description is not None and (
+            len(self.tool_description.text.encode()) > 1024
+            or self.tool_name not in {"mcp_call", "mcp_describe_tool"}
+            or self.target is None
+            or self.target.kind != "mcp_tool"
+        ):
+            raise ValueError("description requires bounded same-Run MCP evidence")
+        for name in ("target", "input_preview", "output_preview", "tool_description"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError("null optional private detail")
         return self
@@ -233,6 +244,29 @@ def mcp_output(raw: str) -> ToolPreview | None:
         return None
 
 
+def described_tool(
+    raw: str, *, server: str, tool: str
+) -> tuple[str, dict[str, object]] | None:
+    """Read only the exact describe wrapper, before preview clipping/filtering."""
+    if len(raw) > 1024 * 1024:
+        return None
+    prefix = f"{server}/{tool}\n"
+    if not raw.startswith(prefix):
+        return None
+    description, separator, schema = raw[len(prefix) :].rpartition("\n参数 schema：")
+    if not separator:
+        return None
+    try:
+        value = bounded_json(schema)
+        if not isinstance(value, dict):
+            return None
+        return description, TypeAdapter(dict[str, object]).validate_python(
+            value, strict=True
+        )
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+
+
 def preparation_output(
     raw: str,
     *,
@@ -247,20 +281,10 @@ def preparation_output(
     if name == "mcp_describe_tool":
         if server not in connections or tool is None:
             return None
-        prefix = f"{server}/{tool}\n"
-        if not raw.startswith(prefix):
+        parsed = described_tool(raw, server=server, tool=tool)
+        if parsed is None:
             return None
-        description, separator, schema = raw[len(prefix) :].rpartition(
-            "\n参数 schema："
-        )
-        if not separator:
-            return None
-        try:
-            value = bounded_json(schema)
-        except (ValueError, UnicodeError, RecursionError):
-            return None
-        if not isinstance(value, dict):
-            return None
+        description, value = parsed
         return preview(
             {
                 "tool": tool,

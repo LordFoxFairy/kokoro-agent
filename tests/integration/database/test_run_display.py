@@ -644,7 +644,15 @@ async def test_late_native_read_file_checkpoint_recovers_exact_skill_path_not_me
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "case",
-    ["running", "terminal", "discover", "foreign_run", "wrong_name", "secret_output"],
+    [
+        "running",
+        "terminal",
+        "discover",
+        "description",
+        "foreign_run",
+        "wrong_name",
+        "secret_output",
+    ],
 )
 async def test_private_details_read_exact_native_call_and_journal_without_writes(
     run_chat_schema: str,
@@ -658,7 +666,13 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
 
     run = request("private-display-" + case)
     scope = RunScope.of(run)
-    name = "mcp_list_tools" if case == "discover" else "mcp_call"
+    name = (
+        "mcp_list_tools"
+        if case == "discover"
+        else "mcp_describe_tool"
+        if case == "description"
+        else "mcp_call"
+    )
     args: dict[str, Any] = (
         {}
         if case == "discover"
@@ -671,6 +685,8 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
             },
         }
     )
+    if case == "description":
+        args = {"server": "connection", "tool": "query"}
     projection = project_chat_fact(
         tenant_id=run.execution_identity.tenant_ref,
         namespace=scope.namespace,
@@ -683,6 +699,8 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
         ),
         tool_display_code="tool.mcp.discover"
         if case == "discover"
+        else "tool.mcp.describe"
+        if case == "description"
         else "tool.mcp.call",
     )
     assert projection is not None
@@ -696,6 +714,8 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
     result = (
         "connection/query — Available tools"
         if case == "discover"
+        else 'connection/query\nActual result documentation\n参数 schema：{"type":"object"}'
+        if case == "description"
         else json.dumps(
             {
                 "content": [
@@ -781,3 +801,10 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
             assert (
                 "Available tools" if case == "discover" else "Actual result"
             ) in details[0]["output_preview"]["text"]
+
+        if case == "description":
+            assert details[0]["tool_description"] == {
+                "text": "Actual result documentation",
+                "truncated": False,
+                "redacted": False,
+            }

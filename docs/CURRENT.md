@@ -1,3 +1,13 @@
+## 2026-10-28 HTTP8.7 行动标题原链接线（未激活）
+
+同一次模型 tool-call schema 增加可选公开行动标题，checkpoint 绑定原 Run/call/name/参数摘要，审批改参不沿用原标题，执行前剥离展示参数。factory/worker 显式连接本 Run emitter；原 Chat 首条活动冻结标题及缺省，完成/失败与恢复承接原事实，不新增表/端点/解释请求。正式 HTTP8.7 仅新增 tool activity optional action_title，8.6 能力说明仍独立。
+
+实际主仓验证：默认 pytest 3079通过、922按marker未选（非完整integration）；ruff格式/lint、pyright、contract check、lock check、wheel/sdist通过。真实受管PostgreSQL独立schema的outbox文件11通过，其中实际DeepAgents流→pump_run→Chat持久写入→新repository回读，断言公开正文→running→completed→正文顺序、标题/身份保持及业务工具只收到原参数。模型/工具与live bus为离线替身，未调用付费模型、不冒线上全链。独立只读审查未发现确定P0–P2。
+
+踩坑修正：新验证错误重复注册SDK默认ToolCallTransformer，且普通create_agent缺产品DeepAgents subagent投影；现使用实际create_deep_agent＋CustomTransformer，不缩减pump或断言。初次完整门39失败中38为生成前格式化导致provenance旧摘要，1为cast；已重生成并用边界严格验证代替cast。原失败保留，未删断言或放宽门禁。
+
+BFF/App正式消费、真实模型标题质量、同视口页面对比仍OPEN。正常HTTP/worker未替换；配对reader-first，激活前核原冻结Run，不更新Root组合gitlink来伪装交付。
+
 ## 2026-10-28 MCP 工具说明：HTTP8.6 候选
 
 既有私有 RunDisplay 的 activity_details 可选 tool_description，仅绑定同 Run、冻结 Connection 与精确 selector 的成功 describe 记录；全原文冲突即省略，1024 UTF8 bytes、脱敏/截断及总响应预算保持。它是观察到的能力说明，不是动作目的或调用时版本，不改原 Run/工具状态，也不补造历史正文。BFF/App 配对与正常加载仍待。

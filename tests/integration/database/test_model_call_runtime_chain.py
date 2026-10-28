@@ -25,6 +25,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 from pydantic import SecretStr, TypeAdapter
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentFactory, AgentHandle
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.clients.system import SystemModelClient
@@ -1288,7 +1289,10 @@ async def test_r199_terminal_supervisor_recovery_is_byte_stable_and_zero_write(
             await handle.aclose()
 
         async def forbidden_build(
-            _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+            _request: RunRequest,
+            _lease: LeaseFence,
+            _progress: SkillProgressSink,
+            _action_observer: ActionObservationSink,
         ) -> AgentHandle:
             raise AssertionError("terminal recovery must not rebuild the Agent")
 

@@ -1,3 +1,15 @@
+## 2026-10-28 逐调用公开行动说明：生产与绑定设计门（源码已接线，未激活）
+
+用户要求以 Manus 的具体行动而非内部调用日志组织主线。Agent 保持唯一执行展示 owner：同一次模型 tool call 的模型可见 schema 增加可选保留字段 `_kokoro_action`，表达简短公开行动/对象，不含推理、秘密或成功断言；不是 provider description。使用官方 ModelRequest/ToolCallRequest override，不替换 mounted 工具、循环或远端 schema，不增加模型请求。保留键冲突/非对象/strict schema不扩展、不剥离原业务字段。
+
+`tools/action_display.py` 只负责模型 schema副本、标题校验和执行前剥离。原 checkpoint保留模型调用原文；观测按原call ID、工具名、去元数据后参数摘要绑定，回调由本 Run emitter持有，不设全局map或新表。原权限/审批/journal继续执行；审批改变参数后摘要不符，原标题缺省。标题不影响授权、结果或状态，危险/缺失标题不伪造；未知工具不剥离、不新增授权。
+
+**候选复核修正（同日，现已源码装配但未激活）。** 剥离资格来自本次模型请求实际扩展的 schema，不能按执行侧同名 mounted tool 重算。模型返回边界、HITL 之前复制原 AIMessage，将本 Run／call ID／原工具名／去展示元数据参数摘要／已校验标题写入原消息 `response_metadata.kokoro_action_source_v1`，覆盖 provider 同名键；不修改原 tool_calls。checkpoint 原生保存它，实际 OpenAI wire serializer不发送 response metadata；原调用参数中的 `_kokoro_action` 仍属于模型历史，不声称也被从上下文移除。执行只承接最新 AIMessage 唯一 call ID 的同 Run 资格；审批改参数保留剥离资格但不发布旧标题，缺证据／跨 Run／重复 ID 不借历史。实际 SDK interrupt→新 graph 实例→approve/edit→恢复已经覆盖，不以观察之后改参代替真实审批顺序。无新表、无全局来源缓存。model_guard 装饰顺序和原 Chat 首事实持久化已在本切片核对；配对消费者和实际页面仍待交付，本模块通过不代表浏览器已修复。
+
+**当前实现写区。** 公开文本校验从 projection/preview 抽到无模型依赖的 `domain/chat/display_text.py`，`action_intent.py`仅承载exact-call意图/参数摘要。worker显式把本Run emitter观察回调经既有builder/factory传入主peer middleware，不新建ContextVar、全局store或传输通路；处于guards之后、model_guard之前，使真实模型请求包含装饰后的schema。`RunEmitter`在原调用首次投影前匹配工具名/ID/参数，沿 `first_tool_activity` 冻结标题与缺省，重启 returned不重选说明。普通child subagent工具不是现ChatToolActivity，本片不改其私有通道。`runtime_profile_sources/plan`包含新增实现与选择规则，不默改旧冻结Run。
+
+同一切片已把精确观测写入原 Chat activity 的 optional `action_title`，started/returned与replay复用首次事实；临时观测索引不成为持久真源。BFF/App reader-first沿原AG-UI活动消费者，旧历史缺省，不补写原事件。由既有runtime recipe计入新middleware源码/规则。无新端点、数据库DDL、独立事件流或解释服务。先用真实SDK离线循环证明模型原call/checkpoint保留、工具实参剥离、call绑定和原错误保持，再做持久活动/消费者/实际模型验收。当前不得把此门或源码接线称产品修复完成。
+
 ## 2026-10-28 MCP 同 Run 工具说明（展示修复，候选未激活）
 
 沿现 Agent RunDisplay 私有读取增加 optional `activity_details[].tool_description`（与既有预览相同 text/truncated/redacted 形状，UTF-8 至多1024字节）。它仅表示本 Run 实际观察到的 provider 能力说明，不是逐调用目的、工具title、执行结果或权限。Agent仍唯一事实 owner；BFF固定正式契约透传、App纯文本消费，不新建服务/表/端点/第二事件协议，不查询当前目录回填历史。

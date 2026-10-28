@@ -1,3 +1,11 @@
+## 2026-10-28 HTTP8.7 逐调用公开行动说明（候选，未激活）
+
+原 `ChatActivity` 的 tool 分支增加 optional `action_title`，纯文本1–256 UTF-8字节，不含首尾空白、控制/格式/代理字符或已识别私密文本；非法/缺失/不匹配省略，不用相邻正文、工具能力描述或返回内容猜测。不是执行权限、思考过程或结果状态。原 activity/segment身份、顺序、状态及端点不变，无DDL。这里只扩既有公开主Agent tool activity，子代理私有 `subagent.tool.*` 通道不变。
+
+说明由同一次模型调用的可选 `_kokoro_action` 提供，仅装饰模型可见schema副本；实际业务参数先剥离该元数据。原消息 checkpoint 中绑定本Run/call/name/原参数摘要，HITL修改后不沿用旧说明。首次原Chat活动冻结presence/value，后续状态及恢复复用首次事实；旧历史缺省保持缺省，不回填。敏感文本过滤是防御性约束，不承诺识别任意编码秘密。
+
+正式8.7仅逆去action_title并还原版本后，逐字得到8.6 SHA `de73c229a962e37afbf3f69aba160a8b6b9a56cd2603952a3d3d97f5a610b64b`；再承接既有8.6及之前完整父证明。BFF/App须先发布配对reader，沿原AG-UI/live/snapshot/ordered/replay读取，不新设解释接口。producer新增标题写入后，回退保留可读该字段的reader；不删历史。新装配代码进入原runtime recipe，已冻结旧Run不得暗换执行配方；上线时保留旧执行者处理其原Run，不在未核实存量前重启替换。
+
 ## 2026-10-28 MCP 同 Run 工具说明（展示修复，候选未激活）
 
 沿现 Agent RunDisplay 私有读取增加 optional `activity_details[].tool_description`（与既有预览相同 text/truncated/redacted 形状，UTF-8 至多1024字节）。它仅表示本 Run 实际观察到的 provider 能力说明，不是逐调用目的、工具title、执行结果或权限。Agent仍唯一事实 owner；BFF固定正式契约透传、App纯文本消费，不新建服务/表/端点/第二事件协议，不查询当前目录回填历史。

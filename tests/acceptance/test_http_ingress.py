@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.protocol import SkillProgressSink
 
 from support.fakes import read_unpaused_interaction, settled_state_callback
@@ -2224,7 +2225,10 @@ async def test_terminal_chat_write_failure_rolls_back_run_and_outbox(
     monkeypatch.setattr(PostgresChatRepository, "append_on_cursor", fail_terminal_chat)
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
@@ -2564,7 +2568,10 @@ async def test_http4_resume_full_identity_and_conflict_receipt_preserve_waiting(
         )
 
         async def build(
-            _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+            _request: RunRequest,
+            _lease: LeaseFence,
+            _progress: SkillProgressSink,
+            _action_observer: ActionObservationSink,
         ) -> AgentHandle:
             raise AssertionError("stale collection must not build")
 
@@ -2845,7 +2852,10 @@ async def test_expired_notifications_do_not_republish_and_http_chat_survives_run
     agent = FakeAgent(run=text_run("durable without notification ACK"))
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 

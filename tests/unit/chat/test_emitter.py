@@ -795,3 +795,94 @@ async def test_detail_corrupt_history_never_exposes_validation_input_in_tracebac
             )
         )
     assert "SECRET_CANARY" not in "".join(traceback.format_exception(error.value))
+
+
+async def test_public_action_is_first_fact_and_survives_emitter_restart() -> None:
+    import json
+    from kokoro_agent.domain.chat.action_intent import (
+        ActionObservation,
+        arguments_digest,
+    )
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+
+    async def attach() -> RunEmitter:
+        return await RunEmitter.attach(
+            FakeBus(),
+            "action-run",
+            tenant_id="t",
+            namespace="n",
+            session_id="s",
+            chat_repository=store,
+        )
+
+    first = await attach()
+    args: dict[str, JsonValue] = {"path": "/docs/plan.md"}
+    digest = arguments_digest(args)
+    assert digest is not None
+    first.observe_tool_action(
+        ActionObservation("call", "lookup", digest, "核对项目检查单")
+    )
+    await first.emit(
+        ToolInvokedPayload(segment_id="call", tool_id="call", name="lookup", args=args)
+    )
+    second = await attach()
+    second.observe_tool_action(
+        ActionObservation("call", "lookup", digest, "不应覆盖已保存说明")
+    )
+    await second.emit(
+        ToolReturnedPayload(
+            segment_id="call",
+            tool_id="call",
+            name="lookup",
+            result="provider error",
+            is_error=True,
+        )
+    )
+    values = [json.loads(row.payload_json) for row in store.records]
+    assert [v["action_title"] for v in values] == ["核对项目检查单"] * 2
+    assert [v["status"] for v in values] == ["running", "failed"]
+    assert all("provider error" not in str(v) for v in values)
+
+
+@pytest.mark.parametrize(
+    "case", ["missing", "changed-args", "different-tool", "conflict"]
+)
+async def test_action_without_exact_source_is_not_invented(case: str) -> None:
+    import json
+    from kokoro_agent.domain.chat.action_intent import (
+        ActionObservation,
+        arguments_digest,
+    )
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "action-run",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    args: dict[str, JsonValue] = {"path": "/docs/plan.md"}
+    digest = arguments_digest(args)
+    assert digest is not None
+    if case != "missing":
+        emitter.observe_tool_action(
+            ActionObservation("call", "lookup", digest, "核对项目检查单")
+        )
+    if case == "conflict":
+        emitter.observe_tool_action(
+            ActionObservation("call", "lookup", digest, "另一个说明")
+        )
+    await emitter.emit(
+        ToolInvokedPayload(
+            segment_id="call",
+            tool_id="call",
+            name="other" if case == "different-tool" else "lookup",
+            args={"path": "/changed.md"} if case == "changed-args" else args,
+        )
+    )
+    assert "action_title" not in json.loads(store.records[0].payload_json)

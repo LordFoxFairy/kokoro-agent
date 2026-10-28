@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from support.model_http_mechanism import synthetic_final_digest
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.protocol import SkillProgressSink
 
 import asyncio
@@ -3026,7 +3027,10 @@ async def test_first_worker_dispatch_seals_usage_before_durable_initial_pause(
         handle = AgentHandle(runnable=graph, tool_descriptions={"input": "Input"})
 
         async def build(
-            run: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+            run: RunRequest,
+            lease: LeaseFence,
+            _progress: SkillProgressSink,
+            _action_observer: ActionObservationSink,
         ) -> AgentHandle:
             assert run.model_dump_json() == request_value.model_dump_json()
             assert lease.owner == "first-worker"

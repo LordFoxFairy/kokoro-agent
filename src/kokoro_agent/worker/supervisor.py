@@ -17,6 +17,7 @@ from typing import Never
 from uuid import uuid4
 from collections.abc import Mapping
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentHandle
 
 from kokoro_agent.domain.chat.repositories import ChatRepository
@@ -229,6 +230,7 @@ class RunSupervisor(
         request: RunRequest,
         lease: LeaseFence,
         progress: SkillProgressSink,
+        action_observer: ActionObservationSink,
     ) -> AgentHandle:
         """Build under supervisor ownership until one caller receives the handle."""
         loop = asyncio.get_running_loop()
@@ -239,7 +241,7 @@ class RunSupervisor(
 
         async def assemble() -> None:
             try:
-                handle = await self._build(request, lease, progress)
+                handle = await self._build(request, lease, progress, action_observer)
             except BaseException as error:
                 ready.set_result((None, error))
                 claimed = await decision

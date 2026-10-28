@@ -55,6 +55,8 @@ from kokoro_agent.domain.chat.projection import (
     read_tool_activity,
     safe_progress_id,
 )
+from kokoro_agent.domain.chat.action_intent import ActionObservation
+from kokoro_agent.domain.chat.display_text import public_action_title
 from kokoro_agent.domain.chat.models import ChatEventRecord
 from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatRepository
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
@@ -218,9 +220,22 @@ class RunEmitter:
         self._chat_repository = chat_repository
         self._tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] | None = None
         self._tool_display_calls: dict[
-            tuple[str, str], tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str]
+            tuple[str, str],
+            tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str, str | None],
         ] = {}
         self._tool_display_sources: tuple[ToolDisplaySource, ...] | None = None
+        self._tool_actions: dict[str, ActionObservation | None] = {}
+
+    def observe_tool_action(self, observation: ActionObservation) -> None:
+        """Transient exact-call evidence; the original Chat activity owns history."""
+        if public_action_title(observation.title) is None:
+            return
+        previous = self._tool_actions.get(observation.call_id)
+        if observation.call_id not in self._tool_actions:
+            self._tool_actions[observation.call_id] = observation
+        elif previous != observation:
+            # Conflicting evidence never gets arbitrarily selected.
+            self._tool_actions[observation.call_id] = None
 
     def bind_tool_display_codes(
         self, bindings: tuple[tuple[str, ToolDisplayCode], ...]
@@ -241,7 +256,7 @@ class RunEmitter:
             raise ValueError("tool display binding changed within the Run")
         if any(
             dict(validated).get(name, "tool.execution") != code
-            for name, code, _, origin in self._tool_display_calls.values()
+            for name, code, _, origin, _ in self._tool_display_calls.values()
             if not origin.startswith("history:")
         ):
             raise ValueError("tool display classification changed after observation")
@@ -591,9 +606,14 @@ class RunEmitter:
             return True
         tool_code: ToolDisplayCode = "tool.execution"
         tool_detail: ToolDisplayDetail | None = None
+        action_title: str | None = None
         if isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
             observation = await self._tool_display_observation(payload)
-            tool_code, tool_detail = observation[1], observation[2]
+            tool_code, tool_detail, action_title = (
+                observation[1],
+                observation[2],
+                observation[4],
+            )
         projection = project_chat_fact(
             tenant_id=self._tenant_id,
             namespace=self._namespace,
@@ -604,6 +624,7 @@ class RunEmitter:
             payload=payload,
             tool_display_code=tool_code,
             tool_display_detail=tool_detail,
+            tool_action_title=action_title,
             skill_display_skills=skill_display_skills,
         )
         if projection is None:
@@ -626,7 +647,7 @@ class RunEmitter:
 
     async def _tool_display_observation(
         self, payload: ToolInvokedPayload | ToolReturnedPayload
-    ) -> tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str]:
+    ) -> tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str, str | None]:
         key = (payload.segment_id, payload.tool_id)
         previous = self._tool_display_calls.get(key)
         if previous is not None:
@@ -643,6 +664,14 @@ class RunEmitter:
         )
         code = dict(self._tool_display_codes or ()).get(payload.name, "tool.execution")
         detail = None
+        action_title = None
+        action = self._tool_actions.get(payload.tool_id)
+        if (
+            isinstance(payload, ToolInvokedPayload)
+            and action is not None
+            and action.matches(payload.tool_id, payload.name, payload.args)
+        ):
+            action_title = action.title
         if isinstance(payload, ToolInvokedPayload) and source is not None:
             detail = source.detail(payload.args)
         assert (
@@ -710,7 +739,11 @@ class RunEmitter:
                         )
                     ):
                         raise ValueError("tool display history identity differs")
-                    code, detail = original.display_code, original.display_detail
+                    code, detail, action_title = (
+                        original.display_code,
+                        original.display_detail,
+                        original.action_title,
+                    )
                     recovered = True
                 if loop.time() >= deadline:
                     raise TimeoutError("tool display history deadline elapsed")
@@ -730,6 +763,7 @@ class RunEmitter:
             detail,
             ("history:" if recovered else "")
             + (source.origin if source is not None else "unbound"),
+            action_title,
         )
         self._tool_display_calls[key] = observation
         return observation

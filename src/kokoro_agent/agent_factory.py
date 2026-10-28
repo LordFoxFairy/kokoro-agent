@@ -30,6 +30,8 @@ from deepagents.backends.state import StateBackend
 
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
+from kokoro_agent.tools.action_display import ActionDisplayMiddleware
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
 from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
 from kokoro_agent.clients.mcp import McpDisplayDeclaration
@@ -202,6 +204,7 @@ async def build_deep_agent(
     recipe: StaticRecipeBinding,
     capabilities: _ResolvedCapabilities,
     progress: SkillProgressSink,
+    action_observer: ActionObservationSink = lambda _observation: None,
     name: str | None = None,
 ) -> AgentHandle:
     if plan.agent is not agent:
@@ -355,6 +358,11 @@ async def build_deep_agent(
         offset = len(chains.guards)
         main_chain = (
             *base_main_chain[:offset],
+            ActionDisplayMiddleware(
+                toolset.authorized - {"task", "write_todos", "ask_user_question"},
+                action_observer,
+                run_id=request.run_id,
+            ),
             model_guard(plan.peer_path),
             *base_main_chain[offset:],
         )
@@ -462,7 +470,11 @@ class AgentFactory:
         return feature.agents[0].backend
 
     async def build(
-        self, request: RunRequest, lease: LeaseFence, progress: SkillProgressSink
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        progress: SkillProgressSink,
+        action_observer: ActionObservationSink = lambda _observation: None,
     ) -> AgentHandle:
         """按受信 Feature key 构造；请求本身不携带 Agent/图配方。"""
         feature = self.feature(request.feature_key)
@@ -486,7 +498,9 @@ class AgentFactory:
                     agent = agent.configured(mcp=refs)
                 agents.append(agent)
             feature = replace(feature, agents=tuple(agents))
-        return await self._build_feature(feature, request, lease, progress)
+        return await self._build_feature(
+            feature, request, lease, progress, action_observer
+        )
 
     async def _build_feature(
         self,
@@ -494,6 +508,7 @@ class AgentFactory:
         request: RunRequest,
         lease: LeaseFence,
         progress: SkillProgressSink,
+        action_observer: ActionObservationSink,
     ) -> AgentHandle:
         """构造一个已解析 Feature；多 peer 仅在声明 handoff 时进入官方 Swarm。"""
         prepared = prepare_feature(
@@ -558,6 +573,7 @@ class AgentFactory:
                 recipe=recipe,
                 capabilities=capabilities[peer.agent.key],
                 progress=progress,
+                action_observer=action_observer,
             )
         built_agents: list[AgentHandle] = []
         try:
@@ -573,6 +589,7 @@ class AgentFactory:
                         name=peer.agent.key,
                         capabilities=capabilities[peer.agent.key],
                         progress=progress,
+                        action_observer=action_observer,
                     )
                 )
             native = create_swarm(

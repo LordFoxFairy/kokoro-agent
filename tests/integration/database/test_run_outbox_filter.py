@@ -773,6 +773,10 @@ async def test_tool_detail_first_safe_chat_survives_emitter_rebuild_without_back
     import json
     from support.fakes import FakeBus
     from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.domain.chat.action_intent import (
+        ActionObservation,
+        arguments_digest,
+    )
     from kokoro_agent.domain.run.scope import RunScope
     from kokoro_agent.execution.events import RunEmitter
     from kokoro_agent.infrastructure.postgres_chat_repository import (
@@ -808,6 +812,13 @@ async def test_tool_detail_first_safe_chat_survives_emitter_rebuild_without_back
         if not legacy:
             first.bind_tool_display_codes((("read_file", "tool.file.read"),))
             first.bind_tool_display_sources(sources)
+        args = {"file_path": "/docs/report.md", "content": "SECRET"}
+        digest = arguments_digest(args)
+        assert digest is not None
+        if not legacy:
+            first.observe_tool_action(
+                ActionObservation("call", "read_file", digest, "核对项目报告")
+            )
         await first.emit(
             ToolInvokedPayload(
                 segment_id="call",
@@ -851,6 +862,9 @@ async def test_tool_detail_first_safe_chat_survives_emitter_rebuild_without_back
         )
         second.bind_tool_display_codes((("read_file", "tool.file.read"),))
         second.bind_tool_display_sources(sources)
+        second.observe_tool_action(
+            ActionObservation("call", "read_file", digest, "不应改写历史")
+        )
         await second.emit(
             ToolReturnedPayload(
                 segment_id="call",
@@ -867,11 +881,20 @@ async def test_tool_detail_first_safe_chat_survives_emitter_rebuild_without_back
         ]
         assert len(rows) == 2 and rows[0] == original
         values = [json.loads(row.payload_json) for row in rows]
+        assert [value.get("action_title") for value in values] == [
+            None if legacy else "核对项目报告"
+        ] * 2
         assert [value["display_code"] for value in values] == [
             "tool.execution" if legacy else "tool.file.read"
         ] * 2
         assert [value.get("display_detail") for value in values] == [
-            None if legacy else {"kind": "file", "name": "report.md"}
+            None
+            if legacy
+            else {
+                "kind": "file",
+                "name": "report.md",
+                "virtual_path": "/docs/report.md",
+            }
         ] * 2
         assert (
             "SECRET" not in str(values)
@@ -883,3 +906,118 @@ async def test_tool_detail_first_safe_chat_survives_emitter_rebuild_without_back
             )
             == original
         )
+
+
+async def test_native_action_stream_persists_in_original_chat_without_metadata_arguments(
+    run_repository: RunRepository, run_chat_database_url: str, run_chat_schema: str
+) -> None:
+    """Actual SDK stream + PostgreSQL; model/tool and live transport are offline doubles."""
+    import json
+    from typing import Any
+    import deepagents
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_core.tools import StructuredTool
+    from langgraph.stream import CustomTransformer
+    from support.fakes import FakeBus
+    from support.local_fake import LocalFakeChatModel
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.execution.events import RunEmitter
+    from kokoro_agent.execution.publish_agent_events import pump_run
+    from kokoro_agent.infrastructure.postgres_chat_repository import (
+        PostgresChatRepository,
+    )
+    from kokoro_agent.tools.action_display import ACTION_FIELD, ActionDisplayMiddleware
+
+    request = _request("native-action-pg")
+    scope = RunScope.of(request)
+    lease = await run_repository.try_claim(request, "native-action-writer")
+    assert lease is not None
+    repository = PostgresChatRepository(run_chat_database_url, run_chat_schema)
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        request.run_id,
+        outbox=run_repository,
+        lease=lease,
+        tenant_id=request.execution_identity.tenant_ref,
+        namespace=scope.namespace,
+        session_id=scope.session_id,
+        chat_repository=repository,
+    )
+    executed: list[str] = []
+
+    def read_config(path: str) -> str:
+        executed.append(path)
+        return "configuration checked"
+
+    tool = StructuredTool(
+        name="read_config",
+        description="Read a test configuration",
+        func=read_config,
+        args_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    )
+    create: Any = getattr(deepagents, "create_deep_agent")
+    graph = create(
+        model=LocalFakeChatModel.with_script(
+            [
+                AIMessage(
+                    content="先核对项目配置。",
+                    tool_calls=[
+                        {
+                            "name": "read_config",
+                            "id": "config-call",
+                            "type": "tool_call",
+                            "args": {
+                                "path": "/config.json",
+                                ACTION_FIELD: "读取项目运行时配置",
+                            },
+                        }
+                    ],
+                ),
+                AIMessage(content="配置已核对。"),
+            ]
+        ),
+        tools=[tool],
+        middleware=[
+            ActionDisplayMiddleware(
+                frozenset({"read_config"}),
+                emitter.observe_tool_action,
+                run_id=request.run_id,
+            )
+        ],
+    )
+    run = await graph.astream_events(
+        {"messages": [HumanMessage(content="Check the configuration")]},
+        version="v3",
+        transformers=[CustomTransformer],
+    )
+    async with run:
+        await pump_run(emitter, run, source_for=lambda _name: "runtime-custom")
+        assert not await run.interrupted()
+    assert executed == ["/config.json"]
+    fresh = PostgresChatRepository(run_chat_database_url, run_chat_schema)
+    rows = await fresh.replay(
+        request.execution_identity.tenant_ref, scope.namespace, scope.session_id
+    )
+    activities = [
+        json.loads(row.payload_json) for row in rows if row.event_type == "activity"
+    ]
+    assert [value["action_title"] for value in activities] == ["读取项目运行时配置"] * 2
+    assert [value["status"] for value in activities] == ["running", "completed"]
+    assert activities[0]["activity_id"] == activities[1]["activity_id"]
+    assert ACTION_FIELD not in str(activities)
+    texts = [
+        json.loads(row.payload_json)["content"]
+        for row in rows
+        if row.event_type == "assistant.completed"
+    ]
+    assert texts == ["先核对项目配置。", "配置已核对。"]
+    assert [
+        row.event_type
+        for row in rows
+        if row.event_type in {"assistant.completed", "activity"}
+    ] == ["assistant.completed", "activity", "activity", "assistant.completed"]

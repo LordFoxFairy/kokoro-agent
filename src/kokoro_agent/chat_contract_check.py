@@ -626,7 +626,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     document = read_contract_document(source)
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
-    http85_tool_description_parent_bytes(document)
+    http86_action_title_parent_bytes(document)
     expected = failure_model_bytes(document, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
@@ -657,7 +657,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.6.0",
+        "version": "8.7.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -1240,8 +1240,53 @@ _TOOL_DESCRIPTION_CONDITION = [
 ]
 
 
+_ACTION_TITLE = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 256,
+    "x-kokoro-utf8-byte-limit": 256,
+    "description": "Public intent of this exact model tool call, bound before approval edits. Not reasoning, capability documentation, execution status or authority. No surrounding whitespace, control/format/surrogate characters or private text. Omitted when absent or mismatched; never inferred from adjacent prose.",
+}
+
+
+def http86_action_title_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the exact per-call intent field; prove all issued HTTP8.6 bytes."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.7.0":
+        raise ValueError("public action titles require HTTP 8.7.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    activity = _object(schemas.get("ChatActivity"), source="ChatActivity")
+    branches = TypeAdapter(list[dict[str, object]]).validate_python(
+        activity.get("oneOf")
+    )
+    fields = _object(branches[0].get("properties"), source="tool activity fields")
+    if fields.pop("action_title", None) != _ACTION_TITLE:
+        raise ValueError("public action title delta differs")
+    branches[0]["properties"] = fields
+    activity["oneOf"] = branches
+    schemas["ChatActivity"] = activity
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.6.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "de73c229a962e37afbf3f69aba160a8b6b9a56cd2603952a3d3d97f5a610b64b"
+    ):
+        raise ValueError("complete HTTP8.6 action title parent differs")
+    return raw
+
+
 def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the bounded capability description; prove issued HTTP8.5."""
+    if _object(document.get("info"), source="info").get("version") == "8.7.0":
+        document = _object(
+            json.loads(http86_action_title_parent_bytes(document)),
+            source="HTTP8.6 parent",
+        )
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.6.0":
@@ -1281,7 +1326,10 @@ def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only private details and prove every byte of the issued HTTP8.4."""
-    if _object(document.get("info"), source="info").get("version") == "8.6.0":
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.6.0",
+        "8.7.0",
+    }:
         document = _object(
             json.loads(http85_tool_description_parent_bytes(document)),
             source="HTTP8.5 parent",
@@ -1319,6 +1367,7 @@ def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
     if _object(document.get("info"), source="info").get("version") in {
         "8.5.0",
         "8.6.0",
+        "8.7.0",
     }:
         document = _object(
             json.loads(http84_activity_details_parent_bytes(document)),
@@ -1361,6 +1410,7 @@ def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
         "8.4.0",
         "8.5.0",
         "8.6.0",
+        "8.7.0",
     }:
         document = _object(
             json.loads(http83_tool_facts_parent_bytes(document)),
@@ -1440,6 +1490,7 @@ def _display_parent(document: dict[str, object]) -> dict[str, object]:
         "8.4.0",
         "8.5.0",
         "8.6.0",
+        "8.7.0",
     }:
         return _object(
             json.loads(http82_display_parent_bytes(document)),

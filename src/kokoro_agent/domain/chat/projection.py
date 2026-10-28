@@ -23,6 +23,10 @@ from pydantic import (
 )
 from typing import Self
 
+from kokoro_agent.domain.chat.display_text import (
+    public_action_title,
+    sensitive_display_text,
+)
 from kokoro_agent.domain.chat.models import (
     ChatEventDraft,
     ChatMessageDraft,
@@ -116,19 +120,6 @@ def safe_display_name(value: str) -> bool:
         and not any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)
         and len(value.encode("utf-8")) <= 480
         and bool(value.strip())
-    )
-
-
-def sensitive_display_text(value: str) -> bool:
-    return bool(
-        re.search(
-            r"(?i)(?:^|[._ /-])(?:credentials?|secrets?|tokens?|passwords?|private[_-]?key)(?:$|[._ /-])"
-            r"|(?:^|/)\.(?:ssh|aws|gnupg|kube)(?:/|$)|(?:^|/)\.env(?:[./_-]|$)"
-            r"|(?:^|/)(?:\.netrc|\.npmrc|\.git-credentials|service[_-]account\.json)(?:$|/)"
-            r"|(?:id_rsa|id_ed25519|\.pem$|\.p12$|\.pfx$|bearer\s|(?<![A-Za-z0-9])sk[-_]|gh[pousr]_|github_pat_|AKIA[A-Z0-9]{16}|-----BEGIN)"
-            r"|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
-            value,
-        )
     )
 
 
@@ -283,9 +274,15 @@ class ToolActivity(_Payload):
     status: Literal["running", "completed", "failed"]
     display_code: ToolDisplayCode
     display_detail: ToolDisplayDetail | None = None
+    action_title: str | None = None
 
     @model_validator(mode="after")
     def detail_matches_code(self) -> Self:
+        if (
+            self.action_title is not None
+            and public_action_title(self.action_title) is None
+        ):
+            raise ValueError("invalid public action title")
         if self.display_detail is not None:
             allowed = {
                 "file": {"tool.file.read", "tool.file.write", "tool.file.deliver"},
@@ -324,7 +321,10 @@ def read_tool_activity(payload_json: str) -> ToolActivity:
         "display_code",
     }.issubset(value):
         raise ValueError("safe activity history is missing canonical base fields")
-    if "display_detail" in value and value["display_detail"] is None:
+    if any(
+        key in value and value[key] is None
+        for key in ("display_detail", "action_title")
+    ):
         raise ValueError("null safe activity detail")
     return ToolActivity.model_validate(value, strict=True)
 
@@ -429,6 +429,7 @@ def project_chat_fact(
     payload: ProjectablePayload,
     tool_display_code: ToolDisplayCode = "tool.execution",
     tool_display_detail: ToolDisplayDetail | None = None,
+    tool_action_title: str | None = None,
     skill_display_skills: Sequence[Mapping[str, JsonValue]] | None = None,
 ) -> ChatProjection | None:
     """Project only allowlisted product semantics; unknown/private payloads disappear."""
@@ -494,6 +495,7 @@ def project_chat_fact(
         safe_payload = ToolActivity(
             display_code=tool_display_code,
             display_detail=tool_display_detail,
+            action_title=tool_action_title,
             activity_id="act_"
             + opaque("tool-activity", payload.segment_id, payload.tool_id),
             segment_id="seg_" + opaque("segment", payload.segment_id),

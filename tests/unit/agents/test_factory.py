@@ -13,6 +13,7 @@ from typing import Any, Literal
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.outputs import ChatResult
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.clients.skills import ResolvedSkill, PlatformSkillClient
 from kokoro_agent.domain.run.models import LeasedRun
 
@@ -498,6 +499,7 @@ async def _native_script(
     delivery: DeliveryClient,
     *,
     catalog: FeatureCatalog = FEATURE_CATALOG,
+    action_observer: ActionObservationSink = lambda _observation: None,
 ) -> tuple[list[BaseMessage], FakeRunRepository]:
     factory, repository = _factory(
         monkeypatch,
@@ -520,7 +522,7 @@ async def _native_script(
     lease = await repository.try_claim(request)
     assert lease is not None
     handle = await factory.build(
-        request, lease, await _r93_progress(repository, request, lease)
+        request, lease, await _r93_progress(repository, request, lease), action_observer
     )
     config: RunnableConfig = {"configurable": {"thread_id": request.session_id}}
     run = await handle.runnable.astream_events(
@@ -2081,7 +2083,10 @@ async def test_terminal_supervisor_closes_factory_owned_s3_client_after_drain(
             return await self._delegate.aget_state(config, subgraphs=subgraphs)
 
     async def build_with_drain_witness(
-        request: RunRequest, lease: LeaseFence, progress: SkillProgressSink
+        request: RunRequest,
+        lease: LeaseFence,
+        progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         handle = await factory.build(request, lease, progress)
         return replace(handle, runnable=DrainWitnessRunnable(handle.runnable))
@@ -3047,3 +3052,42 @@ async def test_shared_skill_ready_keeps_one_identity_and_rejects_changed_actual_
     assert len({fact["activity_id"] for fact in ready}) == 1
     assert len({fact["preflight_id"] for fact in ready}) == 1
     assert all(fact["display_skills"] == list(display) for fact in ready)
+
+
+async def test_factory_native_action_metadata_reaches_exact_observer_not_filesystem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.domain.chat.action_intent import ActionObservation
+    from kokoro_agent.tools.action_display import ACTION_FIELD
+
+    observed: list[ActionObservation] = []
+    args = {"file_path": "/action-plan.md", "content": "# plan"}
+    messages, _ = await _native_script(
+        monkeypatch,
+        [
+            AIMessage(
+                content="建立检查单。",
+                tool_calls=[
+                    {
+                        "name": "write_file",
+                        "id": "write-action",
+                        "args": {**args, ACTION_FIELD: "建立项目检查单"},
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="完成。"),
+        ],
+        RecordingDelivery(),
+        action_observer=observed.append,
+    )
+    result = next(
+        m
+        for m in messages
+        if isinstance(m, ToolMessage) and m.tool_call_id == "write-action"
+    )
+    assert result.status == "success"
+    assert len(observed) == 1 and observed[0].matches(
+        "write-action", "write_file", args
+    )
+    assert observed[0].title == "建立项目检查单"

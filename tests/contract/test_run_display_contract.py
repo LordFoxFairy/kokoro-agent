@@ -16,7 +16,7 @@ def test_http83_display_is_the_only_delta_from_exact_published_http82() -> None:
             Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
         ).read_text()
     )
-    assert document["info"]["version"] == "8.6.0"
+    assert document["info"]["version"] == "8.7.0"
     assert (
         hashlib.sha256(http82_display_parent_bytes(document)).hexdigest()
         == "8a0b9973661205b8e29020934c39e5c7ab629b4c42db4e79c845a410d96efa2a"
@@ -69,7 +69,7 @@ def test_current_generator_rejects_a_complete_old_parent_before_any_write(
         for p in tmp_path.rglob("*")
         if p.is_file()
     }
-    with pytest.raises(ValueError, match="HTTP 8.6.0"):
+    with pytest.raises(ValueError, match="HTTP 8.7.0"):
         generate_failure_models(tmp_path, check=check)
     assert {
         p.relative_to(tmp_path): p.read_bytes()
@@ -86,7 +86,7 @@ def test_http84_tool_facts_is_exact_additive_full_http83_parent() -> None:
             Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
         ).read_text()
     )
-    assert document["info"]["version"] == "8.6.0"
+    assert document["info"]["version"] == "8.7.0"
     assert (
         hashlib.sha256(http83_tool_facts_parent_bytes(document)).hexdigest()
         == "be642c2313fbaf447d4e37bda2a7920f867c3a06d39f7e0e82efaf212e7080d6"
@@ -112,7 +112,7 @@ def test_http85_private_activity_details_preserve_the_entire_http84_parent() -> 
             Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
         ).read_text()
     )
-    assert document["info"]["version"] == "8.6.0"
+    assert document["info"]["version"] == "8.7.0"
     from kokoro_agent.chat_contract_check import http84_activity_details_parent_bytes
 
     assert (
@@ -165,3 +165,46 @@ def test_http86_capability_description_is_only_delta_from_exact_http85() -> None
             details["maxItems"] = 129
         with pytest.raises(ValueError):
             http85_tool_description_parent_bytes(wrong)
+
+
+def test_http87_action_title_is_only_delta_from_exact_http86() -> None:
+    from kokoro_agent.chat_contract_check import (
+        http86_action_title_parent_bytes,
+        validate_decoded_chat_payload,
+    )
+
+    document = json.loads(
+        (
+            Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
+        ).read_text()
+    )
+    assert (
+        hashlib.sha256(http86_action_title_parent_bytes(document)).hexdigest()
+        == "de73c229a962e37afbf3f69aba160a8b6b9a56cd2603952a3d3d97f5a610b64b"
+    )
+    value = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.execution",
+    }
+    for title in [None, "核对项目配置", "核" * 84 + "abcd"]:
+        payload = value if title is None else {**value, "action_title": title}
+        validate_decoded_chat_payload(
+            document, event_type="activity", payload_json=json.dumps(payload)
+        )
+    for title in [None, "", "核" * 86, "bad\ntext", " secret ", "Bearer SECRET"]:
+        with pytest.raises(ValueError):
+            validate_decoded_chat_payload(
+                document,
+                event_type="activity",
+                payload_json=json.dumps({**value, "action_title": title}),
+            )
+    for field in ["action_title", "display_code"]:
+        changed = copy.deepcopy(document)
+        changed["components"]["schemas"]["ChatActivity"]["oneOf"][0]["properties"].pop(
+            field
+        )
+        with pytest.raises(ValueError):
+            http86_action_title_parent_bytes(changed)

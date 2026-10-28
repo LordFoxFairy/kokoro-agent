@@ -54,7 +54,7 @@ worker/dependencies.py worker/main.py worker/model_financial.py
     (
         "guards",
         """
-tools/guards.py tools/middleware.py tools/permissions.py hitl/__init__.py
+tools/guards.py tools/middleware.py tools/action_display.py domain/chat/action_intent.py domain/chat/display_text.py tools/permissions.py hitl/__init__.py
 hitl/input.py hitl/request.py hitl/presets.py domain/run/models.py domain/run/interactions.py
 domain/run/repository.py domain/run/repositories.py domain/run/scope.py
 protocol/__init__.py protocol/control.py protocol/events.py protocol/streams.py protocol/run_failure_generated.py

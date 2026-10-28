@@ -10,7 +10,9 @@
 
 验证必须覆盖真实原生图的多步/纯文本/空最终段/HITL resume/return_direct，错 Run/子代理/不存在记录、租约/取消竞争、checkpoint 后重建、终态原子性及 replay；mock 不称真实持久集成。此设计不是 UI 已完成或正常环境已生效。
 
-实施发现独立既存缺口：官方 Swarm 外层未承接 peer stream transformers，`pump_run` 在读取 `tool_calls` 时即失败，早于本片最终输出判定。新增 native handoff 正控保留 RED、不 skip/xfail；不能声称 Swarm 已验收。其完整修复须接官方 subgraphs 的已声明 peer 流并保留嵌套子代理隔离，不用空迭代器或仅消除 AttributeError 冒通过；普通单 Agent 的本片证据不因此作废，也不激活未配对 producer。
+实施发现独立既存 Swarm 缺口（2026-10-28只读复现）：外层 bare compile 未装四投影，pump读取不存在的tool_calls；v3直接peer消息位于原生subgraphs，不在root.messages；锁定DeepAgents0.6.6 FilesystemMiddleware同步/异步处理Command时只重建update，丢失graph/goto路由。原正控实际29 PASS/1 FAIL；单进程三项假设探针通过不等于可部署补丁，保留RED、不skip/xfail。
+
+后续设计门：scoped transformer与直接peer消费仍归既有swarm/execution，必须区分已声明直接peer和真正native task，不把所有子图提升为公开正文；最终身份双证保持。Command路由兼容尚未裁决：create_deep_agent的用户middleware全部位于原FilesystemMiddleware内层，已证仅追加本仓middleware不足以保留外层处理后路由。不得修改venv、全局monkeypatch、伪造active_agent或跳过文件处理。需评估带固定版本/许可证/退出路径的上游修复或最窄维护补丁，再实施生产修复；普通Agent、HTTP8.8及BFF/App消费者可独立推进，但Swarm未验收不得冒全链闭环。
 
 ## 2026-10-28 逐调用公开行动说明：生产与绑定设计门（源码已接线，未激活）
 

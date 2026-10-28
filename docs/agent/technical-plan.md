@@ -82,6 +82,10 @@ Feature 声明两个或以上需要互相接手会话的 Agent 时：
 GA 不实现 handoff router、不切换 prompt、不维护 `active_agent` 的自有 state。后台隔离工作仍
 使用 DeepAgents native subagent，不把两种协作语义混成一个 peer。
 
+直接peer的v3子图投影与native task必须区分：仅Feature已声明直接peer可作为同轮公开正文发布，peer内部task保持子代理边界；异构peer的工具与子代理声明按各自scope装配。handoff正常结束验收以真实peer执行、原Command路由字段完整及同Run持久final绑定为准，不以根图流排空或最后一条AI替代。
+
+2026-10-28锁定SDK兼容缺口尚未关闭：DeepAgents0.6.6文件结果处理会丢Command的graph/goto，且公开用户middleware位置不足以事后修复。落点裁决见本仓TECHNICAL_DESIGN.md本次设计门；无已生效兼容补丁，不宣称多peer正常。
+
 ## 4. 目录与依赖
 
 `kokoro-agent/`（仓库/distribution）与 `src/kokoro_agent/`（标准 Python `src layout` 下的 import

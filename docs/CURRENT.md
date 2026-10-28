@@ -2,7 +2,7 @@
 
 普通单 Agent 在原生输出和同 Run 持久公开完成记录双证后绑定最终答复，原 terminal 事务重核并冻结；HTTP8.8 只增加可选公开身份，旧记录不回填、无 DDL。真实 native 纯文本/多步/空 final、HITL 重建恢复、return_direct、checkpoint 无新流均通过；真实 PostgreSQL 定向 12 项通过，涵盖绑定/usage/replay/取消及写失败回滚。ruff/format/pyright/lock/contract/build 通过。
 
-默认套件 **3141 passed、1 failed、930 deselected**，不宣称全门通过。唯一失败是新增 native Swarm handoff 正控：原外层流缺 peer 投影，早于 final 判定失败；保留 RED 不 skip/xfail，独立接线修复待完成。四条初次 contract 断言仍指向旧版本已按新正式字段收敛，最终复跑没有其它失败。BFF/App 尚未消费，页面未变化、不得正常激活或合并；Root 原计划继续负责界面闭环。
+默认套件 **3141 passed、1 failed、930 deselected**，不宣称全门通过。唯一失败是新增 native Swarm handoff 正控：原外层流缺 peer 投影，早于 final 判定失败；保留 RED 不 skip/xfail，独立接线修复待完成。四条初次 contract 断言仍指向旧版本已按新正式字段收敛，最终复跑没有其它失败。BFF15cc9e1/App已消费为未正常激活候选；页面正常切换与最终验收归Root，不据此合并。后续只读复现29 PASS/1 FAIL补证三项Swarm根因及SDK文件middleware丢路由；公开注入位置不足以修复，需先裁决固定上游修复/最窄维护补丁，见TECHNICAL_DESIGN.md，未改安装包。
 
 ## 2026-10-28 MCP 重复结果预览修复
 

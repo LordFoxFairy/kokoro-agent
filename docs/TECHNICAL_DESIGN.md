@@ -1,8 +1,20 @@
 ## 2026-10-29 已批准 Custom API 隔离执行接线
 
-Platform唯一拥有加密配置；本仓只消费固定Describe/Acquire运行契约，沿既有RunPlatformClient与在线proof，执行器使用现Docker/E2B而非宿主local_shell或通用HTTP代理。每次execute获取局部env，值不进argv/命令/prompt/recipe/日志，不写.env；描述为用户配置数据。adapter/provider候选已验，尚未改Run和factory。
+Platform唯一拥有加密配置；本仓只消费固定Describe/Acquire运行契约，沿既有RunPlatformClient与在线proof，执行器使用现Docker/E2B而非宿主local_shell或通用HTTP代理。每次execute获取局部env，值不进argv/命令/prompt/recipe/日志，不写.env；描述为用户配置数据。adapter/provider及 Run/factory 已接入候选；正常进程尚未配对激活。
 
-后续Run仅增加safe profile_id/expected_state_version引用，原默认/省略行为及旧冻结digest保持；build/static recipe/backend_for使用同一受信有效Feature，选中才进入已配置隔离后端，缺配置即拒绝而非降级。Run级workspace隔离，同Run恢复走现sandbox CAS；Describe不进静态recipe，Acquire不进checkpoint。挂载、Archiving包装、取消/失败及终态清理须保持同一backend/provider与Docker daemon上下文。无新数据库模型或执行框架。
+HTTP8.10 Run仅增加safe profile_id/expected_state_version引用，原默认/省略行为及旧冻结digest保持；build/static recipe/backend_for使用同一受信有效Feature，选中才进入已配置隔离后端，缺配置即拒绝而非降级。Run级workspace隔离，同Run恢复走现sandbox CAS；Describe不进静态recipe，Acquire不进checkpoint。挂载、Archiving包装、取消/失败及终态清理须保持同一backend/provider与Docker daemon上下文。无新数据库模型或执行框架。
+
+运行配置由 worker 显式携带 HOME/DOCKER_HOST/DOCKER_CONTEXT/DOCKER_CONFIG/TLS 上下文，创建、execute、重连和清理保持同一 daemon，不继承整个 worker 环境。仅选中 API 的新 Docker 沙箱使用 CPU 0.5、512 MiB、128 PID、只读 root、64 MiB /tmp、drop ALL/no-new-privileges、local 日志轮转 10 MiB×2；只绑定当前 Run 子目录。CLI 上下文不写静态 recipe，隔离实现源码纳入现 recipe manifest；E2B 沿其已有资源生命周期。
+
+当前保证为每次 execute 的新鲜授权/取值、短生命周期进程环境及原值 stdout/stderr 脱敏，不声称任意脚本的编码、网络或文件写出被彻底阻止。正常环境开放前仍需核实配置的沙箱镜像、文件/产物处理与实际 owner 调用，不能仅凭菜单选中宣称可执行。
+
+### 任务执行镜像（待构建与真实验收）
+
+`docker/sandbox.Dockerfile` 是既有 Docker backend 的任务执行基础设施，不是新服务或 worker 镜像。复用根 Dockerfile 已固定的 Python 3.11-slim OCI index digest，仅使用基础镜像的 `sh`、`sleep`、Python 标准库 `urllib.request`/TLS 与系统 CA；构建时检查这些前提，不额外安装包，不复制仓库、worker 源码或任何服务凭据。默认 `/workspace`、`HOME=/tmp`、禁写 Python bytecode；构建参数 `SANDBOX_UID`/`SANDBOX_GID` 默认均为 65532，本机构建传入实际宿主 Run 目录所属 UID/GID，部署时必须保持镜像身份与卷目录 owner 一致，不在业务代码新增 OS 身份判定。空 `ENTRYPOINT` 与 `CMD sleep` 兼容既有 backend 的 TTL 覆盖；资源限额、只读 root、临时目录和唯一 Run mount 继续由既有 backend 设置，不增加监听端口。
+
+构建使用该 Dockerfile 的空上下文（stdin），验收后将结果的不可变 image ID/发布 digest 配到 worker 的 `KOKORO_DOCKER_IMAGE`，专用宿主根目录配到 `KOKORO_AGENT_LOCAL_SHELL_ROOT`；不使用 Redis QA 或 Porta 服务镜像替代。真实验收须覆盖当前 UID/GID 的 workspace 写入、只读 root、系统 CA/HTTPS、exec、清理与限额；定义文件或静态检查不等于镜像已构建、正常进程已启用。
+
+供应链沿既有固定 Python/Debian 基础镜像，不引入新包源；Python 的 PSF 及基础系统各组件许可证随镜像保留，发布时按实际镜像清单核对许可证与漏洞。固定 digest 保证输入不漂移，不代表没有漏洞，升级需重建并复验。退出时先停止新 API 任务并处理在途 Run，再恢复原执行配置；保留个人 API 配置与历史，不做 DDL，仅在无容器引用后清理本次镜像和自有工作目录。
 
 ## 2026-10-28 旧终态最终答复旁读（本轮实施门，未发行）
 

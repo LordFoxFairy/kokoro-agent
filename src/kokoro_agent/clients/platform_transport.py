@@ -120,6 +120,7 @@ class RunPlatformClient:
     credentials: TenantCredentialProvider = field(repr=False)
     proofs: CallProofSupplier = field(repr=False)
     transport: PlatformTransport = field(repr=False)
+    frozen_custom_api_profiles: tuple[tuple[str, int], ...] = ()
 
     async def send(
         self, request: PlatformRequest, *, timeout_s: float = 10
@@ -129,6 +130,7 @@ class RunPlatformClient:
         snapshot = deepcopy(request)
         # Validate before I/O; project again immediately before signing, never reuse proof.
         project_request_binding(tenant_ref=self.tenant_id, request=snapshot)
+        self._check_custom_api_selection(snapshot)
         deadline = monotonic() + timeout_s
         try:
             async with asyncio.timeout(timeout_s):
@@ -145,6 +147,36 @@ class RunPlatformClient:
                 return await self.transport.send(snapshot, credential, remaining_ms)
         except TimeoutError:
             raise PlatformCallError("PLATFORM_DEADLINE_EXCEEDED") from None
+
+    def _check_custom_api_selection(self, request: PlatformRequest) -> None:
+        if not isinstance(
+            request,
+            (
+                custom_api.DescribeCustomApiEnvironmentRequest,
+                custom_api.AcquireCustomApiEnvironmentRequest,
+            ),
+        ):
+            return
+        frozen = self.frozen_custom_api_profiles
+        # The projected request already passed the owner ID/version/uniqueness
+        # domain. Exact equality also validates these values in the frozen tuple.
+        if (
+            type(frozen) is not tuple
+            or not 1 <= len(frozen) <= 32
+            or any(
+                type(ref) is not tuple
+                or len(ref) != 2
+                or type(ref[0]) is not str
+                or type(ref[1]) is not int
+                for ref in frozen
+            )
+            or len({ref[0] for ref in frozen}) != len(frozen)
+            or set(frozen)
+            != {
+                (ref.profile_id, ref.expected_state_version) for ref in request.profiles
+            }
+        ):
+            raise PlatformCallError("PLATFORM_CUSTOM_API_SELECTION_MISMATCH")
 
 
 class _ClientOptions(TypedDict):

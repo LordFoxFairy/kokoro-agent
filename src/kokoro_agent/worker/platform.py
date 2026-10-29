@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
 from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+from kokoro_agent.clients.custom_api_runtime import PlatformCustomApiClient
 from kokoro_agent.clients.mcp_package_transport import McpPackageTransport
 from kokoro_agent.mcp.egress import current_egress_mode
 from kokoro_agent.clients.skills import PlatformSkillClient, SkillClientError
@@ -32,6 +33,14 @@ class WorkerPlatformRuntime:
     packages: SkillPackageTransport | None = None
     mcp_packages: McpPackageTransport | None = None
 
+    def custom_api_for_run(self, leased_run: LeasedRun) -> PlatformCustomApiClient:
+        return PlatformCustomApiClient(
+            sender=self.for_run(leased_run),
+            tenant_id=leased_run.request.execution_identity.tenant_ref,
+            run_id=leased_run.request.run_id,
+            execution_session_id=leased_run.request.session_id,
+        )
+
     def mcp_for_run(self, leased_run: LeasedRun) -> PlatformMcpClient:
         return PlatformMcpClient(
             self.for_run(leased_run),
@@ -54,6 +63,10 @@ class WorkerPlatformRuntime:
             credentials=self.credentials,
             proofs=supplier,
             transport=self.transport,
+            frozen_custom_api_profiles=tuple(
+                (ref.profile_id, ref.expected_state_version)
+                for ref in leased_run.request.selected_custom_api_profiles
+            ),
         )
 
 

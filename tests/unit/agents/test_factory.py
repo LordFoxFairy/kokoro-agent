@@ -2,6 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from functools import partial
+from unittest.mock import AsyncMock, Mock
+from deepagents.backends.state import StateBackend
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import SystemMessage
+import kokoro_agent.agent_factory as assembly
+from kokoro_agent.clients.custom_api_runtime import (
+    CustomApiClientError,
+    CustomApiEnvironmentProvider,
+    PlatformCustomApiClient,
+)
+from kokoro_agent.clients.platform_transport import PlatformRequest
+from kokoro_agent.execution.platform_request_binding import project_request_binding
+from kokoro_agent.features.chat import CHAT_FEATURE
+from kokoro_agent.generated.kokoro.platform.v1 import custom_api_runtime_pb as api_pb
+from kokoro_agent.protocol.control import CustomApiProfileSelection
+
 from support.model_execution import unavailable_model_execution
 
 import asyncio
@@ -701,7 +719,6 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
     from pathlib import Path
     from kokoro_agent.clients.skills import PlatformSkillClient
     from kokoro_agent.clients.platform_transport import (
-        PlatformRequest,
         PlatformResponse,
     )
     from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
@@ -3102,3 +3119,253 @@ async def test_factory_native_action_metadata_reaches_exact_observer_not_filesys
         "write-action", "write_file", args
     )
     assert observed[0].title == "建立项目检查单"
+
+
+# Custom API task sandbox assembly (Platform/model/backend doubles).
+CUSTOM_API_SECRET = "fixture-acquire-only-secret-never-in-prompt"
+CUSTOM_API_NAME = "Fixture account lookup API"
+CUSTOM_API_INSTRUCTIONS = "Call /v1/account in the isolated execution environment."
+CUSTOM_API_ENV_NAME = "ACCOUNT_API_TOKEN"
+
+
+def custom_api_selected(run_id: str) -> RunRequest:
+    return _request("chat").model_copy(
+        update={
+            "run_id": run_id,
+            "selected_custom_api_profiles": (
+                CustomApiProfileSelection(profile_id="api-1", expected_state_version=3),
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize("kind", ["docker", "e2b"])
+async def test_real_factory_describes_once_before_model_and_keeps_recipe_static(
+    kind: Literal["docker", "e2b"], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = AppConfig.from_env(
+        {
+            "KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path),
+            **(
+                {"KOKORO_DOCKER_IMAGE": "fixture-image"}
+                if kind == "docker"
+                else {"KOKORO_E2B_API_KEY": "fixture-e2b-key"}
+            ),
+        }
+    )
+    calls: list[str] = []
+    requests: list[PlatformRequest] = []
+    model_messages: list[list[BaseMessage]] = []
+    metadata_revision = "first"
+
+    async def send(
+        request: PlatformRequest, *, run: LeasedRun, timeout_s: float = 10
+    ) -> object:
+        assert 0 < timeout_s <= 10
+        requests.append(request)
+        binding = project_request_binding(tenant_ref="tenant", request=request)
+        if isinstance(request, api_pb.DescribeCustomApiEnvironmentRequest):
+            calls.append("describe")
+            assert [
+                (ref.profile_id, ref.expected_state_version) for ref in request.profiles
+            ] == [("api-1", 3)]
+            return api_pb.DescribeCustomApiEnvironmentResponse(
+                request_binding_sha256=binding.sha256,
+                run_id=run.request.run_id,
+                execution_session_id=run.request.session_id,
+                profiles=[
+                    api_pb.CustomApiRuntimeProfileDescription(
+                        profile_id="api-1",
+                        state_version=3,
+                        name=CUSTOM_API_NAME,
+                        instructions=f"{CUSTOM_API_INSTRUCTIONS} {metadata_revision}",
+                        environment_names=[CUSTOM_API_ENV_NAME],
+                    )
+                ],
+            )
+        assert isinstance(request, api_pb.AcquireCustomApiEnvironmentRequest)
+        calls.append("acquire")
+        return api_pb.AcquireCustomApiEnvironmentResponse(
+            request_binding_sha256=binding.sha256,
+            run_id=run.request.run_id,
+            execution_session_id=run.request.session_id,
+            environment=[
+                api_pb.CustomApiRuntimeEnvironmentValue(
+                    name=CUSTOM_API_ENV_NAME, value=CUSTOM_API_SECRET.encode()
+                )
+            ],
+        )
+
+    platform = Mock(spec=WorkerPlatformRuntime)
+
+    def for_run(run: LeasedRun) -> PlatformCustomApiClient:
+        sender = Mock()
+        sender.send = AsyncMock(side_effect=partial(send, run=run))
+        return PlatformCustomApiClient(
+            sender=sender,
+            tenant_id=run.request.execution_identity.tenant_ref,
+            run_id=run.request.run_id,
+            execution_session_id=run.request.session_id,
+        )
+
+    platform.custom_api_for_run.side_effect = for_run
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        config=config,
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    backend = AsyncMock(return_value=StateBackend())
+    monkeypatch.setattr(assembly, "make_backend_for_run", backend)
+
+    class CaptureModel(BaseCallbackHandler):
+        def on_chat_model_start(
+            self,
+            serialized: dict[str, Any],
+            messages: list[list[BaseMessage]],
+            **kwargs: Any,
+        ) -> None:
+            calls.append("model")
+            model_messages.extend(messages)
+
+    first = custom_api_selected("api-run-first")
+    lease = await repository.try_claim(first)
+    assert lease is not None
+    handle = await factory.build(
+        first, lease, await _r93_progress(repository, first, lease)
+    )
+    try:
+        assert calls == ["describe"] and model_messages == []
+        assert factory.backend_for(first) == kind
+        assert backend.await_count == 1 and backend.call_args.args[0] == kind
+        first_arguments = backend.call_args.kwargs
+        provider = first_arguments["environment_provider"]
+        assert isinstance(provider, CustomApiEnvironmentProvider)
+        assert [
+            (ref.profile_id, ref.expected_state_version) for ref in provider.profiles
+        ] == [("api-1", 3)]
+        assert provider.client.run_id == first.run_id
+        assert provider.client.execution_session_id == first.session_id
+        assert first_arguments["run_id"] == first.run_id
+        assert first_arguments["lease"] == lease
+        first_workspace = first_arguments["workspace"]
+        assert isinstance(first_workspace, str) and "/runs/" in first_workspace
+
+        stream = await handle.runnable.astream_events(
+            {"messages": [HumanMessage(content="hello")]},
+            version="v3",
+            config={
+                "configurable": {"thread_id": first.run_id},
+                "callbacks": [CaptureModel()],
+            },
+            transformers=[CustomTransformer],
+        )
+        async with stream:
+            await asyncio.gather(
+                _collect_messages(stream.messages),
+                _drain(stream.tool_calls),
+                _drain(stream.subagents),
+                _drain(stream.custom),
+            )
+            assert await stream.interrupted() is False
+        assert model_messages
+        assert calls[0] == "describe" and calls[1] == "model"
+        for messages in model_messages:
+            prompt = "\n".join(
+                message.text
+                for message in messages
+                if isinstance(message, SystemMessage)
+            )
+            assert (
+                CUSTOM_API_NAME in prompt
+                and CUSTOM_API_INSTRUCTIONS in prompt
+                and CUSTOM_API_ENV_NAME in prompt
+            )
+            assert "user-provided API documentation" in prompt
+            assert CUSTOM_API_SECRET not in prompt
+        assert calls.count("describe") == 1 and "acquire" not in calls
+    finally:
+        await handle.aclose()
+
+    # A different Run in the same session gets different metadata/workspace, not a
+    # new static recipe. This checks the persisted artifact, not prompt source text.
+    metadata_revision = "second"
+    second = custom_api_selected("api-run-second")
+    second_lease = await repository.try_claim(second)
+    assert second_lease is not None
+    second_handle = await factory.build(
+        second,
+        second_lease,
+        await _r93_progress(repository, second, second_lease),
+    )
+    try:
+        assert factory.backend_for(second) == backend.call_args.args[0] == kind
+        assert backend.call_args.kwargs["workspace"] != first_workspace
+        assert backend.call_args.kwargs["environment_provider"] is not provider
+        assert calls.count("describe") == 2 and "acquire" not in calls
+        assert len(requests) == 2
+        first_recipe = repository.static_recipes[first.run_id].canonical_bytes
+        second_recipe = repository.static_recipes[second.run_id].canonical_bytes
+        assert first_recipe == second_recipe
+        for forbidden in (
+            CUSTOM_API_NAME,
+            CUSTOM_API_INSTRUCTIONS,
+            CUSTOM_API_ENV_NAME,
+            CUSTOM_API_SECRET,
+            "fixture-e2b-key",
+        ):
+            assert forbidden.encode() not in first_recipe
+    finally:
+        await second_handle.aclose()
+
+
+@pytest.mark.parametrize(
+    "configuration", ["absent", "docker_without_root", "host_only"]
+)
+async def test_factory_fails_closed_before_owner_model_or_backend_io(
+    configuration: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env = (
+        {"KOKORO_DOCKER_IMAGE": "fixture-image"}
+        if configuration == "docker_without_root"
+        else {}
+    )
+    config = AppConfig.from_env(env)
+    feature = CHAT_FEATURE
+    if configuration == "host_only":
+        config = AppConfig.from_env({"KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path)})
+        feature = replace(
+            CHAT_FEATURE,
+            agents=(replace(CHAT_FEATURE.agents[0], backend="local_shell"),),
+        )
+    resolver = RouteResolver()
+    platform = Mock(spec=WorkerPlatformRuntime)
+    factory, repository = _factory(
+        monkeypatch,
+        resolver,
+        catalog=FeatureCatalog((feature,)),
+        config=config,
+        platform=platform,
+    )
+    backend = AsyncMock(side_effect=AssertionError("unexpected backend construction"))
+    monkeypatch.setattr(assembly, "make_backend_for_run", backend)
+    request = custom_api_selected("api-run-unavailable")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    with pytest.raises(
+        CustomApiClientError,
+        match="CUSTOM_API_(SANDBOX_UNAVAILABLE|ISOLATED_SANDBOX_REQUIRED)",
+    ):
+        factory.backend_for(request)
+    with pytest.raises(
+        CustomApiClientError,
+        match="CUSTOM_API_(SANDBOX_UNAVAILABLE|ISOLATED_SANDBOX_REQUIRED)",
+    ):
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
+    backend.assert_not_awaited()
+    platform.custom_api_for_run.assert_not_called()
+    assert resolver.calls == []
+    assert repository.static_recipes == {}

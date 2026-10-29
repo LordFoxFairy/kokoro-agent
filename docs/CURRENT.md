@@ -1,3 +1,13 @@
+## 2026-10-29 Custom API Run/factory 隔离接线（候选，正常未启用）
+
+HTTP8.10 固定安全 profile ID/version，省略/空选择维持旧 Run 序列化；Worker 将精确冻结集合传给当前 lease 的 Platform client，Describe/Acquire 在 proof/credential/I/O 前拒绝集合或版本不匹配。Factory 在模型前读取一次说明/env 名；每次 execute 才 acquire，说明和值不进入 static recipe。普通 chat 保持 state，选 API 才派生已配置 Docker/E2B；build 与 cleanup 使用同一派生后端、同 Run 独立 workspace。归档包装和清理保留 provider/原 event loop/显式 Docker context，无 host fallback。
+
+主仓 focused：Run/HTTP/proof/contract283通过，backend/client/配置81通过（5资源marker未选），Factory/native manifest15通过；真实源码 Docker connector 证实 0.5CPU/512MiB/128PID、只读root、日志轮转、唯一Run目录bind、两次fresh取值与原值脱敏、后续未选执行不继承。专属容器已清理；未调用用户配置的外部 API 或模型，镜像验收另访问公开 HTTPS（见下段），E2B仅SDK替身。最终停写默认3329通过/931资源marker未选（184.48秒）；Ruff/格式/type/contract/lock/wheel/sdist通过，不把工程门冒称正常页面效果。
+
+踩坑：新测试误用 request() 缺 run_id 和错误配置别名，已保持行为断言修正；真实Docker验收先误把镜像自带匿名volume及Docker Desktop路径映射当额外挂载，改核唯一bind并实际读回本Run探针，原失败保留。完整门另发现新增测试与HTTP测试同名导致collection冲突、独立Factory测试使用被本仓禁止的inline类型抑制；仅重命名测试及合并到原Factory helper所在模块，保持全部断言且未改门禁，最终完整复跑通过。
+
+另新增独立任务镜像 docker/sandbox.Dockerfile，沿现worker Dockerfile固定Python基础digest但不含worker源码/依赖/凭据。本机实际构建并按当前目录owner以非root运行，真实源码connector验证Run文件写入与owner、stdlib HTTPS返回200、CA和资源/脱敏/清理；保留构建镜像供后继激活，专属验收容器已清理。无数据库演进/历史回填；正常owner配对激活、整链调用与文件/产物秘密边界仍待实际验收。
+
 ## 2026-10-29 Custom API 固定消费者与沙箱 adapter 收口（未接 Run／正常页面）
 
 Platform固定来源44fcc5da599b4a5cec3077e41aaef4375fe4add2，独立生成Describe/Acquire Python Connect消息/client；旧MCP pins字节保持。client每次生成request/invocation、沿RunPlatformClient取fresh proof，核exact binding/run/session/refs/version；安全描述只含说明/env名，材料限量转SecretStr，失败/取消/过期/unknown返回清除protobuf持有值。Python不可变字符串不宣称物理清零，执行输出原文脱敏不宣称防编码/网络/文件外传。

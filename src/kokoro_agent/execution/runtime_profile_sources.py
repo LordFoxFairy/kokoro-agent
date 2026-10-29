@@ -44,7 +44,7 @@ _LOCAL_GROUPS = (
 __init__.py agent_factory.py policy.py agents/definition.py agents/subagent_catalog.py
 agents/subagents.py agents/native_profile.py features/definition.py
 execution/runtime_profile.py execution/runtime_profile_plan.py execution/runtime_profile_sources.py
-execution/protocols.py tools/toolset.py tools/toolbox.py tools/registry.py
+execution/protocols.py execution/custom_api_selection.py tools/toolset.py tools/toolbox.py tools/registry.py
 clients/system.py model/credentials.py model/factory.py model/summary_adapter.py model/summary_result.py model/usage_observation.py model/call_runtime.py model/call_scope.py model/call_models.py model/call_artifacts.py model/request_profile.py
 clients/model_budget.py clients/bff_admission_generated.py model/budget.py model/settlement.py
 model/financial_receipt.py model/financial_reconciliation.py model/execution.py model/usage_producer.py
@@ -63,7 +63,7 @@ protocol/__init__.py protocol/control.py protocol/events.py protocol/streams.py 
     (
         "skills",
         """
-skills/backend.py skills/middleware.py skills/package.py clients/skills.py
+skills/backend.py skills/middleware.py skills/package.py clients/skills.py clients/custom_api_runtime.py
 clients/skill_package_transport.py clients/package_transport.py clients/platform_credentials.py
 clients/platform_transport.py execution/execution_proof_keys.py execution/execution_proof_profile.py
 execution/execution_proof_signer.py execution/execution_proof_supplier.py
@@ -107,7 +107,6 @@ application/chat/dto.py
 application/chat/mappers.py
 application/schema.py
 clients/__init__.py
-clients/custom_api_runtime.py
 clients/system.py
 config.py
 config_file.py

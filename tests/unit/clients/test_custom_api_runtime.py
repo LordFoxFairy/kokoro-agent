@@ -279,6 +279,7 @@ async def test_run_transport_uses_generated_connect_and_fresh_proof(
             credentials=Credentials(),
             proofs=Proofs(),
             transport=transport,
+            frozen_custom_api_profiles=(("profile", 3),),
         )
         api = PlatformCustomApiClient(
             sender=sender,
@@ -367,3 +368,133 @@ async def test_failed_material_is_cleared_before_exception(mutation: str) -> Non
         if trace.tb_frame.f_code.co_name == "_send":
             assert trace.tb_frame.f_locals["response"] is None
         trace = trace.tb_next
+
+
+@pytest.mark.parametrize("describe", [False, True])
+@pytest.mark.parametrize(
+    "selection",
+    ["unknown", "extra", "missing", "version", "empty", "unfrozen", "duplicate_frozen"],
+)
+async def test_transport_custom_api_requests_are_exact_frozen_run_selection_before_any_io(
+    describe: bool, selection: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kokoro_agent.clients.platform_transport import (
+        PlatformCallError,
+        PlatformTransport,
+        RunPlatformClient,
+    )
+
+    calls: list[str] = []
+
+    class Credentials:
+        async def credential(self, tenant_id: str) -> str:
+            calls.append("credential")
+            return "TOKEN"
+
+    class Proofs:
+        async def issue(self, operation: str, request_binding_sha256: str) -> str:
+            calls.append("proof")
+            return "proof"
+
+    async def send(
+        *args: object, **kwargs: object
+    ) -> pb.AcquireCustomApiEnvironmentResponse:
+        calls.append("send")
+        return pb.AcquireCustomApiEnvironmentResponse()
+
+    monkeypatch.setattr(PlatformTransport, "send", send)
+    profiles = [("p1", 1), ("p2", 2)]
+    frozen = tuple(profiles)
+    if selection == "unknown":
+        profiles = [("unknown", 1), ("p2", 2)]
+    elif selection == "extra":
+        profiles.append(("p3", 1))
+    elif selection == "missing":
+        profiles.pop()
+    elif selection == "version":
+        profiles[0] = ("p1", 2)
+    elif selection == "empty":
+        profiles = []
+    elif selection == "unfrozen":
+        frozen = ()
+    else:
+        frozen = (("p1", 1), ("p1", 1), ("p2", 2))
+    cls = (
+        pb.DescribeCustomApiEnvironmentRequest
+        if describe
+        else pb.AcquireCustomApiEnvironmentRequest
+    )
+    request = cls(
+        request_id="request",
+        invocation_id="call",
+        profiles=[
+            pb.CustomApiRuntimeProfileRef(
+                profile_id=pid, expected_state_version=version
+            )
+            for pid, version in profiles
+        ],
+    )
+    async with PlatformTransport("http://127.0.0.1:1") as transport:
+        sender = RunPlatformClient(
+            tenant_id="tenant",
+            credentials=Credentials(),
+            proofs=Proofs(),
+            transport=transport,
+            frozen_custom_api_profiles=frozen,
+        )
+        with pytest.raises((PlatformCallError, ValueError)):
+            await sender.send(request)
+    assert calls == []
+
+
+@pytest.mark.parametrize("describe", [False, True])
+async def test_transport_exact_frozen_profile_set_allows_order_independence(
+    describe: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kokoro_agent.clients.platform_transport import (
+        PlatformTransport,
+        RunPlatformClient,
+    )
+
+    calls: list[str] = []
+
+    class Credentials:
+        async def credential(self, tenant_id: str) -> str:
+            calls.append("credential")
+            return "TOKEN"
+
+    class Proofs:
+        async def issue(self, operation: str, request_binding_sha256: str) -> str:
+            calls.append("proof")
+            return "proof"
+
+    async def send(
+        *args: object, **kwargs: object
+    ) -> pb.AcquireCustomApiEnvironmentResponse:
+        calls.append("send")
+        return pb.AcquireCustomApiEnvironmentResponse()
+
+    monkeypatch.setattr(PlatformTransport, "send", send)
+    cls = (
+        pb.DescribeCustomApiEnvironmentRequest
+        if describe
+        else pb.AcquireCustomApiEnvironmentRequest
+    )
+    request = cls(
+        request_id="request",
+        invocation_id="call",
+        profiles=[
+            pb.CustomApiRuntimeProfileRef(profile_id="p2", expected_state_version=2),
+            pb.CustomApiRuntimeProfileRef(profile_id="p1", expected_state_version=1),
+        ],
+    )
+    async with PlatformTransport("http://127.0.0.1:1") as transport:
+        sender = RunPlatformClient(
+            tenant_id="tenant",
+            credentials=Credentials(),
+            proofs=Proofs(),
+            transport=transport,
+            frozen_custom_api_profiles=(("p1", 1), ("p2", 2)),
+        )
+        await sender.send(request)
+    assert calls == ["proof", "credential", "send"]

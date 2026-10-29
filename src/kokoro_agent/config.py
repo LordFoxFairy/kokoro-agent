@@ -145,6 +145,16 @@ class AppConfig(BaseModel):
     e2b_timeout: int = Field(default=1800, gt=0, validation_alias="KOKORO_E2B_TIMEOUT")
     docker_image: OptStr = Field(default=None, validation_alias="KOKORO_DOCKER_IMAGE")
     docker_ttl: int = Field(default=1800, gt=0, validation_alias="KOKORO_DOCKER_TTL")
+    docker_cli_home: OptStr = Field(default=None, validation_alias="HOME")
+    docker_cli_host: OptStr = Field(default=None, validation_alias="DOCKER_HOST")
+    docker_cli_context: OptStr = Field(default=None, validation_alias="DOCKER_CONTEXT")
+    docker_cli_config: OptStr = Field(default=None, validation_alias="DOCKER_CONFIG")
+    docker_cli_tls_verify: OptStr = Field(
+        default=None, validation_alias="DOCKER_TLS_VERIFY"
+    )
+    docker_cli_cert_path: OptStr = Field(
+        default=None, validation_alias="DOCKER_CERT_PATH"
+    )
     custom_backend_ref: OptStr = Field(
         default=None, validation_alias="KOKORO_CUSTOM_BACKEND"
     )
@@ -384,7 +394,22 @@ class AppConfig(BaseModel):
                     "template": self.e2b_template,
                     "timeout": self.e2b_timeout,
                 },
-                "docker": {"image": self.docker_image, "ttl": self.docker_ttl},
+                "docker": {
+                    "image": self.docker_image,
+                    "ttl": self.docker_ttl,
+                    "cli_environment": tuple(
+                        (name, value)
+                        for name, value in (
+                            ("HOME", self.docker_cli_home),
+                            ("DOCKER_HOST", self.docker_cli_host),
+                            ("DOCKER_CONTEXT", self.docker_cli_context),
+                            ("DOCKER_CONFIG", self.docker_cli_config),
+                            ("DOCKER_TLS_VERIFY", self.docker_cli_tls_verify),
+                            ("DOCKER_CERT_PATH", self.docker_cli_cert_path),
+                        )
+                        if value is not None
+                    ),
+                },
                 "custom": {
                     "factory_ref": self.custom_backend_ref,
                     "config_path": self.custom_backend_config,

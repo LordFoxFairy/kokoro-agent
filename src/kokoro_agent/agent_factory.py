@@ -36,6 +36,16 @@ from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
 from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
 from kokoro_agent.clients.mcp import McpDisplayDeclaration
 from kokoro_agent.clients.mcp import McpClient, McpConnectionRef
+from kokoro_agent.clients.custom_api_runtime import (
+    CustomApiClientError,
+    CustomApiEnvironmentProvider,
+    CustomApiProfileRef,
+)
+from kokoro_agent.execution.custom_api_selection import (
+    feature_for_custom_api,
+    custom_api_workspace,
+    custom_api_instructions,
+)
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.protocol import (
@@ -47,7 +57,6 @@ from kokoro_agent.execution.events import (
     ProgressPersistenceError,
     confirm_skill_progress,
 )
-from kokoro_agent.sandbox.workspace import workspace_key
 from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable
@@ -70,7 +79,6 @@ from kokoro_agent.skills.backend import (
 from kokoro_agent.skills.middleware import RunSkillsMiddleware
 from kokoro_agent.tools.middleware import ToolPolicyMiddleware, TerminalGuardMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
-from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.features.catalog import FEATURE_CATALOG, FeatureCatalog
 from kokoro_agent.features.definition import Feature
 from kokoro_agent.swarm import create_swarm
@@ -153,6 +161,8 @@ class _ResolvedCapabilities:
     mcp: McpClient | None
     skill_reader: SkillClient | None
     mcp_declarations: tuple[McpDisplayDeclaration, ...] = ()
+    custom_api_environment: CustomApiEnvironmentProvider | None = None
+    custom_api_prompt: str = ""
 
 
 async def _preflight(
@@ -253,10 +263,9 @@ async def build_deep_agent(
             "tenant_generation": route.tenant_generation,
         },
     )
-    scope = RunScope.of(request)
     policy = agent.permissions
-    # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
-    # docker/e2b 档带 run 级生命周期：resume 经 run_repository 重连既往箱/容器。
+    # API executions get their own Run subdirectory; ordinary conversations keep
+    # the established session workspace. Resume reconnects the original sandbox.
     credential = await resolver.read_credential(
         tenant_id=request.execution_identity.tenant_ref,
         route=route,
@@ -269,10 +278,11 @@ async def build_deep_agent(
         backend = await make_backend_for_run(
             agent.backend,
             dependencies.sandbox,
-            workspace=workspace_key(scope.namespace, scope.session_id),
+            workspace=custom_api_workspace(request),
             run_id=request.run_id,
             lease=lease,
             sandbox_store=dependencies.run_repository,
+            environment_provider=capabilities.custom_api_environment,
         )
         resource = backend_resource(backend)
         resources = () if resource is None else (resource,)
@@ -379,7 +389,7 @@ async def build_deep_agent(
         candidate: object = native_constructor(
             model=bind_summary(plan.peer_path),
             tools=toolset.tools,
-            system_prompt=agent.prompt,
+            system_prompt=agent.prompt + capabilities.custom_api_prompt,
             skills=None,
             subagents=subagent_bundle.subagents,
             checkpointer=dependencies.checkpointer,
@@ -466,7 +476,9 @@ class AgentFactory:
 
     def backend_for(self, request: RunRequest) -> Backend:
         """Return the Feature-declared sandbox kind for terminal cleanup."""
-        feature = self.feature(request.feature_key)
+        feature = feature_for_custom_api(
+            self.feature(request.feature_key), request, self._dependencies.sandbox
+        )
         return feature.agents[0].backend
 
     async def build(
@@ -477,7 +489,9 @@ class AgentFactory:
         action_observer: ActionObservationSink = lambda _observation: None,
     ) -> AgentHandle:
         """按受信 Feature key 构造；请求本身不携带 Agent/图配方。"""
-        feature = self.feature(request.feature_key)
+        feature = feature_for_custom_api(
+            self.feature(request.feature_key), request, self._dependencies.sandbox
+        )
         if request.selected_mcp_connection_ids:
             # A Run's choice augments only its entry Agent, before recipe freeze.
             # Never mutate the catalog or grant these refs to unrelated peers.
@@ -529,6 +543,28 @@ class AgentFactory:
         recipe = StaticRecipeBinding(
             canonical_bytes=prepared.recipe_bytes, fingerprint=prepared.fingerprint
         )
+        custom_api_environment = None
+        custom_api_prompt = ""
+        if request.selected_custom_api_profiles:
+            if self._dependencies.platform is None:
+                raise CustomApiClientError("CUSTOM_API_PLATFORM_UNAVAILABLE")
+            client = self._dependencies.platform.custom_api_for_run(
+                LeasedRun(request=request, lease=lease)
+            )
+            refs = tuple(
+                CustomApiProfileRef(
+                    profile_id=ref.profile_id,
+                    expected_state_version=ref.expected_state_version,
+                )
+                for ref in request.selected_custom_api_profiles
+            )
+            api_descriptions = await client.describe(
+                refs, deadline_monotonic=monotonic() + 10
+            )
+            custom_api_environment = CustomApiEnvironmentProvider(
+                client=client, profiles=refs
+            )
+            custom_api_prompt = custom_api_instructions(api_descriptions)
         loading = False
 
         async def before_load() -> None:
@@ -561,6 +597,8 @@ class AgentFactory:
                 mcp=mcp,
                 skill_reader=resolved.skill_reader,
                 mcp_declarations=declarations,
+                custom_api_environment=custom_api_environment,
+                custom_api_prompt=custom_api_prompt,
             )
         if len(prepared.peers) == 1:
             peer = prepared.peers[0]

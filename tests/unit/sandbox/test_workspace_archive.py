@@ -463,7 +463,10 @@ async def test_docker_archive_wrapper_failure_closes_client_and_only_new_contain
     def fail_wrapper(**_kwargs: object) -> BackendProtocol:
         raise primary
 
-    def record_destroy(sandbox_id: str) -> None:
+    def record_destroy(
+        sandbox_id: str, *, docker_cli_environment: dict[str, str]
+    ) -> None:
+        assert docker_cli_environment == {}
         destroyed.append(sandbox_id)
 
     monkeypatch.setattr(archive_module.boto3, "client", recording_client)
@@ -534,7 +537,10 @@ async def test_docker_archive_wrapper_cleanup_failures_preserve_primary(
     def fail_wrapper(**_kwargs: object) -> BackendProtocol:
         raise primary
 
-    def fail_destroy(sandbox_id: str) -> None:
+    def fail_destroy(
+        sandbox_id: str, *, docker_cli_environment: dict[str, str]
+    ) -> None:
+        assert docker_cli_environment == {}
         destroyed.append(sandbox_id)
         raise OSError("destroy-private")
 

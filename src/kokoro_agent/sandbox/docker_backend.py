@@ -25,7 +25,7 @@ from kokoro_agent.sandbox.execution_environment import (
     ExecutionEnvironmentRunner,
 )
 from deepagents.backends.protocol import ExecuteResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.docker")
 
@@ -72,6 +72,14 @@ class DockerSettings(BaseModel):
     image: str | None
     # 容器空闲存活期（秒）：sleep 到期自退 + --rm 自删；resume 复用窗口。
     ttl: Annotated[int, Field(gt=0)]
+    cli_environment: tuple[tuple[str, str], ...] = ()
+
+    @model_validator(mode="after")
+    def validate_context(self) -> DockerSettings:
+        if len(dict(self.cli_environment)) != len(self.cli_environment):
+            raise ValueError("duplicate Docker context setting")
+        _cli_environment(dict(self.cli_environment))
+        return self
 
 
 def _docker(
@@ -284,10 +292,36 @@ def connect_docker_sandbox(
             environment_loop=environment_loop,
             docker_cli_environment=context,
         )
+    isolation = (
+        (
+            "--cpus",
+            "0.5",
+            "--memory",
+            "512m",
+            "--pids-limit",
+            "128",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,nosuid,nodev,size=64m",
+            "--log-driver",
+            "local",
+            "--log-opt",
+            "max-size=10m",
+            "--log-opt",
+            "max-file=2",
+        )
+        if environment_provider is not None
+        else ()
+    )
     result = _docker_in_context(
         "run",
         "-d",
         "--rm",
+        *isolation,
         "--label",
         f"kokoro-run={run_id}",
         # --mount 键值语法：workspace 目录名含 ':'（{namespace}:{session_id} 约定），-v 短语法会被撕裂。

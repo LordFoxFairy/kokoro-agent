@@ -1,3 +1,17 @@
+## 2026-10-28 旧终态最终答复旁读（本轮实施门，未发行）
+
+目标是让缺显式 final 标识但已有可证明 native terminal 的旧 Run 复用正常整轮披露，不从最后一段公共正文猜 final。Agent 仍拥有事实；沿既有 RunDisplay 只读边界，复用 RR read-only、5 秒绝对期限和 8 MiB 输入预算。独立 checkpoint_final_answer 读取器完成隔离验证后，现已沿 read_run_display 接线：两个返回位置携带证明，共享同一预算与事务；正式HTTP8.9候选只增加可选身份字段，消费者/正常环境未生效。
+
+读取仅同受信 request/scope 的 completed Run、canonical 冻结配方、至多128个 exact Run root namespace locator，须是一条完整无分叉/循环/缺父的链；不跨 Run、不读全会话历史。所有 native tuple/blob/write 字节在反序列化前预检。使用官方 BaseCheckpointSaver 逐 parent Delta history 路径，通过限定 locator 的只读适配；不使用 Postgres 的全 thread 快路、不创建/执行 graph。仅终态时间之前无待执行 branch/tasks/writes 的 terminal checkpoint，官方 messages reducer 恢复的最终 AIMessage 无 tool calls，且与同 Run 唯一公开 assistant.completed 的原身份和完整正文一致，才返回证明。未知版本/不支持或缺证保持 absent，损坏/超界沿原错误边界；不更改历史 bytes。
+
+兼容性只核实际读取的 SDK 序列化、messages reducer 和终态语义，不建立动态旧代码加载器；0.6.6→0.6.7 的明确代码比较未完成前不宣称支持旧样本。新正式 terminal 标识仍优先。后继发行时，Agent 原 display optional final_message_id；BFF 自己核 exact parts/revision，再返回 optional final_answer；App 保持旁读事实独立于 durable final 版本合并，复用 completedTurnSections，身份/版本冲突拒绝，公开正文和失败不改。没有新表、端点、服务、权限或模型调用。每个 owner 机器契约按固定版本生成后才接消费者。
+
+最低验证：原生 delta 恢复/直接 snapshot、同 Run 完整链/异 Run/分叉/缺父/非终态/空值/工具尾项/预算/取消/未知配方，真实PG只读前后字节等同；之后正常旧 conv6530 收展/刷新及同次详情。缺失阶段正文/action_title不由此补造，整体样式仍须另外按原参考验收。
+
+本轮独审发现 native saver 对 checkpoint `v<4` 会额外查询未含 namespace 的 parent pending sends；现仅 scalar 预检接纳已证明的 checkpoint `v=4`，其他格式在 native getter 前退出。隔离 PG 负控先实际失败，再修复通过；流 API `version="v3"` 与该持久格式版本无关。旧 factory 精确源码 `ff367592` 的 SHA 与当前构造均已审为 SDK 默认 root state，支持范围只扩大到这两个已审摘要，不加载历史代码。
+
+候选验证（2026-10-28）：原生离线 unit 3 项；隔离真实 PG 含只读前后全表摘要、共享 8 MiB 超界、后继 Run 隔离、公开正文不符及 v<4 禁止 native load 均通过，测试独立资源已回收。原 cab07 Run 在正常数据库强制 RR/read-only 和整个操作 5 秒期限下取得原 public final identity，48.89ms（单次样本，不是全接口性能承诺）。无历史回填、模型/工具调用或进程切换。**后继已接候选HTTP8.9；BFF和App尚未配对生效，旧会话整轮展示仍OPEN，不能据此称页面修复。**
+
 ## 2026-10-28 整轮过程与最终答复边界（设计门，候选）
 
 目标为用户指定 Manus 任务中已实测的“整轮过程披露 → 有序公开正文/动作组”，最终答复独立显示。Agent 只发布执行事实，不拥有折叠 UI。基线 ba6c5a5 / HTTP8.7；不改 SDK、图、模型提示词、工具权限、计费或执行结果，不重写旧记录。

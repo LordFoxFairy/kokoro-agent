@@ -655,7 +655,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     document = read_contract_document(source)
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
-    http87_final_answer_parent_bytes(document)
+    http88_final_display_parent_bytes(document)
     expected = failure_model_bytes(document, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
@@ -686,7 +686,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.8.0",
+        "version": "8.9.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -763,7 +763,8 @@ def validate_decoded_chat_payload(
     """
     profiles = (
         _CURRENT_DECODED_PROFILES
-        if _object(document.get("info"), source="info").get("version") == "8.8.0"
+        if _object(document.get("info"), source="info").get("version")
+        in {"8.8.0", "8.9.0"}
         else _DECODED_PROFILES
     )
     if event_type not in profiles:
@@ -1283,8 +1284,47 @@ _ACTION_TITLE = {
 }
 
 
+_FINAL_DISPLAY_ID = {
+    "type": "string",
+    "pattern": "^msg_[0-9a-f]{32}(?![\\s\\S])",
+    "description": "Optional private read-only proof of a completed legacy Run's final public assistant message identity. Derived from a bounded reviewed native terminal and exact same-Run public body; never inferred from public ordering, never written back to historical events, and not an execution authority. Omitted when unproven. Consumers must bind their own exact ordered parts and revision before display.",
+}
+
+
+def http88_final_display_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the private final proof and verify every issued HTTP8.8 byte."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.9.0":
+        raise ValueError("private final proof requires HTTP 8.9.0")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    display = _object(schemas.get("RunDisplay"), source="RunDisplay")
+    properties = _object(display.get("properties"), source="RunDisplay properties")
+    if properties.pop("final_message_id", None) != _FINAL_DISPLAY_ID:
+        raise ValueError("private final proof field differs")
+    display["properties"] = properties
+    schemas["RunDisplay"] = display
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.8.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "fd8b2857ecbc9577bd98ca73234e4d81c53d4fe189ba86badcf35c774b9a6830"
+    ):
+        raise ValueError("complete HTTP8.8 private final proof parent differs")
+    return raw
+
+
 def http87_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the successful final-answer identity; prove issued HTTP8.7."""
+    if _object(document.get("info"), source="info").get("version") == "8.9.0":
+        document = _object(
+            json.loads(http88_final_display_parent_bytes(document)),
+            source="HTTP8.8 parent",
+        )
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.8.0":
@@ -1316,7 +1356,10 @@ def http87_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http86_action_title_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact per-call intent field; prove all issued HTTP8.6 bytes."""
-    if _object(document.get("info"), source="info").get("version") == "8.8.0":
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.8.0",
+        "8.9.0",
+    }:
         document = _object(
             json.loads(http87_final_answer_parent_bytes(document)),
             source="HTTP8.7 parent",
@@ -1355,6 +1398,7 @@ def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
     if _object(document.get("info"), source="info").get("version") in {
         "8.7.0",
         "8.8.0",
+        "8.9.0",
     }:
         document = _object(
             json.loads(http86_action_title_parent_bytes(document)),
@@ -1403,6 +1447,7 @@ def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
         "8.6.0",
         "8.7.0",
         "8.8.0",
+        "8.9.0",
     }:
         document = _object(
             json.loads(http85_tool_description_parent_bytes(document)),
@@ -1443,6 +1488,7 @@ def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
         "8.6.0",
         "8.7.0",
         "8.8.0",
+        "8.9.0",
     }:
         document = _object(
             json.loads(http84_activity_details_parent_bytes(document)),
@@ -1487,6 +1533,7 @@ def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
         "8.6.0",
         "8.7.0",
         "8.8.0",
+        "8.9.0",
     }:
         document = _object(
             json.loads(http83_tool_facts_parent_bytes(document)),
@@ -1568,6 +1615,7 @@ def _display_parent(document: dict[str, object]) -> dict[str, object]:
         "8.6.0",
         "8.7.0",
         "8.8.0",
+        "8.9.0",
     }:
         return _object(
             json.loads(http82_display_parent_bytes(document)),

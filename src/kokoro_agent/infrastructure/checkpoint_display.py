@@ -1,6 +1,10 @@
-"""Bounded native checkpoint display read; no graph, reducer or model execution."""
+"""Bounded native display read; no graph or model execution."""
 
 from __future__ import annotations
+
+from kokoro_agent.infrastructure.checkpoint_final_answer import (
+    read_final_message_id,
+)
 
 import json
 import hashlib
@@ -55,8 +59,8 @@ async def read_run_display(
     """Called inside the resource's absolute five-second timeout.
 
     RR read-only covers size preflight and native loads: concurrent checkpoint
-    writes cannot grow an already-admitted input. No native delta history call
-    is made. Unavailable legacy tool arguments stay unknown.
+    writes cannot grow an already-admitted input. The final proof uses only a
+    preflighted same-Run parent walk; unknown legacy facts stay absent.
     """
     scope = RunScope.of(request)
     tenant = request.execution_identity.tenant_ref
@@ -108,6 +112,11 @@ async def read_run_display(
                     for event in events
                 )
                 budget = DisplayReadBudget()
+
+                final_id = await read_final_message_id(
+                    conn, schema, request, budget.reserve
+                )
+                result = result.model_copy(update={"final_message_id": final_id})
                 has_mcp = any(
                     event.get("display_code")
                     in {"tool.mcp.call", "tool.mcp.describe", "tool.mcp.discover"}
@@ -403,4 +412,4 @@ async def read_run_display(
                     mcp_connections=connections,
                     mcp_source_sha256=mcp_source_sha256,
                     native_tools=native_tools,
-                )
+                ).model_copy(update={"final_message_id": final_id})

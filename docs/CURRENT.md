@@ -1,3 +1,11 @@
+## 2026-10-28 HTTP8.9 旧最终答复有界只读证明（owner候选，未正常激活）
+
+既有RunDisplay新增optional final_message_id，BFF必须自行绑定parts/revision，不回填旧terminal。先检查同Run唯一成功terminal：有显式final即不走历史恢复（预算仅够terminal也成功退出）；缺省才检查冻结recipe、已审单Agent默认state、最多128个same-Run root完整单链、checkpoint v4和8MiB共享输入。通过限制get的SDK父链恢复原DeepAgents messages reducer，最终无tool-call AI与同Run唯一公开完成消息身份/全文一致才给证明。保原5秒HTTP绝对期限、取消/1MiB响应，不新建图或调用模型工具。
+
+原cab07正常数据库全display候选只读取得原final身份，保11条details，响应12397字节；单次80.96ms，不代表全接口SLO。未修改正常HTTP/worker、历史、凭据或账本；BFF/App配对和原页面收展/刷新仍待完成。
+
+主方停写源码验证：default3156通过、931资源marker未选；完整ruff格式/lint、Pyright0错误、contract checker、lock check、sdist/wheel通过。隔离真实PG最终26项通过（25原display及1新综合旅程），自有DB回收；含同Run读前后全表摘要不变、后继Run隔离、8MiB拒绝、公开body不符、v<4在native load前拒绝、已有正式final优先/不耗recipe预算。独审两项P2均收敛：旧格式native隐式pending sends、显式final误走历史恢复；初次RED和完整门函数内import/同名测试collection失败保留，未改门禁，后继完整默认已复跑通过。HTTP8.9删除唯一可选字段后与8.8全字节相同，生成provenance已核；此为owner切片，不代表整体Goal完成。
+
 ## 2026-10-28 正常整轮配对验证（单任务切片）
 
 正常组合 App e7b93c7e／BFF15cc9e1／Agent2e61b85已加载，BFF具名final nullable列演进已确认current；无历史回填。真实新只读任务正常完成，Agent final与BFF parts逐字/身份/顺序一致，正常网页收展及硬刷新保持最终答复独立。2模型attempt sealed、unknown0，usage仍partial。旧MCP历史、Canvas回焦、正常Swarm及整体产品验收仍OPEN，不能将本片成功等同整体完成。原始截图、精确运行前像和回退配置在Root ignored whole-turn-normal-20261028；唯一Root计划记载完整实际范围。无合并或Root版本提升。

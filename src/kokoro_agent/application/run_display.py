@@ -76,6 +76,11 @@ class ToolFact(BaseModel):
 class RunDisplay(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
     run_id: str
+    final_message_id: str | None = Field(
+        default=None,
+        pattern=r"^msg_[0-9a-f]{32}$",
+        exclude_if=lambda value: value is None,
+    )
     display_skills: list[SkillDisplay] = Field(max_length=16)
     tool_paths: list[ToolPath] = Field(max_length=128)
     tool_facts: list[ToolFact] = Field(

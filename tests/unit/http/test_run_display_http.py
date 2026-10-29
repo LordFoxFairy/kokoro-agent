@@ -105,7 +105,12 @@ def test_real_stdlib_host_preserves_absent_and_explicit_empty_display_headers(
         )
 
     reader = AsyncMock(
-        return_value=RunDisplay(run_id="display-host", display_skills=[], tool_paths=[])
+        return_value=RunDisplay(
+            run_id="display-host",
+            display_skills=[],
+            tool_paths=[],
+            final_message_id="msg_" + "a" * 32,
+        )
     )
     monkeypatch.setattr(server, "make_run_repository", repository)
     monkeypatch.setattr(server, "read_run_display", reader)
@@ -164,6 +169,7 @@ def test_real_stdlib_host_preserves_absent_and_explicit_empty_display_headers(
         status, body = get([])
         assert status == 200
         assert body["data"]["run_id"] == "display-host"
+        assert body["data"]["final_message_id"] == "msg_" + "a" * 32
         assert reader.await_count == 1
         for name in ["Content-Length", "Transfer-Encoding", "Idempotency-Key"]:
             for value in ["", "0"]:
@@ -178,3 +184,31 @@ def test_real_stdlib_host_preserves_absent_and_explicit_empty_display_headers(
         instance.server_close()
         thread.join(timeout=3)
         assert not thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_final_display_read_retains_absolute_deadline_and_cancels_reader() -> (
+    None
+):
+    import asyncio
+    from kokoro_agent.interfaces.http.run_display import display_resource
+    from kokoro_agent.interfaces.http.ingress import IngressError
+    from support.fakes import request
+
+    repository: Any = SimpleNamespace(
+        get_request_scoped=AsyncMock(return_value=request("deadline"))
+    )
+    stopped = asyncio.Event()
+
+    async def blocked_reader(_request: Any) -> Any:
+        try:
+            await asyncio.Future()
+        finally:
+            stopped.set()
+
+    with pytest.raises(IngressError) as caught:
+        await display_resource(
+            "deadline", identity(), {}, {}, None, repository, blocked_reader
+        )
+    assert caught.value.status == 503
+    assert stopped.is_set()

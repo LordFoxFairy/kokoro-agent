@@ -1,3 +1,11 @@
+## HTTP8.9 旧终态最终答复只读证明（候选）
+
+沿现本人Run `GET /v1/runs/{run_id}/display`，RunDisplay新增可选 `final_message_id`，仅公开派生的 `msg_` 加32位小写hex身份；不接受null，不公开原生ID/正文。来源是已审配方和checkpoint v4、同Run完整有界root父链、原生成功终态及唯一公开完成消息的身份/完整正文双证。缺证省略，不代表没有最终答复；原terminal显式绑定仍由消费者优先采用，冲突不得覆盖。无新事件、数据列或历史回填。
+
+final父链最多128locator，与原工具32locator独立计数，共享原8MiB输入预算、同一RR只读事务、原5秒绝对期限及1MiB响应界。后继/其它Run、Swarm或未审版本不猜测恢复；v<4可能触发SDK额外pending-send查询，已在native读取前拒绝。BFF必须通过自己的Message/ordered parts/revision将该身份绑定到本人同Run，不能把Agent序列当BFF版本，不能更新历史final列。
+
+8.9仅移除上述字段并还原版本即可逐字恢复已发行8.8（SHA `fd8b2857ecbc9577bd98ca73234e4d81c53d4fe189ba86badcf35c774b9a6830`）。沿现正式generator更新provenance；消费者尚未固定8.9之前不激活正常HTTP。此文档不代表BFF/App已接通或页面已验收。
+
 ## HTTP8.8 最终公开答复身份（设计门，候选）
 
 父为 HTTP8.7.0 / OpenAPI SHA256 `74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc`。唯一 canonical `contract/openapi/v1/openapi.json` 增 decoded `run.completed` → `ChatRunCompleted`，required status=completed|cancelled，原 optional token_usage 不变；新增 optional final_message_id 非空公开 ChatMessage 身份，只允许 status=completed。缺省为未提供已证身份，null 不作为新的业务状态；历史 payload bytes 不补字段。HTTP 返回此绑定仍只在已有本人 Chat replay，不增加 endpoint 或匿名分享字段。

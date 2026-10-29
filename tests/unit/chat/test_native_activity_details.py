@@ -9,6 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from kokoro_agent.application.run_display import recover_display
+from kokoro_agent.domain.run.models import ToolJournalRecord
 from kokoro_agent.domain.chat.projection import safe_progress_id
 
 SCOPE = ("tenant", "namespace", "session", "run")
@@ -30,6 +31,7 @@ def details(
     ),
     status: str = "completed",
     tool_status: str = "success",
+    journal: dict[str, ToolJournalRecord] | None = None,
 ) -> list[Any]:
     code = (
         "tool.file.read"
@@ -69,6 +71,7 @@ def details(
         metadata=[],
         messages=messages + (extra or []),
         journal={},
+        journal_records=journal,
         native_tools=allowed,
     ).activity_details
 
@@ -188,3 +191,68 @@ def test_duplicate_call_id_in_one_message_is_not_a_replayed_copy() -> None:
         details(extra=[AIMessage(id="model", content="", tool_calls=[call, call])])
         == []
     )
+
+
+@pytest.mark.parametrize("kind", ["docker", "e2b"])
+def test_isolated_execute_authority_excludes_file_and_human_rewritten_tools(
+    kind: str,
+) -> None:
+    from kokoro_agent.application.native_activity_details import frozen_native_tools
+
+    peer: dict[str, Any] = {
+        "backend": {"kind": kind},
+        "permissions": {"approval_tools": [], "review_tools": []},
+        "pause_tools": [],
+    }
+    assert frozen_native_tools([peer]) == ("execute",)
+    assert frozen_native_tools([peer, {**peer, "backend": {"kind": "state"}}]) == ()
+    assert frozen_native_tools([{**peer, "pause_tools": ["execute"]}]) == ()
+    assert (
+        frozen_native_tools(
+            [
+                {
+                    **peer,
+                    "permissions": {"approval_tools": ["execute"], "review_tools": []},
+                }
+            ]
+        )
+        == ()
+    )
+
+
+def test_execute_detail_requires_exact_journal_result_and_bounded_safe_previews() -> (
+    None
+):
+    row = ToolJournalRecord(
+        name="execute", status="succeeded", is_error=False, result="200"
+    )
+    args = {"command": "python -c 'print(200)'", "_kokoro_action": "HTTP check"}
+    found = details("execute", args, "200", allowed=("execute",), journal={"call": row})
+    assert len(found) == 1
+    assert json.loads(found[0].input_preview.text) == {"command": args["command"]}
+    assert found[0].output_preview.text == "200"
+    assert found[0].target is None
+    assert details("execute", args, "200", allowed=("execute",)) == []
+    assert (
+        details(
+            "execute", args, "different", allowed=("execute",), journal={"call": row}
+        )
+        == []
+    )
+    assert details("execute", args, "200", allowed=(), journal={"call": row}) == []
+
+
+def test_execute_preview_does_not_expose_secret_text() -> None:
+    output = "password=DO_NOT_DISPLAY"
+    row = ToolJournalRecord(
+        name="execute", status="succeeded", is_error=False, result=output
+    )
+    found = details(
+        "execute",
+        {"command": "echo password=DO_NOT_DISPLAY"},
+        output,
+        allowed=("execute",),
+        journal={"call": row},
+    )
+    assert len(found) == 1
+    assert found[0].input_preview is None and found[0].output_preview is None

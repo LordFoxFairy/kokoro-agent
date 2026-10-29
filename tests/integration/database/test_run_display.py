@@ -652,6 +652,9 @@ async def test_late_native_read_file_checkpoint_recovers_exact_skill_path_not_me
         "foreign_run",
         "wrong_name",
         "secret_output",
+        "execute",
+        "execute_foreign",
+        "execute_wrong_result",
     ],
 )
 async def test_private_details_read_exact_native_call_and_journal_without_writes(
@@ -660,14 +663,17 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
     chat_repository: PostgresChatRepository,
     case: str,
 ) -> None:
-    from langchain_core.messages import AIMessage
+    from langchain_core.messages import AIMessage, ToolMessage
     from kokoro_agent.execution.runtime_profile import canonical_json
-    from kokoro_agent.protocol import ToolInvokedPayload
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
 
     run = request("private-display-" + case)
     scope = RunScope.of(run)
+    isolated = case.startswith("execute")
     name = (
-        "mcp_list_tools"
+        "execute"
+        if isolated
+        else "mcp_list_tools"
         if case == "discover"
         else "mcp_describe_tool"
         if case == "description"
@@ -685,6 +691,8 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
             },
         }
     )
+    if isolated:
+        args = {"command": "printf 'Actual result\\n'"}
     if case == "description":
         args = {"server": "connection", "tool": "query"}
     projection = project_chat_fact(
@@ -701,14 +709,39 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
         if case == "discover"
         else "tool.mcp.describe"
         if case == "description"
+        else "tool.execution"
+        if isolated
         else "tool.mcp.call",
     )
     assert projection is not None
     await chat_repository.append(projection)
+    if isolated:
+        returned = project_chat_fact(
+            tenant_id=run.execution_identity.tenant_ref,
+            namespace=scope.namespace,
+            session_id=run.session_id,
+            run_id=run.run_id,
+            source_index=1,
+            created_at=datetime.now(UTC),
+            payload=ToolReturnedPayload(
+                segment_id="call", tool_id="call", name=name, result="", is_error=False
+            ),
+            tool_display_code="tool.execution",
+        )
+        assert returned is not None
+        await chat_repository.append(returned)
+    peer: dict[str, Any] = {"mcp": [{"connection_id": "connection"}]}
+    if isolated:
+        peer = {
+            "mcp": [],
+            "backend": {"kind": "docker"},
+            "permissions": {"approval_tools": [], "review_tools": []},
+            "pause_tools": [],
+        }
     recipe = canonical_json(
         {
             "domain_tag": "kokoro-agent:assembly-recipe:1",
-            "feature": {"agents": [{"mcp": [{"connection_id": "connection"}]}]},
+            "feature": {"agents": [peer]},
         }
     )
     result = (
@@ -730,6 +763,8 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
             }
         )
     )
+    if isolated:
+        result = "Actual result"
     async with connect_pg(run_chat_database_url) as conn, conn.cursor() as cur:
         await execute_sql(
             cur,
@@ -766,7 +801,9 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
             "source": "loop",
             "step": 0,
             "parents": {},
-            "kokoro_run_id": "foreign" if case == "foreign_run" else run.run_id,
+            "kokoro_run_id": "foreign"
+            if case in {"foreign_run", "execute_foreign"}
+            else run.run_id,
         }
         config = await saver.aput(config, empty_checkpoint(), metadata, {})
         await saver.aput_writes(
@@ -779,7 +816,20 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
                             id="native",
                             content="",
                             tool_calls=[{"id": "call", "name": name, "args": args}],
-                        )
+                        ),
+                        *(
+                            [
+                                ToolMessage(
+                                    name="execute",
+                                    tool_call_id="call",
+                                    content="Mismatch"
+                                    if case == "execute_wrong_result"
+                                    else result,
+                                )
+                            ]
+                            if isolated
+                            else []
+                        ),
                     ],
                 )
             ],
@@ -790,7 +840,7 @@ async def test_private_details_read_exact_native_call_and_journal_without_writes
     assert await _snapshot(run_chat_database_url, run_chat_schema) == before
     details = response.model_dump(mode="json")["activity_details"]
     assert "OMIT_ME" not in json.dumps(details)
-    if case in {"foreign_run", "wrong_name"}:
+    if case in {"foreign_run", "wrong_name", "execute_foreign", "execute_wrong_result"}:
         assert details == []
     else:
         assert len(details) == 1 and details[0]["tool_name"] == name

@@ -1,4 +1,4 @@
-"""Private previews of exact native file calls, not filesystem reads or execution authority."""
+"""Private previews of proven native calls, never execution authority."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from kokoro_agent.domain.chat.projection import ToolDisplayDetail, safe_progress_id
 from kokoro_agent.domain.chat.tool_display_preview import ActivityDetail, preview
+from kokoro_agent.domain.run.models import ToolJournalRecord
 
 NATIVE_FILE_CODES = {
     "ls": "tool.execution",
@@ -19,7 +20,9 @@ NATIVE_FILE_CODES = {
     "write_file": "tool.file.write",
     "edit_file": "tool.execution",
 }
+_NATIVE_CODES = {**NATIVE_FILE_CODES, "execute": "tool.execution"}
 _ARGUMENTS = {
+    "execute": {"command"},
     "ls": {"path"},
     "glob": {"pattern", "path"},
     "grep": {"pattern", "path", "glob", "output_mode"},
@@ -30,16 +33,23 @@ _ARGUMENTS = {
 
 
 def frozen_native_tools(peers: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
-    """StateBackend proves virtual files; possible human substitutions stay unknown.
+    """StateBackend proves virtual files; isolated backends prove execute only.
 
     Root checkpoint messages may belong to any peer. Intersect their authority;
     absent fields never mean permission. Native file names are factory-reserved.
     """
-    allowed: set[str] = set(NATIVE_FILE_CODES) if peers else set()
+    allowed: set[str] = set(_NATIVE_CODES) if peers else set()
     for peer in peers:
-        if peer.get("backend") != {"kind": "state"}:
-            return ()
         try:
+            backend = TypeAdapter(dict[str, Any]).validate_python(
+                peer.get("backend"), strict=True
+            )
+            if backend == {"kind": "state"}:
+                allowed.intersection_update(NATIVE_FILE_CODES)
+            elif backend.get("kind") in {"docker", "e2b"}:
+                allowed.intersection_update({"execute"})
+            else:
+                return ()
             permissions = TypeAdapter(dict[str, Any]).validate_python(
                 peer.get("permissions"), strict=True
             )
@@ -60,6 +70,7 @@ def native_activity_details(
     activities: Mapping[str, Mapping[str, Any]],
     messages: Sequence[BaseMessage],
     allowed: tuple[str, ...],
+    journal: Mapping[str, ToolJournalRecord],
 ) -> list[ActivityDetail]:
     """Pair original typed call/result with the existing opaque activity identity.
 
@@ -99,7 +110,7 @@ def native_activity_details(
             outputs[call_id] = message
     result: list[ActivityDetail] = []
     for call_id, (_, name, args) in calls.items():
-        if call_id in conflicts or name not in allowed or name not in NATIVE_FILE_CODES:
+        if call_id in conflicts or name not in allowed or name not in _NATIVE_CODES:
             continue
         activity_id = "act_" + safe_progress_id(
             "tool-activity", *scope, call_id, call_id
@@ -108,13 +119,23 @@ def native_activity_details(
         output = outputs.get(call_id)
         if (
             activity is None
-            or activity.get("display_code") != NATIVE_FILE_CODES[name]
+            or activity.get("display_code") != _NATIVE_CODES[name]
             or output is None
             or output.name != name
             or (activity.get("status"), output.status)
             not in {("completed", "success"), ("failed", "error")}
         ):
             continue
+        if name == "execute":
+            record = journal.get(call_id)
+            if (
+                record is None
+                or record.name != name
+                or (record.status, record.is_error, output.status)
+                not in {("succeeded", False, "success"), ("failed", True, "error")}
+                or record.result != output.model_dump().get("content")
+            ):
+                continue
         values: dict[str, Any] = {"activity_id": activity_id, "tool_name": name}
         # Only the tool's public argument vocabulary; never model-only metadata.
         arguments = {

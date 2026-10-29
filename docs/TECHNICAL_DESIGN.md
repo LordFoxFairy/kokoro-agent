@@ -1,3 +1,7 @@
+## 2026-10-29 隔离脚本执行详情
+
+沿既有本人 RunDisplay 只读接口补齐 execute 预览，不新增事件、表或消费者契约。冻结配方中的所有 peer 均为 Docker/E2B 且无 execute approval/review/pause 改写，才允许 execute；StateBackend 文件白名单维持原行为，混合或未知后端不推断权限。原始 typed call/result、同 Run opaque activity ID、终态和持久 journal 的 name/status/result 必须完全一致；仅 command 公共参数及已记录输出进入既有脱敏预览（2048/4096 UTF-8字节），不读取当前凭据、环境或文件。无 MCP/Skill journal 需求时只预算和读取 execute journal，避免无关工具挤占文件详情预算。既有 RR只读、5秒期限、8MiB预算及版本/主体边界保持。
+
 ## 2026-10-29 已批准 Custom API 隔离执行接线
 
 Platform唯一拥有加密配置；本仓只消费固定Describe/Acquire运行契约，沿既有RunPlatformClient与在线proof，执行器使用现Docker/E2B而非宿主local_shell或通用HTTP代理。每次execute获取局部env，值不进argv/命令/prompt/recipe/日志，不写.env；描述为用户配置数据。adapter/provider及 Run/factory 已接入候选；正常进程尚未配对激活。

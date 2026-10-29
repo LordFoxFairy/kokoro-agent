@@ -141,11 +141,11 @@ async def read_run_display(
                 if not need_skills and not has_mcp and not has_file and not has_native:
                     return result
                 records: dict[str, ToolJournalRecord] = {}
-                if has_mcp or has_file:
+                if has_mcp or has_file or has_native:
                     await execute_sql(
                         cur,
-                        f"SELECT COUNT(*) AS count, COALESCE(SUM(octet_length(result)+octet_length(name)+octet_length(tool_call_id)),0) AS bytes FROM {journal_table} WHERE run_id=%s",
-                        (request.run_id,),
+                        f"SELECT COUNT(*) AS count, COALESCE(SUM(octet_length(result)+octet_length(name)+octet_length(tool_call_id)),0) AS bytes FROM {journal_table} WHERE run_id=%s AND (%s OR name='execute')",
+                        (request.run_id, has_mcp or has_file),
                     )
                     journal_size = await fetch_one(cur)
                     if journal_size is None or journal_size["count"] > 128:
@@ -153,8 +153,8 @@ async def read_run_display(
                     budget.reserve(int(journal_size["bytes"]))
                     await execute_sql(
                         cur,
-                        f"SELECT tool_call_id,name,status,is_error,result FROM {journal_table} WHERE run_id=%s ORDER BY tool_call_id LIMIT 129",
-                        (request.run_id,),
+                        f"SELECT tool_call_id,name,status,is_error,result FROM {journal_table} WHERE run_id=%s AND (%s OR name='execute') ORDER BY tool_call_id LIMIT 129",
+                        (request.run_id, has_mcp or has_file),
                     )
                     journal_rows = await fetch_all(cur)
                     records = {

@@ -482,7 +482,7 @@ def _activity_details(
         {
             item.activity_id: item
             for item in native_activity_details(
-                scope, activities, messages, native_tools
+                scope, activities, messages, native_tools, journal
             )
         }
     )

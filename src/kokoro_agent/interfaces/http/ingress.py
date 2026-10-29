@@ -42,7 +42,10 @@ from kokoro_agent.protocol import (
     run_events_stream,
 )
 from kokoro_agent.domain.run.scope import runtime_namespace
-from kokoro_agent.protocol.control import control_request_digest
+from kokoro_agent.protocol.control import (
+    CustomApiProfileSelection,
+    control_request_digest,
+)
 from kokoro_agent.domain.run.interactions import InteractionRunMissing
 from kokoro_agent.domain.run.models import ControlAdmissionReceipt
 from kokoro_agent.domain.run.repository import (
@@ -79,6 +82,9 @@ class LaunchBody(BaseModel):
     requested_model_label: str | None = None
     trace: dict[str, Any] | None = None
     selected_mcp_connection_ids: list[str] = Field(default_factory=list)
+    selected_custom_api_profiles: list[CustomApiProfileSelection] = Field(
+        default_factory=lambda: list[CustomApiProfileSelection](), max_length=32
+    )
 
 
 class ControlBody(BaseModel):
@@ -122,6 +128,7 @@ def _parse_launch(
             project_ref=launch.project_ref,
             selected_skill_source_refs=tuple(launch.selected_skill_source_refs),
             selected_mcp_connection_ids=tuple(launch.selected_mcp_connection_ids),
+            selected_custom_api_profiles=tuple(launch.selected_custom_api_profiles),
             execution_identity=execution_identity,
             input=RunInput(message_id=launch.message_id, content=launch.content),
             requested_model_label=launch.requested_model_label,

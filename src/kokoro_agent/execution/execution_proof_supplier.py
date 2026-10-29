@@ -19,6 +19,7 @@ from kokoro_agent.execution.execution_proof_profile import (
     encode_base64url,
 )
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, RunRequest
+from kokoro_agent.protocol.control import CustomApiProfileSelection
 
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -28,6 +29,9 @@ _MAX_TTL_SECONDS = 60
 _OPERATION = re.compile(r"^[a-z][a-z0-9_.]{0,127}$")
 _BINDING = re.compile(r"^[0-9a-f]{64}$")
 _ERROR_MESSAGE = "execution proof is unavailable"
+_CUSTOM_API_RUNTIME_OPERATIONS = frozenset(
+    {"custom_api.describe_environment", "custom_api.acquire_environment"}
+)
 _CONTEXT_BOUND_OPERATIONS = frozenset(
     {
         "skill.discover_visible_skills",
@@ -87,6 +91,7 @@ class _RunSnapshot:
     identity_assertion_ref: str
     project_ref: str | None
     selection_digest: str
+    selected_custom_api_profiles: tuple[CustomApiProfileSelection, ...]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -111,6 +116,11 @@ class ExecutionProofSupplier:
             if not _issue_values_are_valid(operation, request_binding_sha256):
                 raise ValueError
             snapshot = self._snapshot
+            if (
+                operation in _CUSTOM_API_RUNTIME_OPERATIONS
+                and not snapshot.selected_custom_api_profiles
+            ):
+                raise ValueError
             observation = await self._lease_reader.observe_current_lease(
                 run_id=snapshot.run_id,
                 fence=snapshot.fence,
@@ -232,6 +242,7 @@ def _snapshot_leased_run(value: object) -> _RunSnapshot:
         raise ValueError
     return _RunSnapshot(
         identity_assertion_ref=identity.identity_assertion_ref,
+        selected_custom_api_profiles=request.selected_custom_api_profiles,
         project_ref=request.project_ref,
         selection_digest=hashlib.sha256(
             json.dumps(

@@ -1,3 +1,11 @@
+## HTTP8.10 CustomAPI Run 精确选择（候选，运行装配另验）
+
+唯一增量是现有 `LaunchRequest` 的 optional `selected_custom_api_profiles`：有序数组最多32项，每项仅 `profile_id`（1–191位ASCII opaque ID，`[A-Za-z0-9][A-Za-z0-9._:-]*`）和 `expected_state_version`（严格整数1–2147483647）。同profile ID即使版本不同亦拒绝；拒绝null、未知字段、名称、说明、环境变量或密钥。省略/`[]`均不向旧 `RunRequest` JSON写新字段，保留原dispatch fence及输入摘要；非空选择写入原request JSON、参与原fence并随原Redis envelope/恢复重放，顺序或版本漂移按原同Run冲突处理。无新表/列/事件/路由。
+
+协议内部为不可变 `CustomApiProfileSelection` 与tuple；HTTP仅解析safe intent，不授予权限。每个lease的proof supplier重建并冻结选择；`custom_api.describe_environment` / `custom_api.acquire_environment`仅在该快照非空时签发，仍逐调用执行原current lease/时钟/nonce门禁。新operation的 `execution_binding` 保持null；不改Skills的ordered selection digest或IAM既有execution-binding语义。受信factory负责把相同冻结refs交给Platform client；Platform当前本人/版本/授权与任务隔离沙箱执行仍是后续运行门，不由此字段代替。
+
+HTTP版本8.10.0：只删除该optional属性并还原8.9.0即逐字恢复完整已发行父SHA `875545c23cf4cd055adfb4aedf6ea3c994eab6be10a25f1f68db248ffecb32c9`，既有8.9→更早父链继续验证。沿唯一OpenAPI与正式failure generator更新生成物/provenance；BFF固定本owner commit/digest后消费，无共享DTO或第二契约。本片不代表BFF/App选择、正常环境或真实API整链已完成。
+
 ## HTTP8.9 旧终态最终答复只读证明（候选）
 
 沿现本人Run `GET /v1/runs/{run_id}/display`，RunDisplay新增可选 `final_message_id`，仅公开派生的 `msg_` 加32位小写hex身份；不接受null，不公开原生ID/正文。来源是已审配方和checkpoint v4、同Run完整有界root父链、原生成功终态及唯一公开完成消息的身份/完整正文双证。缺证省略，不代表没有最终答复；原terminal显式绑定仍由消费者优先采用，冲突不得覆盖。无新事件、数据列或历史回填。

@@ -16,7 +16,7 @@ def test_http83_display_is_the_only_delta_from_exact_published_http82() -> None:
             Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
         ).read_text()
     )
-    assert document["info"]["version"] == "8.9.0"
+    assert document["info"]["version"] == "8.10.0"
     assert (
         hashlib.sha256(http82_display_parent_bytes(document)).hexdigest()
         == "8a0b9973661205b8e29020934c39e5c7ab629b4c42db4e79c845a410d96efa2a"
@@ -69,7 +69,7 @@ def test_current_generator_rejects_a_complete_old_parent_before_any_write(
         for p in tmp_path.rglob("*")
         if p.is_file()
     }
-    with pytest.raises(ValueError, match="HTTP 8.9.0"):
+    with pytest.raises(ValueError, match="HTTP 8.10.0"):
         generate_failure_models(tmp_path, check=check)
     assert {
         p.relative_to(tmp_path): p.read_bytes()
@@ -86,7 +86,7 @@ def test_http84_tool_facts_is_exact_additive_full_http83_parent() -> None:
             Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
         ).read_text()
     )
-    assert document["info"]["version"] == "8.9.0"
+    assert document["info"]["version"] == "8.10.0"
     assert (
         hashlib.sha256(http83_tool_facts_parent_bytes(document)).hexdigest()
         == "be642c2313fbaf447d4e37bda2a7920f867c3a06d39f7e0e82efaf212e7080d6"
@@ -112,7 +112,7 @@ def test_http85_private_activity_details_preserve_the_entire_http84_parent() -> 
             Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
         ).read_text()
     )
-    assert document["info"]["version"] == "8.9.0"
+    assert document["info"]["version"] == "8.10.0"
     from kokoro_agent.chat_contract_check import http84_activity_details_parent_bytes
 
     assert (

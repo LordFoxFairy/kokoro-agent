@@ -64,6 +64,28 @@ class RunInput(StrictModel):
     content: NonEmptyStr
 
 
+class CustomApiProfileSelection(StrictModel):
+    """Safe exact Platform intent, never descriptions, credentials or authority."""
+
+    model_config = ConfigDict(
+        strict=True, extra="forbid", frozen=True, revalidate_instances="always"
+    )
+    profile_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+    expected_state_version: Annotated[int, Field(ge=1, le=2147483647)]
+
+    @field_validator("profile_id")
+    @classmethod
+    def _validate_profile_id(cls, value: str) -> str:
+        if _MCP_CONNECTION_ID.fullmatch(value) is None:
+            raise ValueError("invalid CustomAPI profile_id")
+        return value
+
+
+_CUSTOM_API_SELECTIONS_ADAPTER: TypeAdapter[
+    list[CustomApiProfileSelection] | tuple[CustomApiProfileSelection, ...]
+] = TypeAdapter(list[CustomApiProfileSelection] | tuple[CustomApiProfileSelection, ...])
+
+
 class RunRequest(StrictModel):
     """Frozen business selections; the trusted Feature still owns the runtime graph."""
 
@@ -85,6 +107,27 @@ class RunRequest(StrictModel):
     selected_mcp_connection_ids: tuple[str, ...] = Field(
         default=(), exclude_if=lambda refs: not refs
     )
+
+    # Preserve pre-8.10 persisted bytes/fences when omitted or explicitly empty.
+    selected_custom_api_profiles: tuple[CustomApiProfileSelection, ...] = Field(
+        default=(), max_length=32, exclude_if=lambda refs: not refs
+    )
+
+    @field_validator("selected_custom_api_profiles", mode="before")
+    @classmethod
+    def _parse_custom_api_profiles(
+        cls, value: object
+    ) -> tuple[CustomApiProfileSelection, ...]:
+        return tuple(_CUSTOM_API_SELECTIONS_ADAPTER.validate_python(value, strict=True))
+
+    @field_validator("selected_custom_api_profiles")
+    @classmethod
+    def _validate_custom_api_profiles(
+        cls, refs: tuple[CustomApiProfileSelection, ...]
+    ) -> tuple[CustomApiProfileSelection, ...]:
+        if len({ref.profile_id for ref in refs}) != len(refs):
+            raise ValueError("duplicate selected_custom_api_profiles profile_id")
+        return refs
 
     @field_validator("selected_mcp_connection_ids", mode="before")
     @classmethod
@@ -221,6 +264,7 @@ inbound_adapter: TypeAdapter[InboundMessage] = TypeAdapter(InboundMessage)
 
 __all__ = [
     "ApproveDecision",
+    "CustomApiProfileSelection",
     "EditDecision",
     "ExecutionIdentity",
     "IdentityRef",

@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.9.0"
+    "version": "8.10.0"
   },
   "servers": [
     {
@@ -403,6 +403,35 @@
               "minLength": 1,
               "maxLength": 191,
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+            }
+          },
+          "selected_custom_api_profiles": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "x-kokoro-unique-by": "profile_id",
+            "description": "Exact Platform CustomAPI profile IDs and state versions selected for this Run, in caller order. Omission or [] selects none and preserves legacy request bytes. Profile IDs must be unique even across different versions. Safe intent only, not authorization; no credentials, names, instructions or environment values.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "profile_id",
+                "expected_state_version"
+              ],
+              "properties": {
+                "profile_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 191,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+                },
+                "expected_state_version": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                }
+              }
             }
           }
         },

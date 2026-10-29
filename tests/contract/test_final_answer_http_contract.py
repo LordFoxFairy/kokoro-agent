@@ -24,7 +24,7 @@ def _document() -> dict[str, Any]:
 
 def test_complete_http87_parent_is_preserved_without_other_deltas() -> None:
     document = _document()
-    assert document["info"]["version"] == "8.9.0"
+    assert document["info"]["version"] == "8.10.0"
     assert (
         hashlib.sha256(http87_final_answer_parent_bytes(document)).hexdigest()
         == "74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc"

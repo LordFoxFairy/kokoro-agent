@@ -152,11 +152,13 @@ def test_platform_generated_async_client_contains_all_owner_rpcs() -> None:
     from kokoro_agent.generated.kokoro.platform.v1 import (
         platform_runtime_connect,
         mcp_runtime_connect,
+        custom_api_runtime_connect,
     )
 
     for filename, generated in (
         ("platform_runtime.proto", platform_runtime_connect),
         ("mcp_runtime.proto", mcp_runtime_connect),
+        ("custom_api_runtime.proto", custom_api_runtime_connect),
     ):
         # The pinned source hash anchors the complete inventory, including generated
         # management methods which the execution transport must never expose.

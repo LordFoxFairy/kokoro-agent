@@ -1,0 +1,69 @@
+{
+  "profile": "custom-api-runtime-material-v1",
+  "version": "1.0.0",
+  "owner": "Platform/CustomAPI",
+  "visibility": "internal-owner",
+  "status": "prepared",
+  "runtime_verified": false,
+  "surface": "custom-api-runtime",
+  "default_enabled": false,
+  "service": "kokoro.platform.v1.CustomApiRuntimeService",
+  "operations": [
+    {
+      "method": "kokoro.platform.v1.CustomApiRuntimeService/DescribeCustomApiEnvironment",
+      "operation": "custom_api.describe_environment",
+      "caller": "agent",
+      "workload_surface": "tenant_execution",
+      "execution_proof": "required_current_E2",
+      "binding_version": "3.0.0"
+    },
+    {
+      "method": "kokoro.platform.v1.CustomApiRuntimeService/AcquireCustomApiEnvironment",
+      "operation": "custom_api.acquire_environment",
+      "caller": "agent",
+      "workload_surface": "tenant_execution",
+      "execution_proof": "required_current_E2",
+      "binding_version": "3.0.0"
+    }
+  ],
+  "limits": {
+    "profiles": 32,
+    "environment": 128,
+    "environmentBytes": 65536
+  },
+  "semantics": {
+    "selection": "Unique exact profile/version set, UTF-8 byte sorted in binding; request and invocation identity included; no caller identity in body",
+    "authority": "Current IAM direct-user proof plus current personal ownership and exact version; verify again before return. Agent also checks live run/lease/cancellation and frozen selection",
+    "material": "Each execute acquires fresh erasable UTF-8 bytes. No caching, persistence, environment file, prompt, journal, command argv or global os.environ",
+    "environment": "Duplicate names across all selected profiles rejected, even equal values. Runtime-control variables rejected before decryption",
+    "isolation": "Only task-isolated Docker/E2B execution. No host local shell fallback. Plaintext output redaction is not a guarantee against arbitrary script exfiltration",
+    "revocation": "Deleted/edited profiles or revoked secrets reject subsequent acquisition. Does not claim to revoke already executing child processes",
+    "activation": "Fixed IAM operation consumer and Agent consumer, then isolated chain verification; no production activation by generation"
+  },
+  "inputs": [
+    {
+      "path": "contract/proto/kokoro/platform/v1/custom_api_runtime.proto",
+      "sha256": "e30c37d6caa3c814486ac3d802b38b64bc3385db987304319100baad5641a81b"
+    },
+    {
+      "path": "contract/descriptor/custom-api-runtime-v1.binpb",
+      "sha256": "956b393735bb607d06d564748f1e581d0db1ea54a5e79b469f9a7f1df042d992"
+    },
+    {
+      "path": "src/generated/proto/kokoro/platform/v1/custom_api_runtime_pb.ts",
+      "sha256": "088d515c88be4f3b2fc8b88203fe9dfd7b7b32429734d38138c246a45352168a"
+    },
+    {
+      "path": "src/modules/mcp/custom-api/custom-api-runtime-binding.ts",
+      "sha256": "7fb506d1aa4d8e5480ad41a7ceff4a598a60f6a99df980de431d350e782424b3"
+    },
+    {
+      "path": "src/modules/mcp/custom-api/custom-api-runtime-environment.ts",
+      "sha256": "d935186ba3d1b00260b161f95e94624572511a9b92c895c109a9c1079461580e"
+    },
+    {
+      "path": "contract/execution-operations/custom-api-runtime-request-vectors-v1.json",
+      "sha256": "0666c8ea054b45dd7c529af22cbf6797784af5d505e65ba36cb8cf831e26e018"
+    }
+  ]
+}

@@ -57,7 +57,12 @@ class FakeCommands:
         self._owner = owner
 
     def run(
-        self, cmd: str, *, cwd: str | None = None, timeout: int | None = None
+        self,
+        cmd: str,
+        *,
+        cwd: str | None = None,
+        timeout: int | None = None,
+        envs: dict[str, str] | None = None,
     ) -> FakeCommandResult:
         self._owner.commands_run.append((cmd, cwd))
         if self._owner.fail_next_command is not None:

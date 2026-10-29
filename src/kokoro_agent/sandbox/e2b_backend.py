@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated, Literal, Protocol
 
@@ -17,6 +18,10 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import BaseSandbox
 from e2b import CommandExitException, Sandbox, SandboxException
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from kokoro_agent.sandbox.execution_environment import (
+    ExecutionEnvironmentProvider,
+    ExecutionEnvironmentRunner,
+)
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.e2b")
 
@@ -38,7 +43,12 @@ class CommandOutcome(Protocol):
 
 class SandboxCommands(Protocol):
     def run(
-        self, cmd: str, *, cwd: str | None = None, timeout: int | None = None
+        self,
+        cmd: str,
+        *,
+        cwd: str | None = None,
+        timeout: int | None = None,
+        envs: dict[str, str] | None = None,
     ) -> CommandOutcome: ...
 
 
@@ -73,8 +83,24 @@ class E2BSettings(BaseModel):
 class E2BSandboxBackend(BaseSandbox):
     """execute 经 commands.run（非零退出码是结果不是异常）；文件面走 files API。"""
 
-    def __init__(self, sandbox: SandboxClient) -> None:
+    def __init__(
+        self,
+        sandbox: SandboxClient,
+        *,
+        environment_provider: ExecutionEnvironmentProvider | None = None,
+        environment_loop: asyncio.AbstractEventLoop | None = None,
+        max_output_bytes: int = 100_000,
+    ) -> None:
         self._sandbox = sandbox
+        self._environment = (
+            ExecutionEnvironmentRunner(
+                environment_provider,
+                max_output_bytes=max_output_bytes,
+                owner_loop=environment_loop,
+            )
+            if environment_provider is not None
+            else None
+        )
 
     @property
     def id(self) -> str:
@@ -86,6 +112,47 @@ class E2BSandboxBackend(BaseSandbox):
         return self._sandbox.sandbox_id
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if self._environment is not None:
+            return self._environment.execute(
+                timeout if timeout is not None else 120,
+                lambda values, remaining: self._execute_environment(
+                    command, values, remaining
+                ),
+            )
+        return self._execute_plain(command, timeout)
+
+    async def aexecute(
+        self, command: str, *, timeout: int | None = None
+    ) -> ExecuteResponse:
+        if self._environment is None:
+            return await super().aexecute(command, timeout=timeout)
+        return await self._environment.aexecute(
+            timeout if timeout is not None else 120,
+            lambda values, remaining: self._execute_environment(
+                command, values, remaining
+            ),
+        )
+
+    def _execute_environment(
+        self, command: str, values: dict[str, str], timeout: int
+    ) -> ExecuteResponse:
+        try:
+            result = self._sandbox.commands.run(
+                command, cwd=_WORKDIR, timeout=timeout, envs=values
+            )
+        except CommandExitException as failed:
+            return ExecuteResponse(
+                output=failed.stdout + failed.stderr,
+                exit_code=failed.exit_code,
+                truncated=False,
+            )
+        return ExecuteResponse(
+            output=result.stdout + result.stderr,
+            exit_code=result.exit_code,
+            truncated=False,
+        )
+
+    def _execute_plain(self, command: str, timeout: int | None) -> ExecuteResponse:
         try:
             result = self._sandbox.commands.run(command, cwd=_WORKDIR, timeout=timeout)
         except CommandExitException as failed:
@@ -143,7 +210,12 @@ def kill_e2b_sandbox(settings: E2BSettings, sandbox_id: str) -> None:
 
 
 def connect_e2b_sandbox(
-    settings: E2BSettings, *, sandbox_id: str | None
+    settings: E2BSettings,
+    *,
+    sandbox_id: str | None,
+    environment_provider: ExecutionEnvironmentProvider | None = None,
+    environment_loop: asyncio.AbstractEventLoop | None = None,
+    max_output_bytes: int = 100_000,
 ) -> E2BSandboxBackend:
     """run 级生命周期：有既往 sandbox_id 先重连（HITL 暂停期文件在箱内）；
     箱已被 TTL 回收则新建并告警（文件面由归档兜底）。SDK 网络调用是同步阻塞——
@@ -158,7 +230,12 @@ def connect_e2b_sandbox(
             sandbox = Sandbox.connect(
                 sandbox_id, timeout=settings.timeout, api_key=api_key
             )
-            return E2BSandboxBackend(sandbox)
+            return E2BSandboxBackend(
+                sandbox,
+                environment_provider=environment_provider,
+                environment_loop=environment_loop,
+                max_output_bytes=max_output_bytes,
+            )
         except SandboxException:
             LOGGER.warning(
                 "e2b sandbox %s gone (TTL?), creating a fresh one", sandbox_id
@@ -166,4 +243,9 @@ def connect_e2b_sandbox(
     created = Sandbox.create(
         template=settings.template, timeout=settings.timeout, api_key=api_key
     )
-    return E2BSandboxBackend(created)
+    return E2BSandboxBackend(
+        created,
+        environment_provider=environment_provider,
+        environment_loop=environment_loop,
+        max_output_bytes=max_output_bytes,
+    )

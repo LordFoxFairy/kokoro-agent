@@ -68,7 +68,7 @@ clients/skill_package_transport.py clients/package_transport.py clients/platform
 clients/platform_transport.py execution/execution_proof_keys.py execution/execution_proof_profile.py
 execution/execution_proof_signer.py execution/execution_proof_supplier.py
 execution/platform_request_binding.py execution/platform_request_binding_values.py
-execution/mcp_runtime_request_binding.py
+execution/mcp_runtime_request_binding.py execution/custom_api_request_binding.py
 """,
     ),
     ("core", "tools/ask_user_question.py"),
@@ -85,8 +85,14 @@ execution/mcp_runtime_request_binding.py
     ),
     ("backend", "sandbox/__init__.py sandbox/backend.py sandbox/workspace.py"),
     ("local_shell", "sandbox/archive.py"),
-    ("docker", "sandbox/docker_backend.py sandbox/archive.py"),
-    ("e2b", "sandbox/e2b_backend.py sandbox/archive.py"),
+    (
+        "docker",
+        "sandbox/docker_backend.py sandbox/archive.py sandbox/execution_environment.py",
+    ),
+    (
+        "e2b",
+        "sandbox/e2b_backend.py sandbox/archive.py sandbox/execution_environment.py",
+    ),
     ("custom", "sandbox/custom_backend.py"),
     ("swarm", "swarm.py"),
     ("web_researcher", "prompts/__init__.py prompts/web-researcher.md"),
@@ -101,6 +107,7 @@ application/chat/dto.py
 application/chat/mappers.py
 application/schema.py
 clients/__init__.py
+clients/custom_api_runtime.py
 clients/system.py
 config.py
 config_file.py
@@ -127,6 +134,8 @@ generated/kokoro/platform/v1/platform_runtime_connect.py
 generated/kokoro/platform/v1/platform_runtime_pb.py
 generated/kokoro/platform/v1/mcp_runtime_connect.py
 generated/kokoro/platform/v1/mcp_runtime_pb.py
+generated/kokoro/platform/v1/custom_api_runtime_connect.py
+generated/kokoro/platform/v1/custom_api_runtime_pb.py
 generated/kokoro/storage/__init__.py
 generated/kokoro/storage/v3/__init__.py
 generated/kokoro/storage/v3/storage_connect.py

@@ -1,3 +1,25 @@
+## 2026-10-29 Custom API 固定消费者与沙箱 adapter 收口（未接 Run／正常页面）
+
+Platform固定来源44fcc5da599b4a5cec3077e41aaef4375fe4add2，独立生成Describe/Acquire Python Connect消息/client；旧MCP pins字节保持。client每次生成request/invocation、沿RunPlatformClient取fresh proof，核exact binding/run/session/refs/version；安全描述只含说明/env名，材料限量转SecretStr，失败/取消/过期/unknown返回清除protobuf持有值。Python不可变字符串不宣称物理清零，执行输出原文脱敏不宣称防编码/网络/文件外传。
+
+主控停写后最终复验：focused164 PASS/8按marker未选；默认3251 PASS/931按marker未选（182.94秒，2924既有上游warning）；Ruff全量、377文件格式、显式本venv Pyright0错、owner/consumer contract与正规generator drift check、uv lock、wheel/sdist均通过。真实Docker两次fresh获取/原值脱敏/下次未选不继承已再次验证；专属无网限额容器回收。E2B仅SDK替身，未用真实密钥/模型。子代理登记manifest前启动的阶段全测3250/1失败只属旧输入证据，缺口已在停写主控最终3251全过验证承接。
+
+IAM547b05c已固定消费这两operation；Run safe-ref协议、supplier frozen-selection、factory/worker、BFF/App及真实跨owner链路仍未接。client在source manifest标为尚未挂载，不伪称其已参与正常会话。后继按Root唯一计划继续，不重复本段全门作为产品验收，不启假菜单。
+
+## 2026-10-28 Custom API 单次执行环境 adapter（尚未接 Run）
+
+### 本轮实际进展（候选，未启用正常页面）
+
+Platform 已实现独立 Describe/Acquire 运行 RPC、严格 JSON/protobuf 边界、默认关闭 surface、当前本人多 profile 精确版本读取、返回前二次执行授权/材料复核及取消/序列化后清零；无 Schema 改动。独立 owner artifact v1.0.0 已正规生成，旧主 descriptor 与历史固定父未改，只在其编译闭包排除新独立 proto。IAM547b05c已固定消费新操作（draft PR5）；Agent固定client候选，BFF/App尚未消费，不称整链完成。
+
+主方复验：相关 46 例通过（含真实本机 HTTP JSON/protobuf；IAM/持久层明确替身），typecheck/full lint/build/format/schema/contract通过。owner unit/contract/architecture 合计 2920 通过、1 个既有重型子进程负控因并发 ETIMEDOUT；保持断言/超时不变，原文件单独复跑 24 通过。并发阶段统计不冒充最终整套全绿，完整真实 IAM/PG 链及消费者尚待。
+
+Agent 已实现 Docker/E2B 每次 execute 的 environment provider、并发局部 SecretStr 快照、无值 argv 注入、有限原文输出脱敏、共享绝对预算和取消线程归属；默认 provider=None 不变。主方重跑 sandbox/profile 114 通过、8 按原 marker 未选，六文件 Ruff/类型检查通过。真实 Docker 使用既有镜像、独立临时容器、无网络/0.25 CPU/64MiB/32 PIDs：两次 acquire+执行+原值脱敏通过，下一次无配置执行无 env 继承，容器已清理。未执行模型或外部 API，E2B 仅 SDK 接线测试；factory/Run/契约尚未接 provider，文件/产物处理及完整执行联动仍需后续验收。
+
+踩坑记录：①只封 PATH/代理不足，NODE_/OPENSSL_/SSLKEYLOGFILE 会改变 TLS/运行边界，现两端拒绝；②protobuf 会折叠重复 singular，须解码前检查原始 tag，已加真实 HTTP 负控；③Docker CLI 不能继承整个 worker env，也不能遗漏现 context，现只接显式 HOME/Docker 配置；④provider 复用可变 SecretStr 会让在途脱敏漏旧值，现每次复制快照。原文脱敏不宣称防任意编码/网络/文件外传。
+
+下一步：提交固定 owner artifact → IAM 编译期操作目录消费 → Agent 当前 Run/lease 绑定 provider及隔离 backend装配 → BFF/App safe refs冻结/恢复/菜单 → 配对激活后实际 API 调用和页面对照。“＋”资源仍独立 OPEN，Goal 保持 ACTIVE。
+
 ## 2026-10-28 HTTP8.9 旧最终答复有界只读证明（owner候选，未正常激活）
 
 既有RunDisplay新增optional final_message_id，BFF必须自行绑定parts/revision，不回填旧terminal。先检查同Run唯一成功terminal：有显式final即不走历史恢复（预算仅够terminal也成功退出）；缺省才检查冻结recipe、已审单Agent默认state、最多128个same-Run root完整单链、checkpoint v4和8MiB共享输入。通过限制get的SDK父链恢复原DeepAgents messages reducer，最终无tool-call AI与同Run唯一公开完成消息身份/全文一致才给证明。保原5秒HTTP绝对期限、取消/1MiB响应，不新建图或调用模型工具。

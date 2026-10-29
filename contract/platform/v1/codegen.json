@@ -7,6 +7,7 @@
   "inputs": [
     "proto/kokoro/common/v1/common.proto",
     "proto/kokoro/platform/v1/platform_runtime.proto",
-    "proto/kokoro/platform/v1/mcp_runtime.proto"
+    "proto/kokoro/platform/v1/mcp_runtime.proto",
+    "proto/kokoro/platform/v1/custom_api_runtime.proto"
   ]
 }

@@ -117,10 +117,12 @@ def test_runtime_does_not_import_platform_artifact_checker() -> None:
         "contract_check.py",
         "platform_binding_contract.py",
         "mcp_runtime_contract.py",
+        "custom_api_runtime_contract.py",
     }
     forbidden = {
         "kokoro_agent.platform_binding_contract",
         "kokoro_agent.mcp_runtime_contract",
+        "kokoro_agent.custom_api_runtime_contract",
     }
     for path in _py_files():
         if _rel(path) in allowed:
@@ -140,7 +142,11 @@ def test_platform_artifact_literal_scanner_has_a_negative_fixture() -> None:
 def test_runtime_does_not_read_vendored_platform_artifacts_by_literal_path() -> None:
     """Only the build-time checker/generator may read the vendored artifact tree."""
 
-    allowed = {"platform_binding_contract.py", "mcp_runtime_contract.py"}
+    allowed = {
+        "platform_binding_contract.py",
+        "mcp_runtime_contract.py",
+        "custom_api_runtime_contract.py",
+    }
     for path in _py_files():
         if _rel(path) in allowed:
             continue

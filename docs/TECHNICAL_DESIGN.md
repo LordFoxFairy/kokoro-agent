@@ -1,3 +1,9 @@
+## 2026-10-29 已批准 Custom API 隔离执行接线
+
+Platform唯一拥有加密配置；本仓只消费固定Describe/Acquire运行契约，沿既有RunPlatformClient与在线proof，执行器使用现Docker/E2B而非宿主local_shell或通用HTTP代理。每次execute获取局部env，值不进argv/命令/prompt/recipe/日志，不写.env；描述为用户配置数据。adapter/provider候选已验，尚未改Run和factory。
+
+后续Run仅增加safe profile_id/expected_state_version引用，原默认/省略行为及旧冻结digest保持；build/static recipe/backend_for使用同一受信有效Feature，选中才进入已配置隔离后端，缺配置即拒绝而非降级。Run级workspace隔离，同Run恢复走现sandbox CAS；Describe不进静态recipe，Acquire不进checkpoint。挂载、Archiving包装、取消/失败及终态清理须保持同一backend/provider与Docker daemon上下文。无新数据库模型或执行框架。
+
 ## 2026-10-28 旧终态最终答复旁读（本轮实施门，未发行）
 
 目标是让缺显式 final 标识但已有可证明 native terminal 的旧 Run 复用正常整轮披露，不从最后一段公共正文猜 final。Agent 仍拥有事实；沿既有 RunDisplay 只读边界，复用 RR read-only、5 秒绝对期限和 8 MiB 输入预算。独立 checkpoint_final_answer 读取器完成隔离验证后，现已沿 read_run_display 接线：两个返回位置携带证明，共享同一预算与事务；正式HTTP8.9候选只增加可选身份字段，消费者/正常环境未生效。

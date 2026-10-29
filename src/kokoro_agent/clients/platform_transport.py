@@ -17,6 +17,12 @@ from urllib.parse import urlsplit
 from kokoro_agent.execution.platform_request_binding import project_request_binding
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
 from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as runtime
+from kokoro_agent.generated.kokoro.platform.v1 import (
+    custom_api_runtime_pb as custom_api,
+)
+from kokoro_agent.generated.kokoro.platform.v1.custom_api_runtime_connect import (
+    CustomApiRuntimeServiceClient,
+)
 from kokoro_agent.generated.kokoro.platform.v1.mcp_runtime_connect import (
     McpRuntimeServiceClient,
 )
@@ -38,6 +44,8 @@ PlatformRequest: TypeAlias = (
     | pb.AuthorizeMcpToolRequest
     | runtime.ResolveMcpRuntimeConnectionRequest
     | runtime.AcquireMcpRuntimeCredentialRequest
+    | custom_api.DescribeCustomApiEnvironmentRequest
+    | custom_api.AcquireCustomApiEnvironmentRequest
 )
 PlatformResponse: TypeAlias = (
     pb.DiscoverVisibleSkillsResponse
@@ -50,6 +58,8 @@ PlatformResponse: TypeAlias = (
     | pb.AuthorizeMcpToolResponse
     | runtime.ResolveMcpRuntimeConnectionResponse
     | runtime.AcquireMcpRuntimeCredentialResponse
+    | custom_api.DescribeCustomApiEnvironmentResponse
+    | custom_api.AcquireCustomApiEnvironmentResponse
 )
 _ALLOWED = (
     pb.DiscoverVisibleSkillsRequest,
@@ -62,6 +72,8 @@ _ALLOWED = (
     pb.AuthorizeMcpToolRequest,
     runtime.ResolveMcpRuntimeConnectionRequest,
     runtime.AcquireMcpRuntimeCredentialRequest,
+    custom_api.DescribeCustomApiEnvironmentRequest,
+    custom_api.AcquireCustomApiEnvironmentRequest,
 )
 
 
@@ -195,6 +207,7 @@ class PlatformTransport:
         self._connections = McpConnectionServiceClient(self._url, **options)
         self._authorization = McpAuthorizationServiceClient(self._url, **options)
         self._runtime = McpRuntimeServiceClient(self._url, **options)
+        self._custom_api = CustomApiRuntimeServiceClient(self._url, **options)
         self._closed = False
 
     async def __aenter__(self) -> Self:
@@ -216,6 +229,7 @@ class PlatformTransport:
             self._connections,
             self._authorization,
             self._runtime,
+            self._custom_api,
         ):
             await client.close()
         await self._pool.aclose()
@@ -266,6 +280,14 @@ class PlatformTransport:
                     )
                 case runtime.AcquireMcpRuntimeCredentialRequest():
                     return await self._runtime.acquire_mcp_runtime_credential(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
+                case custom_api.DescribeCustomApiEnvironmentRequest():
+                    return await self._custom_api.describe_custom_api_environment(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
+                case custom_api.AcquireCustomApiEnvironmentRequest():
+                    return await self._custom_api.acquire_custom_api_environment(
                         request, headers=headers, timeout_ms=timeout_ms
                     )
         except ConnectError as error:

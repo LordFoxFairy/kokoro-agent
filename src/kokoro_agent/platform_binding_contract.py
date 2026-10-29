@@ -16,6 +16,10 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema import validate as validate_json_schema
 
+from kokoro_agent.custom_api_runtime_contract import (
+    CUSTOM_API_RUNTIME_SOURCES,
+    validate_custom_api_runtime_artifact,
+)
 from kokoro_agent.mcp_runtime_contract import (
     MCP_RUNTIME_SOURCES,
     validate_mcp_runtime_artifact,
@@ -171,6 +175,7 @@ PLATFORM_AUDIT_FILES = (
     "contract/platform/v1/proto/kokoro/common/v1/common.proto",
     "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
     *(record[0] for record in MCP_RUNTIME_SOURCES),
+    *(record[0] for record in CUSTOM_API_RUNTIME_SOURCES),
     *(record[0] for record in EXPECTED_EXECUTION_SOURCES + EXPECTED_PACKAGE_SOURCES),
 )
 
@@ -737,6 +742,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
                 raise PlatformRequestBindingError("historical malformed ZIP accepted")
     _validate_current_package_profile(root, pin)
     validate_mcp_runtime_artifact(root, pin)
+    validate_custom_api_runtime_artifact(root, pin)
 
     positive_document = _object(
         strict_parse_raw_json((artifact / "vectors/positive.json").read_bytes()),

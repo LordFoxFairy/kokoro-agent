@@ -586,3 +586,40 @@ def test_invalid_docker_context_rejected_before_any_lifecycle_io(
                 max_output_bytes=100,
                 docker_cli_environment=context,
             )
+
+
+@pytest.mark.parametrize("remaining", ["container-id", None])
+def test_docker_destroy_failure_retains_cleanup_retry(
+    monkeypatch: pytest.MonkeyPatch, remaining: str | None
+) -> None:
+    def run(*args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[0] == "rm":
+            return subprocess.CompletedProcess(args, 1, "", "private daemon detail")
+        return subprocess.CompletedProcess(
+            args, 1 if remaining is None else 0, remaining or "", ""
+        )
+
+    monkeypatch.setattr("kokoro_agent.sandbox.docker_backend._docker", run)
+    with pytest.raises(RuntimeError, match="^docker_sandbox_cleanup_failed$"):
+        destroy_docker_sandbox("container-id", docker_cli_environment={})
+
+
+def test_docker_destroy_confirmed_absent_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def run(*args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 1 if args[0] == "rm" else 0, "", "")
+
+    monkeypatch.setattr("kokoro_agent.sandbox.docker_backend._docker", run)
+    destroy_docker_sandbox("container-id", docker_cli_environment={})
+    assert calls[-1] == (
+        "ps",
+        "--all",
+        "--quiet",
+        "--no-trunc",
+        "--filter",
+        "id=container-id",
+    )

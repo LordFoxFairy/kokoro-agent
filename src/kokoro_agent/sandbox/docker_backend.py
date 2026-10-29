@@ -238,10 +238,25 @@ class DockerShellBackend(LocalShellBackend):
 def destroy_docker_sandbox(
     container_id: str, *, docker_cli_environment: Mapping[str, str] | None = None
 ) -> None:
-    """终态主动回收（--rm 容器 rm -f 即删）；失败交 TTL 自清兜底，调用方吞错记日志。"""
-    _docker_in_context(
+    """终态主动回收；失败交持久清理队列重试，已不存在则幂等成功。"""
+    result = _docker_in_context(
         "rm", "-f", container_id, docker_cli_environment=docker_cli_environment
     )
+    if result.returncode == 0:
+        return
+    # A failed removal is not proof of absence. Query the same daemon so an
+    # already auto-removed container succeeds, but daemon failures remain pending.
+    remaining = _docker_in_context(
+        "ps",
+        "--all",
+        "--quiet",
+        "--no-trunc",
+        "--filter",
+        f"id={container_id}",
+        docker_cli_environment=docker_cli_environment,
+    )
+    if remaining.returncode != 0 or remaining.stdout.strip():
+        raise RuntimeError("docker_sandbox_cleanup_failed")
 
 
 def _container_alive(

@@ -8,6 +8,7 @@ from typing import Never
 
 from langchain_core.runnables.config import RunnableConfig
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.infrastructure.checkpoint_interactions import InteractionReader
 from kokoro_agent.domain.run.interactions import StartedResume
@@ -43,7 +44,8 @@ SANDBOX_CLEANUP_RETRY_BASE_MS = 1_000
 SANDBOX_CLEANUP_RETRY_MAX_MS = 60_000
 
 AgentBuilder = Callable[
-    [RunRequest, LeaseFence, SkillProgressSink], Awaitable[AgentHandle]
+    [RunRequest, LeaseFence, SkillProgressSink, ActionObservationSink],
+    Awaitable[AgentHandle],
 ]
 ApprovalToolNames = Callable[[RunRequest], frozenset[str]]
 TraceFactory = Callable[[RunRequest], RunnableConfig | None]
@@ -169,6 +171,7 @@ class SupervisorContext:
         request: RunRequest,
         lease: LeaseFence,
         progress: SkillProgressSink,
+        action_observer: ActionObservationSink,
     ) -> AgentHandle: ...
 
     async def _guarded(

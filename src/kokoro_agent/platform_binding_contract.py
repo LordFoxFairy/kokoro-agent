@@ -16,6 +16,10 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema import validate as validate_json_schema
 
+from kokoro_agent.custom_api_runtime_contract import (
+    CUSTOM_API_RUNTIME_SOURCES,
+    validate_custom_api_runtime_artifact,
+)
 from kokoro_agent.mcp_runtime_contract import (
     MCP_RUNTIME_SOURCES,
     validate_mcp_runtime_artifact,
@@ -30,7 +34,7 @@ from kokoro_agent.execution.platform_request_binding_values import (
 
 JsonObject: TypeAlias = dict[str, object]
 PLATFORM_PROVENANCE_RELATIVE = "contract/platform/v1/provenance.json"
-EXPECTED_OWNER_COMMIT = "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6"
+EXPECTED_OWNER_COMMIT = "8cfead647856ef54ec851a3bebe169a3ca14d212"
 EXPECTED_EXECUTION_OWNER_COMMIT = "6a09913a96c686b316bfe707b823d039e625607a"
 EXPECTED_OWNER_REPOSITORY = "apps/kokoro-capability"
 EXPECTED_AGGREGATE = "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"
@@ -158,12 +162,20 @@ EXPECTED_PACKAGE_SOURCES = (
         "c94d3461b8b08908474b6725098b771d6608dbd2777446ff09fd680c5cfd6a63",
     ),
 )
+EXPECTED_SERVICE_AUTH = {
+    "owner_commit": "4c3853b1062a9e22c9be6c059720a092805cb63f",
+    "owner_path": "contract/auth/agent-execution-service-auth-v1.json",
+    "path": "contract/platform/v1/agent-execution-service-auth-v1.json",
+    "sha256": "85965e3b3641dac3fac52fe8aeaa71cf55d24a4322eb254761ad09398014c7fc",
+}
 PLATFORM_AUDIT_FILES = (
     PLATFORM_PROVENANCE_RELATIVE,
+    EXPECTED_SERVICE_AUTH["path"],
     "contract/platform/v1/codegen.json",
     "contract/platform/v1/proto/kokoro/common/v1/common.proto",
     "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
     *(record[0] for record in MCP_RUNTIME_SOURCES),
+    *(record[0] for record in CUSTOM_API_RUNTIME_SOURCES),
     *(record[0] for record in EXPECTED_EXECUTION_SOURCES + EXPECTED_PACKAGE_SOURCES),
 )
 
@@ -477,6 +489,16 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
 
     pin_path = root / PLATFORM_PROVENANCE_RELATIVE
     pin = _object(strict_parse_raw_json(pin_path.read_bytes()), label="Platform pin")
+    if (
+        pin.get("service_auth") != EXPECTED_SERVICE_AUTH
+        or hashlib.sha256(
+            (root / EXPECTED_SERVICE_AUTH["path"]).read_bytes()
+        ).hexdigest()
+        != EXPECTED_SERVICE_AUTH["sha256"]
+    ):
+        raise PlatformRequestBindingError(
+            "Platform service auth artifact pin is invalid"
+        )
     execution = _object(pin.get("execution_operations"), label="execution pin")
     if (
         pin.get("owner") != "kokoro-platform"
@@ -720,6 +742,7 @@ def validate_platform_binding_artifact(root: Path) -> tuple[int, int, int]:
                 raise PlatformRequestBindingError("historical malformed ZIP accepted")
     _validate_current_package_profile(root, pin)
     validate_mcp_runtime_artifact(root, pin)
+    validate_custom_api_runtime_artifact(root, pin)
 
     positive_document = _object(
         strict_parse_raw_json((artifact / "vectors/positive.json").read_bytes()),

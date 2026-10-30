@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
-from typing import Annotated, Literal, Union, Self
+from collections.abc import Awaitable, Mapping
+from typing import Annotated, Literal, Protocol, Union, Self
 
 from pydantic import (
     BaseModel,
@@ -169,7 +169,15 @@ class SkillProgressCommitted(StrictModel):
     source_index: NonNegInt
 
 
-SkillProgressSink = Callable[[SkillPhase], Awaitable[SkillProgressCommitted]]
+class SkillProgressSink(Protocol):
+    # Local safe-Chat side channel only: never part of SkillPhase/Redis payloads.
+    def __call__(
+        self,
+        phase: SkillPhase,
+        /,
+        *,
+        display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
+    ) -> Awaitable[SkillProgressCommitted]: ...
 
 
 class SubagentStartedPayload(StrictModel):
@@ -253,6 +261,13 @@ class RunCompletedPayload(StrictModel):
     status: RunCompletedStatus
     # agent 认真算的用量全链路贯通；无用量时为 null。
     token_usage: TokenUsage | None = None
+    final_segment_id: NonEmptyStr | None = None
+
+    @model_validator(mode="after")
+    def final_answer_requires_success(self) -> Self:
+        if self.final_segment_id is not None and self.status != "completed":
+            raise ValueError("only a successful Run can identify its final answer")
+        return self
 
 
 class RunStarted(StrictModel):

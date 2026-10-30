@@ -22,6 +22,7 @@ enum SkillStatus {
   SKILL_STATUS_QUARANTINED = 4;
   SKILL_STATUS_DISABLED = 5;
   SKILL_STATUS_DISCARDED = 6;
+  SKILL_STATUS_DELETED = 7;
 }
 
 enum McpConnectorType {
@@ -364,6 +365,18 @@ message ValidateSkillDraftResponse {
   optional uint32 file_count = 9;
 }
 
+message SkillPublicationVersion {
+  kokoro.platform.v1.SkillId current_version_id = 1;
+  optional uint64 state_version = 2;
+}
+
+message SkillPublicationPrecondition {
+  oneof expectation {
+    bool absent = 1;
+    kokoro.platform.v1.SkillPublicationVersion current = 2;
+  }
+}
+
 message PublishSkillRequest {
   string request_id = 1;
   kokoro.common.v1.CommandIdentity command = 2;
@@ -372,6 +385,7 @@ message PublishSkillRequest {
   kokoro.platform.v1.ProductCatalogContext product_context = 5;
   optional string audience = 6;
   optional uint64 expected_state_version = 7;
+  kokoro.platform.v1.SkillPublicationPrecondition expected_publication = 8;
 }
 
 message PublishSkillResponse {
@@ -883,6 +897,9 @@ message AuthorizeMcpToolResponse {
 }
 
 service SkillCatalogService {
+  rpc PutAppSkillBinding(kokoro.platform.v1.PutAppSkillBindingRequest) returns (kokoro.platform.v1.PutAppSkillBindingResponse);
+  rpc RemoveAppSkillBinding(kokoro.platform.v1.RemoveAppSkillBindingRequest) returns (kokoro.platform.v1.RemoveAppSkillBindingResponse);
+  rpc DeletePersonalSkillSeries(kokoro.platform.v1.DeletePersonalSkillSeriesRequest) returns (kokoro.platform.v1.DeletePersonalSkillSeriesResponse);
   rpc BeginLocalSkillImport(kokoro.platform.v1.BeginLocalSkillImportRequest) returns (kokoro.platform.v1.BeginLocalSkillImportResponse);
   rpc CompleteLocalSkillImport(kokoro.platform.v1.CompleteLocalSkillImportRequest) returns (kokoro.platform.v1.CompleteLocalSkillImportResponse);
   rpc FinalizeLocalSkillImport(kokoro.platform.v1.FinalizeLocalSkillImportRequest) returns (kokoro.platform.v1.FinalizeLocalSkillImportResponse);
@@ -1172,6 +1189,15 @@ message PersonalMcpPageRequest {
   optional string cursor = 2;
 }
 
+enum McpAvailability {
+  MCP_AVAILABILITY_UNSPECIFIED = 0;
+  MCP_AVAILABILITY_AVAILABLE = 1;
+  MCP_AVAILABILITY_REFRESH_REQUIRED = 2;
+  MCP_AVAILABILITY_REFRESHING = 3;
+  MCP_AVAILABILITY_REAUTHORIZATION_REQUIRED = 4;
+  MCP_AVAILABILITY_UNAVAILABLE = 5;
+}
+
 message PersonalMcpConnector {
   kokoro.platform.v1.McpConnectorId connector_id = 1;
   kokoro.platform.v1.McpConnectorType connector_type = 2;
@@ -1185,6 +1211,7 @@ message PersonalMcpConnector {
   optional string created_at = 10;
   optional string updated_at = 11;
   optional kokoro.platform.v1.McpServerId server_id = 12;
+  kokoro.platform.v1.McpAvailability availability = 13;
 }
 
 message PersonalMcpConnection {
@@ -1260,6 +1287,11 @@ message CreatePersonalMcpConnectionResponse {
 }
 
 service ProductMcpPersonalService {
+  rpc BeginPersonalMcpIconUpload(kokoro.platform.v1.BeginPersonalMcpIconUploadRequest) returns (kokoro.platform.v1.BeginPersonalMcpIconUploadResponse);
+  rpc CompletePersonalMcpIconUpload(kokoro.platform.v1.CompletePersonalMcpIconUploadRequest) returns (kokoro.platform.v1.CompletePersonalMcpIconUploadResponse);
+  rpc GetPersonalMcpIconIntent(kokoro.platform.v1.GetPersonalMcpIconIntentRequest) returns (kokoro.platform.v1.GetPersonalMcpIconIntentResponse);
+  rpc CancelPersonalMcpIconIntent(kokoro.platform.v1.CancelPersonalMcpIconIntentRequest) returns (kokoro.platform.v1.CancelPersonalMcpIconIntentResponse);
+  rpc ImportPersonalMcpIconUrl(kokoro.platform.v1.ImportPersonalMcpIconUrlRequest) returns (kokoro.platform.v1.ImportPersonalMcpIconUrlResponse);
   rpc RegisterPersonalMcpServer(kokoro.platform.v1.RegisterPersonalMcpServerRequest) returns (kokoro.platform.v1.RegisterPersonalMcpServerResponse);
   rpc ImportPersonalMcpJson(kokoro.platform.v1.ImportPersonalMcpJsonRequest) returns (kokoro.platform.v1.ImportPersonalMcpJsonResponse);
   rpc GetPersonalMcpServer(kokoro.platform.v1.GetPersonalMcpServerRequest) returns (kokoro.platform.v1.GetPersonalMcpServerResponse);
@@ -1294,6 +1326,7 @@ message PersonalCustomApi {
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp updated_at = 6;
   repeated kokoro.platform.v1.CustomApiEnvironmentDescriptor environment = 7;
+  kokoro.platform.v1.PersonalMcpIconBinding icon = 8;
 }
 message CreatePersonalCustomApiRequest {
   reserved 100;
@@ -1303,6 +1336,7 @@ message CreatePersonalCustomApiRequest {
   string name = 3;
   optional string instructions = 4;
   repeated kokoro.platform.v1.CustomApiEnvironmentWrite environment = 5;
+  kokoro.platform.v1.PersonalMcpIconSelection icon = 6;
 }
 message CreatePersonalCustomApiResponse { kokoro.platform.v1.PersonalCustomApi profile = 1; bool replayed = 2; }
 message GetPersonalCustomApiRequest {
@@ -1331,6 +1365,10 @@ message UpdatePersonalCustomApiRequest {
   bool clear_instructions = 7;
   repeated kokoro.platform.v1.CustomApiEnvironmentWrite environment_upserts = 8;
   repeated string environment_removals = 9;
+  oneof icon_change {
+    kokoro.platform.v1.PersonalMcpIconSelection icon = 10;
+    bool clear_icon = 11;
+  }
 }
 message UpdatePersonalCustomApiResponse { kokoro.platform.v1.PersonalCustomApi profile = 1; bool replayed = 2; }
 message DeletePersonalCustomApiRequest {
@@ -1579,6 +1617,7 @@ message PublishOfficialSkillRequest {
   optional uint64 expected_state_version = 5;
   string audience = 6;
   kokoro.platform.v1.SkillIamRef publisher = 7;
+  kokoro.platform.v1.SkillPublicationPrecondition expected_publication = 8;
 }
 
 message PublishOfficialSkillResponse {
@@ -1747,6 +1786,7 @@ message GetAdminSkillRequest {
 
 message GetAdminSkillResponse {
   kokoro.platform.v1.SkillProductRecord skill = 1;
+  kokoro.platform.v1.SkillPublicationPrecondition publication = 2;
 }
 
 message InspectSkillPackageRequest {
@@ -1837,6 +1877,7 @@ message GetSkillRevisionResponse {
 }
 
 service ProductSkillReadService {
+  rpc ListAppSkillBindings(kokoro.platform.v1.ListAppSkillBindingsRequest) returns (kokoro.platform.v1.ListAppSkillBindingsResponse);
   rpc GetSkillRevision(kokoro.platform.v1.GetSkillRevisionRequest) returns (kokoro.platform.v1.GetSkillRevisionResponse);
   rpc GetCurrentSkill(kokoro.platform.v1.GetCurrentSkillRequest) returns (kokoro.platform.v1.GetCurrentSkillResponse);
   rpc InspectSkillPackage(kokoro.platform.v1.InspectSkillPackageRequest) returns (kokoro.platform.v1.InspectSkillPackageResponse);
@@ -2095,6 +2136,8 @@ message RegisterPersonalMcpServerRequest {
   reserved 100;
   reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
   string request_id = 1; kokoro.common.v1.CommandIdentity command = 2; string display_name = 3; string server_url = 4; optional string notes = 5; repeated kokoro.platform.v1.PersonalMcpHeaderWrite headers = 6; optional kokoro.platform.v1.PersonalMcpOAuthClientWrite oauth_client = 7;
+  kokoro.platform.v1.PersonalMcpIconSelection icon = 8;
+  optional kokoro.platform.v1.McpTransport transport = 9;
 }
 message GetPersonalMcpServerRequest {
   reserved 100;
@@ -2103,6 +2146,9 @@ message GetPersonalMcpServerRequest {
 }
 message PersonalMcpServer {
   kokoro.platform.v1.McpServerId server_id = 1; string display_name = 2; string server_url = 3; string status = 4; uint64 state_version = 5; optional string notes = 6; repeated kokoro.platform.v1.PersonalMcpHeaderDescriptor headers = 7; optional kokoro.platform.v1.PersonalMcpOAuthClientDescriptor oauth_client = 8; kokoro.platform.v1.PersonalMcpPrepareStatus prepare_status = 9; optional string authorization_status = 10; repeated kokoro.platform.v1.PersonalMcpDeclaredSelector declarations = 11; optional string declaration_digest = 12; optional kokoro.platform.v1.McpConnectionId connection_id = 13; optional bool declarations_available = 14;
+  kokoro.platform.v1.McpAvailability availability = 15;
+  kokoro.platform.v1.PersonalMcpIconBinding icon = 16;
+  optional kokoro.platform.v1.McpTransport transport = 17;
 }
 message RegisterPersonalMcpServerResponse { kokoro.platform.v1.PersonalMcpServer server = 1; kokoro.platform.v1.PersonalMcpConnector connector = 2; bool replayed = 3; }
 message ImportPersonalMcpJsonRequest {
@@ -2123,6 +2169,10 @@ message UpdatePersonalMcpServerRequest {
   reserved 100;
   reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
   string request_id = 1; kokoro.common.v1.CommandIdentity command = 2; kokoro.platform.v1.McpServerId server_id = 3; uint64 expected_state_version = 4; optional string display_name = 5; optional string notes = 6; bool clear_notes = 7; optional string server_url = 8; repeated kokoro.platform.v1.PersonalMcpHeaderWrite header_upserts = 9; repeated string header_removals = 10; optional kokoro.platform.v1.PersonalMcpOAuthClientWrite oauth_client = 11; bool revoke_oauth_client = 12;
+  oneof icon_change {
+    kokoro.platform.v1.PersonalMcpIconSelection icon = 13;
+    bool clear_icon = 14;
+  }
 }
 message UpdatePersonalMcpServerResponse { kokoro.platform.v1.PersonalMcpServer server = 1; kokoro.platform.v1.PersonalMcpConnector connector = 2; bool replayed = 3; }
 message DeletePersonalMcpServerRequest {
@@ -2236,4 +2286,193 @@ service ProductProjectSkillInstallationService {
   rpc RemoveProjectSkillInstallation(kokoro.platform.v1.RemoveProjectSkillInstallationRequest) returns (kokoro.platform.v1.RemoveProjectSkillInstallationResponse);
   rpc GetProjectSkillInstallation(kokoro.platform.v1.GetProjectSkillInstallationRequest) returns (kokoro.platform.v1.GetProjectSkillInstallationResponse);
   rpc ListProjectSkillInstallations(kokoro.platform.v1.ListProjectSkillInstallationsRequest) returns (kokoro.platform.v1.ListProjectSkillInstallationsResponse);
+}
+
+message DeletePersonalSkillSeriesRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillId skill_id = 3;
+  optional uint64 expected_state_version = 4;
+  kokoro.platform.v1.SkillPublicationPrecondition expected_publication = 5;
+}
+
+message DeletePersonalSkillSeriesResponse {
+  kokoro.platform.v1.SkillSeriesId series_id = 1;
+  kokoro.platform.v1.SkillId skill_id = 2;
+  uint64 state_version = 3;
+  string event_id = 4;
+  bool replayed = 5;
+}
+
+message PutAppSkillBindingRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillId skill_id = 3;
+  optional uint64 expected_binding_version = 4;
+}
+
+message RemoveAppSkillBindingRequest {
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.SkillSeriesId series_id = 3;
+  optional uint64 expected_binding_version = 4;
+}
+
+message ListAppSkillBindingsRequest {
+  string request_id = 1;
+  kokoro.platform.v1.ProductSkillInstallationPageRequest page = 2;
+}
+
+message AppSkillBinding {
+  string binding_id = 1;
+  kokoro.platform.v1.SkillSeriesId series_id = 2;
+  kokoro.platform.v1.SkillId skill_id = 3;
+  uint64 revision = 4;
+  uint64 state_version = 5;
+  kokoro.platform.v1.SkillStatus source_status = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  kokoro.platform.v1.SkillProductRecord skill = 9;
+  google.protobuf.Timestamp removed_at = 10;
+}
+
+message PutAppSkillBindingResponse {
+  kokoro.platform.v1.AppSkillBinding binding = 1;
+  string event_id = 2;
+  bool replayed = 3;
+}
+
+message RemoveAppSkillBindingResponse {
+  kokoro.platform.v1.AppSkillBinding binding = 1;
+  string event_id = 2;
+  bool replayed = 3;
+}
+
+message ListAppSkillBindingsResponse {
+  repeated kokoro.platform.v1.AppSkillBinding bindings = 1;
+  kokoro.common.v1.PageResult page = 2;
+}
+
+// Dedicated staging intent: selecting bytes never creates a connector/server/API.
+// Identity is admitted by the existing Product MCP workload, never request body.
+enum PersonalMcpIconState {
+  PERSONAL_MCP_ICON_STATE_UNSPECIFIED = 0;
+  PERSONAL_MCP_ICON_STATE_STAGED = 1;
+  PERSONAL_MCP_ICON_STATE_COMPLETING = 2;
+  PERSONAL_MCP_ICON_STATE_READY = 3;
+  PERSONAL_MCP_ICON_STATE_BOUND = 4;
+  PERSONAL_MCP_ICON_STATE_RETIRING = 5;
+  PERSONAL_MCP_ICON_STATE_RELEASED = 6;
+}
+
+message PersonalMcpIconSelection {
+  string intent_id = 1;
+  optional uint64 expected_state_version = 2;
+}
+
+// No Storage identifiers, source version, command keys, signed URL or owner IDs.
+message PersonalMcpIconIntent {
+  string intent_id = 1;
+  kokoro.platform.v1.PersonalMcpIconState state = 2;
+  uint64 state_version = 3;
+  string filename = 4;
+  string mime_type = 5;
+  string content_sha256 = 6;
+  uint64 size_bytes = 7;
+  google.protobuf.Timestamp expires_at = 8;
+  bool expired = 9;
+  optional uint32 width = 10;
+  optional uint32 height = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+// Fresh no-store capability, never persisted in a command receipt or outbox.
+message PersonalMcpIconReference {
+  string url = 1;
+  string method = 2;
+  map<string, string> required_headers = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// Exact current binding metadata. A preview alone never grants save/execute rights.
+message PersonalMcpIconBinding {
+  string intent_id = 1;
+  string content_sha256 = 2;
+  string mime_type = 3;
+  uint64 size_bytes = 4;
+  uint32 width = 5;
+  uint32 height = 6;
+  kokoro.platform.v1.PersonalMcpIconReference preview_reference = 7;
+}
+
+message BeginPersonalMcpIconUploadRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  string filename = 3;
+  string mime_type = 4;
+  string content_sha256 = 5;
+  uint64 size_bytes = 6;
+}
+
+message BeginPersonalMcpIconUploadResponse {
+  kokoro.platform.v1.PersonalMcpIconIntent intent = 1;
+  kokoro.platform.v1.PersonalMcpIconReference upload_reference = 2;
+  bool replayed = 3;
+}
+
+message CompletePersonalMcpIconUploadRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  string intent_id = 3;
+  optional uint64 expected_state_version = 4;
+  string source_version_id = 5;
+}
+
+message CompletePersonalMcpIconUploadResponse {
+  kokoro.platform.v1.PersonalMcpIconIntent intent = 1;
+  bool replayed = 2;
+}
+
+message GetPersonalMcpIconIntentRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation", "command";
+  string request_id = 1;
+  string intent_id = 2;
+}
+
+message GetPersonalMcpIconIntentResponse {
+  kokoro.platform.v1.PersonalMcpIconIntent intent = 1;
+  kokoro.platform.v1.PersonalMcpIconReference preview_reference = 2;
+}
+
+message CancelPersonalMcpIconIntentRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  string intent_id = 3;
+  optional uint64 expected_state_version = 4;
+}
+
+message CancelPersonalMcpIconIntentResponse {
+  kokoro.platform.v1.PersonalMcpIconIntent intent = 1;
+  bool replayed = 2;
+}
+
+message ImportPersonalMcpIconUrlRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  string image_url = 3;
+}
+
+message ImportPersonalMcpIconUrlResponse {
+  kokoro.platform.v1.PersonalMcpIconIntent intent = 1;
+  bool replayed = 2;
 }

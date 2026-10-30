@@ -149,6 +149,7 @@ class SupervisorControlMixin(SupervisorContext):
                 request,
                 lease,
                 emitter.skill_progress(request.selected_skill_source_refs),
+                emitter.observe_tool_action,
             )
         except ProgressPersistenceError:
             raise

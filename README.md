@@ -60,13 +60,13 @@ Redis LaunchRunRequest
   -> Agent Chat HTTP query boundary -> kokoro-bff Chat API/AG-UI
 ```
 
-- 外部请求携带 `ExecutionIdentity`，只通过 selected_skill_source_refs 携带冻结 exact Skill 选择，不携带 caller namespace、thread、Agent、MCP 或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
+- 外部请求携带 `ExecutionIdentity`，通过 selected_skill_source_refs 与 optional selected_mcp_connection_ids 携带冻结 exact Skill／MCP Connection 选择，不携带 caller namespace、thread、Agent、端点／凭据或 graph 配方；GA 内部按 `tenant_ref + subject` 派生稳定 `RuntimeNamespace`；actor/assertion 只用于授权、审计和计费。
 - DeepAgents 的 native state 与 official `SwarmState` 都由框架拥有；GA 不定义自己的 State 包装。
 - Run 显式选择的 Skill exact refs 由 Platform current authorization 解析；每次文件读取重验批准引用与 Storage signed GET/ZIP，再暴露只读 backend。Agent 不声明静态Skill名称，空选择无Skill依赖；安装/启用仍由Platform拥有。
 - `chat_events` 是 GA 安全事件事实和 replay 游标；它不写入 BFF 已有的
   browser-live stream，因为两者的 generated envelope 和 seq owner 不同。不创建
   `conversation_messages`、持久 `run_events` 或独立 `event_outbox`。
-- 模型按 provider accepted invocation 次数计费；Billing 通过 `invocation_id` 幂等结算，非 token 计费。
+- 模型按同 attempt 的真实用量由 Billing 统一计价、冻结倍率后一次整数积分结算；先预算预占，unknown／超预算保留待核对，不按流式分片或重复回执各扣一次。Worker 复用原预算／结算客户端，最终请求先授权并取得唯一派发许可，再用同一响应流的实际用量封口和通知；未知结果阻止后续模型／工具。独立恢复扫描承接未确认回执；本地装配与隔离验收不等于正常环境的真实供应商和积分整链已验。
 
 ## 子仓文档
 
@@ -78,13 +78,12 @@ Redis LaunchRunRequest
 
 ```bash
 uv sync
-# Worker 使用已配置的真实 provider；模型凭据只通过环境变量或 secret 注入：
+# Worker 通过受信 System 路由领取本次连接的凭据；仍需正式模型执行许可：
 KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
   KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent \
   KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
   KOKORO_SYSTEM_BASE_URL=http://127.0.0.1:4240 \
   KOKORO_INTERNAL_SECRET_AGENT=... \
-  KOKORO_MODEL_CREDENTIALS_FILE=/absolute/private/model-credentials.json \
   uv run kokoro-agent-worker
 ```
 
@@ -108,16 +107,24 @@ Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本
 durable ingress）和 `kokoro-agent-worker`（实际执行 loop）；只运行 HTTP 进程只能完成 admission，
 不会执行任务。
 
-启用 worker 时，配置 `KOKORO_SYSTEM_BASE_URL`、`KOKORO_INTERNAL_SECRET_AGENT` 和
-`KOKORO_MODEL_CREDENTIALS_FILE`。System4 为每次调用冻结协议、连接类型、完整 base URL、
-请求模型与不透明凭据引用；默认直连，外置 LiteLLM 可选，Agent 不安装或启动网关。
-完整 base URL 的路径前缀原样保留，只拼接 `/chat/completions`，不猜测 `/v1`。
-凭据快照是当前用户拥有、0400/0600、单硬链接的绝对路径普通 JSON 文件，格式见 `.env.example`；
-仅精确匹配 provider_id + secret_handle_ref，不以其他账号、全局 OPENAI_* 或 ANTHROPIC_* 兜底。
-旧 KOKORO_LITELLM_* 配置即使为空也明确拒绝。模型解析或凭据失败只终止对应 Run，
-不让假路由进入执行；每次实际调用仍先取得正式 Billing 许可。
+Worker 的财务恢复另需 `KOKORO_BFF_BASE_URL` 与 env-only
+`KOKORO_BFF_MODEL_ADMISSION_SECRETS`：后者是受信部署注入的 tenant ID → 专用机器
+secret JSON 对象，最多32项／64KiB，不接受重复键或跨租户默认 secret。它不是模型 API Key，
+也不是用户 token；须与 BFF 接收侧已配置的 model-admission 用途匹配。轮换后重启 Worker，
+不把值写进 YAML、Run、证据、日志或浏览器。缺少完整配置时 Worker 启动拒绝；HTTP 读进程
+不加载这份配置。独立恢复任务按有限页推进、逐条同 event/key 恢复，先停止任务再关闭 HTTP pool，
+不占用 Run 租约心跳。模型实际派发／用量封口及正常产品验收仍待，不将恢复轮询视为已扣分。
 
-本候选新写 usage2，HTTP6 按实际证据版本返回原始字节；冻结 usage1 仅支持已封存历史读取。
+启用 worker 时配置 `KOKORO_SYSTEM_BASE_URL` 和专用 `KOKORO_INTERNAL_SECRET_AGENT`。
+System6 独占后台写入的加密模型 Key；Agent 每次按当前业务与精确修订受控领取，
+不读取本机模型密钥文件，不用原生 `OPENAI_*` / `ANTHROPIC_*` 回退正式路由。
+原始缺省/显式业务选择保持，错路由或撤权直接停止；凭据仅在当前客户端内存中，
+不进 Run、证据、日志或浏览器。领取无重试/跳转且必须 no-store。
+默认直连，LiteLLM 可选；完整 base URL 原样保留，只拼接 `/chat/completions`，不猜 `/v1`。
+旧 `KOKORO_MODEL_CREDENTIALS_FILE`（包括空值）与 YAML `model.credentials_file` 明确拒绝；
+旧 `KOKORO_LITELLM_*` 仍拒绝。正常 worker 本批不启用；每次实际调用仍需正式 Billing 许可。
+
+本候选新写 usage2，HTTP7.1 按实际证据版本返回原始字节；冻结 usage1 仅支持已封存历史读取。
 升级前先停旧 producer 并由旧版本收尾其未封存调用，再启动新 worker；新启动屏障拒绝旧/未知
 未封存 planned，不阻止合法 usage2 的租约恢复。屏障不是“旧进程已停止”的部署证明。
 单独 HTTP ingress 仍可接受 durable admission，不加载 worker 的模型密钥。
@@ -127,6 +134,7 @@ HTTP ingress 不执行 Agent loop，也不直接暴露 Redis stream。当前 v1 
 - `POST /v1/runs`：launch，先写 durable dispatch admission，再投递给 `kokoro-agent-worker`；
 - `POST /v1/runs/{run_id}/control`：cancel/resume/steer；
 - `GET /v1/runs/{run_id}/events`：Run evidence；
+- `GET /v1/runs/{run_id}/display`：HTTP8.3有限safe Skill名／exact revision／virtual path展示读；旧事实缺省为unknown，不修改历史事件；
 - `GET /v1/sessions`：按 trusted identity 查询持久化 session list，支持 `project_ref`、`limit`、`cursor`；
 - `GET /v1/sessions/{session_id}/messages`：安全 session history；
 - `GET /v1/sessions/{session_id}/events`：安全 session replay；

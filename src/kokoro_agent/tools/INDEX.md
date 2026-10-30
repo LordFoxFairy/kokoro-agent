@@ -5,7 +5,7 @@ GA 提供给 DeepAgents 的固定工具、运行期工具集合与工具调用 m
 ## 公开入口
 
 - `registry.py`：固定工具名称注册与解析。
-- `toolset.py`：合流 Agent 固定工具、worker toolbox、MCP 与 deliver 工具。
+- `toolset.py`：合流 Agent 固定工具、worker toolbox、MCP 与 deliver 工具；经真实 ToolNode／原对象来源绑定安全展示类别，包括原生 read_file／write_file 和实际装配的 deliver，不公开参数、路径或内容。
 - `deliver.py`：通过 DeepAgents native backend 读取工作区字节，只调用 Storage
   `DeliveryClient.publish()`；不计算对象 key，不直连 S3/MinIO。
 - `guards.py`：主 Agent/native subagent 共用的终态、预算、审批、steering 与副作用 journal 链。

@@ -1,0 +1,40 @@
+[
+  {
+    "tenant_id": "tenant-runtime",
+    "input": {
+      "kind": "describe",
+      "requestId": "request-runtime",
+      "invocationId": "call-runtime",
+      "profiles": [
+        {
+          "profileId": "profile-a",
+          "expectedStateVersion": 2
+        },
+        {
+          "profileId": "profile-b",
+          "expectedStateVersion": 1
+        }
+      ]
+    },
+    "sha256": "6aff24f834231b491b30a66c1aecbd1836d6132954db4fa3ee1abd2059562160"
+  },
+  {
+    "tenant_id": "tenant-runtime",
+    "input": {
+      "kind": "acquire",
+      "requestId": "request-runtime",
+      "invocationId": "call-runtime",
+      "profiles": [
+        {
+          "profileId": "profile-a",
+          "expectedStateVersion": 2
+        },
+        {
+          "profileId": "profile-b",
+          "expectedStateVersion": 1
+        }
+      ]
+    },
+    "sha256": "50c0ffcc04252dd0a1e8a9b08d88f5b1d18650c30c33230b12133538778834ef"
+  }
+]

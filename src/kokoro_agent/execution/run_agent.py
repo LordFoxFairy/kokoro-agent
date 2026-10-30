@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Literal
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Literal, TypeGuard
 
 from langchain_core.callbacks import get_usage_metadata_callback
-from langchain_core.messages import UsageMetadata
+from langchain_core.messages import AIMessage, UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
@@ -25,6 +25,7 @@ from kokoro_agent.execution.events import (
 from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
+from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
 from kokoro_agent.model.call_scope import (
     DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
     ModelCallScope,
@@ -44,6 +45,8 @@ async def invoke_once(
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
+    tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = (),
+    tool_display_sources: tuple[ToolDisplaySource, ...] = (),
     finalize_terminal: Callable[
         [RunCompletedPayload | RunFailedPayload, tuple[int, int]], Awaitable[bool]
     ],
@@ -61,6 +64,8 @@ async def invoke_once(
     终态发射前经 finalize_terminal 同事务提交：cancel/自然完成/异常共用唯一收口，
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
+    emitter.bind_tool_display_codes(tool_display_codes)
+    emitter.bind_tool_display_sources(tool_display_sources)
     config = _config(thread_id, trace, recursion_limit)
     if initial:
         # run.started eligibility is explicit; the Run-locked outbox deduplicates retries.
@@ -70,9 +75,10 @@ async def invoke_once(
         scope = ModelCallScope(timeout_s=model_call_settle_timeout_s)
         native_error: Exception | None = None
         interrupted = False
+        final_segment_id: str | None = None
         with bind_model_call_scope(scope):
 
-            async def drive_native() -> bool:
+            async def drive_native() -> tuple[bool, str | None]:
                 run = await agent.astream_events(
                     payload,
                     version="v3",
@@ -81,13 +87,17 @@ async def invoke_once(
                 )
                 async with run:
                     await pump_run(emitter, run, source_for=source_for)
-                    return await run.interrupted()
+                    interrupted = await run.interrupted()
+                    final_id = (
+                        None if interrupted else _final_segment_id(await run.output())
+                    )
+                    return interrupted, final_id
 
             try:
                 try:
                     driver = asyncio.create_task(drive_native())
                     scope.register_owned_task(driver)
-                    interrupted = await asyncio.shield(driver)
+                    interrupted, final_segment_id = await asyncio.shield(driver)
                     outcome: RunCompletedPayload | RunFailedPayload = (
                         RunCompletedPayload(status="completed")
                     )
@@ -127,11 +137,35 @@ async def invoke_once(
                 return False
             if phase != "active":
                 return False
+            if final_segment_id is not None:
+                outcome = RunCompletedPayload(
+                    status="completed",
+                    final_segment_id=await emitter.proven_final_segment(
+                        final_segment_id
+                    ),
+                )
         # Persistence failures propagate; never turn a failed commit of one
         # outcome into a second, different terminal decision.
         totals = _usage_totals(usage_cb.usage_metadata)
         await finalize_terminal(outcome, totals)
         return True
+
+
+def _final_segment_id(output: dict[str, Any] | None) -> str | None:
+    """Native terminal state only; never promote preceding progress text."""
+    if not isinstance(output, dict):
+        return None
+    messages = output.get("messages")
+    if not _message_sequence(messages) or not messages:
+        return None
+    final = messages[-1]
+    if not isinstance(final, AIMessage) or final.tool_calls or final.invalid_tool_calls:
+        return None
+    return final.id if final.id and final.id.strip() else None
+
+
+def _message_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, list | tuple)
 
 
 def _usage_totals(per_model: Mapping[str, UsageMetadata]) -> tuple[int, int]:

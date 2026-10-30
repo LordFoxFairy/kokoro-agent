@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import logging
 from time import monotonic
 from uuid import uuid4
@@ -23,14 +23,29 @@ from typing import Any
 
 import deepagents
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.language_models import BaseChatModel
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.backends.state import StateBackend
 
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
+from kokoro_agent.tools.action_display import ActionDisplayMiddleware
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
-from kokoro_agent.clients.mcp import McpClient
+from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
+from kokoro_agent.clients.mcp import McpDisplayDeclaration
+from kokoro_agent.clients.mcp import McpClient, McpConnectionRef
+from kokoro_agent.clients.custom_api_runtime import (
+    CustomApiClientError,
+    CustomApiEnvironmentProvider,
+    CustomApiProfileRef,
+)
+from kokoro_agent.execution.custom_api_selection import (
+    feature_for_custom_api,
+    custom_api_workspace,
+    custom_api_instructions,
+)
 from kokoro_agent.agents.definition import Agent
 from kokoro_agent.worker.dependencies import WorkerDependencies
 from kokoro_agent.protocol import (
@@ -42,7 +57,6 @@ from kokoro_agent.execution.events import (
     ProgressPersistenceError,
     confirm_skill_progress,
 )
-from kokoro_agent.sandbox.workspace import workspace_key
 from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable
@@ -52,6 +66,7 @@ from kokoro_agent.model.factory import (
     model_from_route,
 )
 from kokoro_agent.model.call_runtime import ModelCallRuntimeMiddleware
+from kokoro_agent.model.summary_adapter import SummaryAuthorizedChatOpenAI
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin
@@ -62,9 +77,8 @@ from kokoro_agent.skills.backend import (
     SKILLS_ROOT,
 )
 from kokoro_agent.skills.middleware import RunSkillsMiddleware
-from kokoro_agent.tools.middleware import ToolPolicyMiddleware
+from kokoro_agent.tools.middleware import ToolPolicyMiddleware, TerminalGuardMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
-from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.features.catalog import FEATURE_CATALOG, FeatureCatalog
 from kokoro_agent.features.definition import Feature
 from kokoro_agent.swarm import create_swarm
@@ -89,6 +103,8 @@ class AgentHandle:
     tool_descriptions: Mapping[str, str]
     resources: tuple[ArchivingWritesMixin, ...] = ()
     model_clients: tuple[ModelHttpClients, ...] = ()
+    tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = ()
+    tool_display_sources: tuple[ToolDisplaySource, ...] = ()
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)
@@ -144,6 +160,9 @@ class _ResolvedCapabilities:
     skills: tuple[ResolvedSkill, ...]
     mcp: McpClient | None
     skill_reader: SkillClient | None
+    mcp_declarations: tuple[McpDisplayDeclaration, ...] = ()
+    custom_api_environment: CustomApiEnvironmentProvider | None = None
+    custom_api_prompt: str = ""
 
 
 async def _preflight(
@@ -195,6 +214,7 @@ async def build_deep_agent(
     recipe: StaticRecipeBinding,
     capabilities: _ResolvedCapabilities,
     progress: SkillProgressSink,
+    action_observer: ActionObservationSink = lambda _observation: None,
     name: str | None = None,
 ) -> AgentHandle:
     if plan.agent is not agent:
@@ -243,20 +263,26 @@ async def build_deep_agent(
             "tenant_generation": route.tenant_generation,
         },
     )
-    scope = RunScope.of(request)
     policy = agent.permissions
-    # 工作区=真实目录约定 {root}/{namespace:session_id}/：文件写下即可被 session files 端点直读。
-    # docker/e2b 档带 run 级生命周期：resume 经 run_repository 重连既往箱/容器。
-    clients = ModelHttpClients(dependencies.model, route)
+    # API executions get their own Run subdirectory; ordinary conversations keep
+    # the established session workspace. Resume reconnects the original sandbox.
+    credential = await resolver.read_credential(
+        tenant_id=request.execution_identity.tenant_ref,
+        route=route,
+        label=request.requested_model_label,
+        request_id=correlation_id,
+    )
+    clients = ModelHttpClients(dependencies.model, route, credential)
     resources: tuple[ArchivingWritesMixin, ...] = ()
     try:
         backend = await make_backend_for_run(
             agent.backend,
             dependencies.sandbox,
-            workspace=workspace_key(scope.namespace, scope.session_id),
+            workspace=custom_api_workspace(request),
             run_id=request.run_id,
             lease=lease,
             sandbox_store=dependencies.run_repository,
+            environment_provider=capabilities.custom_api_environment,
         )
         resource = backend_resource(backend)
         resources = () if resource is None else (resource,)
@@ -272,6 +298,10 @@ async def build_deep_agent(
             delivery=dependencies.delivery,
             lease=lease,
             resolved_mcp=capabilities.mcp,
+            mcp_declarations=capabilities.mcp_declarations,
+            skill_prefixes=tuple(
+                f"{SKILLS_ROOT}{skill.path_segment}/" for skill in capabilities.skills
+            ),
         )
         if plan.handoffs:
             toolset = toolset.with_tools(plan.handoffs)
@@ -282,16 +312,24 @@ async def build_deep_agent(
             request,
             lease,
             policy,
+            checkpoint_file_writes=agent.backend == "state",
         )
 
-        def model_guard(peer_path: tuple[str, ...]) -> ModelCallRuntimeMiddleware:
+        def model_guard(
+            peer_path: tuple[str, ...], *, logical_call_kind: str = "model"
+        ) -> ModelCallRuntimeMiddleware:
             return ModelCallRuntimeMiddleware(
                 repository=dependencies.model_call_repository,
+                execution=dependencies.model_execution(
+                    LeasedRun(request=request, lease=lease)
+                ),
+                route=route,
                 request=request,
                 lease=lease,
                 planned=planned,
                 recipe=recipe,
                 peer_path=peer_path,
+                logical_call_kind=logical_call_kind,
             )
 
         def subagent_chain(name: str) -> tuple[AgentMiddleware, ...]:
@@ -302,7 +340,24 @@ async def build_deep_agent(
                 *chains.subagent[offset:],
             )
 
+        chat_model = make_chat_model(dependencies.model, model, model_clients=clients)
+
+        def bind_summary(peer_path: tuple[str, ...]) -> BaseChatModel:
+            if isinstance(chat_model, SummaryAuthorizedChatOpenAI):
+                return chat_model.with_summary_gate(
+                    model_guard(peer_path, logical_call_kind="summarization"),
+                    tuple(
+                        guard
+                        for guard in chains.guards
+                        if isinstance(guard, TerminalGuardMiddleware)
+                    ),
+                    dependencies.runtime_policy.run_token_budget,
+                )
+            return chat_model
+
         subagent_bundle = build_subagent_bundle(toolset, plan.subagents, subagent_chain)
+        for subagent in subagent_bundle.subagents:
+            subagent["model"] = bind_summary((*plan.peer_path, subagent["name"]))
         base_main_chain = chains.main(
             ToolPolicyMiddleware(
                 toolset.authorized,
@@ -313,6 +368,11 @@ async def build_deep_agent(
         offset = len(chains.guards)
         main_chain = (
             *base_main_chain[:offset],
+            ActionDisplayMiddleware(
+                toolset.authorized - {"task", "write_todos", "ask_user_question"},
+                action_observer,
+                run_id=request.run_id,
+            ),
             model_guard(plan.peer_path),
             *base_main_chain[offset:],
         )
@@ -327,9 +387,9 @@ async def build_deep_agent(
         native_constructor: Any = getattr(deepagents, "create_deep_agent")
         validate_native_registry()
         candidate: object = native_constructor(
-            model=make_chat_model(dependencies.model, model, model_clients=clients),
+            model=bind_summary(plan.peer_path),
             tools=toolset.tools,
-            system_prompt=agent.prompt,
+            system_prompt=agent.prompt + capabilities.custom_api_prompt,
             skills=None,
             subagents=subagent_bundle.subagents,
             checkpointer=dependencies.checkpointer,
@@ -345,6 +405,7 @@ async def build_deep_agent(
                     backend=native_backend,
                     sources=[SKILLS_ROOT],
                     progress=progress,
+                    display_sources=resolved_skills,
                     discovery_backends=tuple(
                         (
                             f"{SKILLS_ROOT}{skill.path_segment}/SKILL.md",
@@ -368,6 +429,8 @@ async def build_deep_agent(
         return AgentHandle(
             runnable=require_agent_runnable(candidate),
             tool_descriptions=toolset.descriptions,
+            tool_display_codes=toolset.mounted_display_codes(candidate),
+            tool_display_sources=toolset.mounted_display_sources(candidate),
             resources=resources,
             model_clients=(clients,),
         )
@@ -413,15 +476,44 @@ class AgentFactory:
 
     def backend_for(self, request: RunRequest) -> Backend:
         """Return the Feature-declared sandbox kind for terminal cleanup."""
-        feature = self.feature(request.feature_key)
+        feature = feature_for_custom_api(
+            self.feature(request.feature_key), request, self._dependencies.sandbox
+        )
         return feature.agents[0].backend
 
     async def build(
-        self, request: RunRequest, lease: LeaseFence, progress: SkillProgressSink
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        progress: SkillProgressSink,
+        action_observer: ActionObservationSink = lambda _observation: None,
     ) -> AgentHandle:
         """按受信 Feature key 构造；请求本身不携带 Agent/图配方。"""
+        feature = feature_for_custom_api(
+            self.feature(request.feature_key), request, self._dependencies.sandbox
+        )
+        if request.selected_mcp_connection_ids:
+            # A Run's choice augments only its entry Agent, before recipe freeze.
+            # Never mutate the catalog or grant these refs to unrelated peers.
+            agents: list[Agent] = []
+            for agent in feature.agents:
+                if agent.key == feature.entry_agent:
+                    refs = tuple(
+                        dict.fromkeys(
+                            (
+                                *agent.mcp,
+                                *(
+                                    McpConnectionRef(connection_id=value)
+                                    for value in request.selected_mcp_connection_ids
+                                ),
+                            )
+                        )
+                    )
+                    agent = agent.configured(mcp=refs)
+                agents.append(agent)
+            feature = replace(feature, agents=tuple(agents))
         return await self._build_feature(
-            self.feature(request.feature_key), request, lease, progress
+            feature, request, lease, progress, action_observer
         )
 
     async def _build_feature(
@@ -430,6 +522,7 @@ class AgentFactory:
         request: RunRequest,
         lease: LeaseFence,
         progress: SkillProgressSink,
+        action_observer: ActionObservationSink,
     ) -> AgentHandle:
         """构造一个已解析 Feature；多 peer 仅在声明 handoff 时进入官方 Swarm。"""
         prepared = prepare_feature(
@@ -450,6 +543,28 @@ class AgentFactory:
         recipe = StaticRecipeBinding(
             canonical_bytes=prepared.recipe_bytes, fingerprint=prepared.fingerprint
         )
+        custom_api_environment = None
+        custom_api_prompt = ""
+        if request.selected_custom_api_profiles:
+            if self._dependencies.platform is None:
+                raise CustomApiClientError("CUSTOM_API_PLATFORM_UNAVAILABLE")
+            client = self._dependencies.platform.custom_api_for_run(
+                LeasedRun(request=request, lease=lease)
+            )
+            refs = tuple(
+                CustomApiProfileRef(
+                    profile_id=ref.profile_id,
+                    expected_state_version=ref.expected_state_version,
+                )
+                for ref in request.selected_custom_api_profiles
+            )
+            api_descriptions = await client.describe(
+                refs, deadline_monotonic=monotonic() + 10
+            )
+            custom_api_environment = CustomApiEnvironmentProvider(
+                client=client, profiles=refs
+            )
+            custom_api_prompt = custom_api_instructions(api_descriptions)
         loading = False
 
         async def before_load() -> None:
@@ -466,20 +581,24 @@ class AgentFactory:
             )
             for peer in prepared.peers
         }
-        if request.selected_skill_source_refs:
-            await confirm_skill_progress(progress, SkillPhase(phase="ready"))
+        # Native Skill metadata is not ready until RunSkillsMiddleware loads it.
         # MCP is not a Skill phase. All peer Skill preflights precede MCP assembly.
         capabilities: dict[str, _ResolvedCapabilities] = {}
         for peer in prepared.peers:
             resolved = skills[peer.agent.key]
-            mcp = await resolve_declared_mcp(
+            mcp, declarations = await resolve_declared_mcp(
                 request,
                 peer.agent,
                 self._dependencies.platform,
                 lease,
             )
             capabilities[peer.agent.key] = _ResolvedCapabilities(
-                skills=resolved.skills, mcp=mcp, skill_reader=resolved.skill_reader
+                skills=resolved.skills,
+                mcp=mcp,
+                skill_reader=resolved.skill_reader,
+                mcp_declarations=declarations,
+                custom_api_environment=custom_api_environment,
+                custom_api_prompt=custom_api_prompt,
             )
         if len(prepared.peers) == 1:
             peer = prepared.peers[0]
@@ -492,6 +611,7 @@ class AgentFactory:
                 recipe=recipe,
                 capabilities=capabilities[peer.agent.key],
                 progress=progress,
+                action_observer=action_observer,
             )
         built_agents: list[AgentHandle] = []
         try:
@@ -507,6 +627,7 @@ class AgentFactory:
                         name=peer.agent.key,
                         capabilities=capabilities[peer.agent.key],
                         progress=progress,
+                        action_observer=action_observer,
                     )
                 )
             native = create_swarm(
@@ -532,12 +653,44 @@ class AgentFactory:
             raise
         descriptions: dict[str, str] = {}
         resources: list[ArchivingWritesMixin] = []
+        common_codes: dict[str, ToolDisplayCode] = dict(
+            built_agents[0].tool_display_codes
+        )
+        common_sources = {
+            source.name: source for source in built_agents[0].tool_display_sources
+        }
         for built in built_agents:
+            peer_sources = {
+                source.name: source for source in built.tool_display_sources
+            }
+            common_sources = {
+                name: shared
+                for name, source in common_sources.items()
+                if name in peer_sources
+                and (shared := source.shared_with(peer_sources[name])) is not None
+            }
             descriptions.update(built.tool_descriptions)
             resources.extend(built.resources)
+            peer_codes = dict(built.tool_display_codes)
+            common_codes = {
+                name: code
+                for name, code in common_codes.items()
+                if peer_codes.get(name) == code
+            }
         return AgentHandle(
             runnable=native,
             tool_descriptions=descriptions,
+            tool_display_codes=tuple(sorted(common_codes.items())),
+            tool_display_sources=tuple(
+                sorted(
+                    (
+                        source
+                        for source in common_sources.values()
+                        if common_codes.get(source.name) == source.code
+                    ),
+                    key=lambda source: source.name,
+                )
+            ),
             resources=tuple(resources),
             model_clients=tuple(
                 clients for built in built_agents for clients in built.model_clients

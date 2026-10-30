@@ -14,8 +14,8 @@ ROOT = Path(__file__).parents[2]
 PIN_PATH = ROOT / "contract" / "platform" / "v1" / "provenance.json"
 EXPECTED_SOURCE_DIGESTS = {
     "contract/platform/v1/proto/kokoro/common/v1/common.proto": "65025b86a89119954bfbc7ad8eb89d59109ae7f390db5ee1a68f016eefa7da08",
-    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "e6ae73055a6e03a6a3c188fbede2e35480977f9cd50eae994e7bdb8ace982503",
-    "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto": "1c0e942b56c9b711207f9f4e1155c7b5d24ce2632e18adc98cf9884542ab0b17",
+    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "fc454844d272afba4815d2cab471518049ee9edaec514b59bb9d3e3b54e93835",
+    "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto": "245ab6b081bf91207caf1d2ea51b453fafea6fbc07c040befbd06937ef9489d7",
 }
 
 EXPECTED_RPC_SHAPES = {
@@ -140,7 +140,7 @@ EXPECTED_RPC_SHAPES = {
 
 def test_platform_vendor_inputs_match_the_pinned_owner_digests() -> None:
     pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-    assert pin["owner_commit"] == "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6"
+    assert pin["owner_commit"] == "8cfead647856ef54ec851a3bebe169a3ca14d212"
     assert {
         source["path"]: source["sha256"] for source in pin["sources"]
     } == EXPECTED_SOURCE_DIGESTS
@@ -152,11 +152,13 @@ def test_platform_generated_async_client_contains_all_owner_rpcs() -> None:
     from kokoro_agent.generated.kokoro.platform.v1 import (
         platform_runtime_connect,
         mcp_runtime_connect,
+        custom_api_runtime_connect,
     )
 
     for filename, generated in (
         ("platform_runtime.proto", platform_runtime_connect),
         ("mcp_runtime.proto", mcp_runtime_connect),
+        ("custom_api_runtime.proto", custom_api_runtime_connect),
     ):
         # The pinned source hash anchors the complete inventory, including generated
         # management methods which the execution transport must never expose.
@@ -300,3 +302,45 @@ def test_package_reference_reserves_legacy_tag_and_has_complete_transfer_tag5() 
         ).transfer_reference
         is None
     )
+
+
+def test_execution_service_auth_is_a_fixed_owner_artifact() -> None:
+    pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+    source = pin["service_auth"]
+    assert source["owner_commit"] == "4c3853b1062a9e22c9be6c059720a092805cb63f"
+    assert source["owner_path"] == "contract/auth/agent-execution-service-auth-v1.json"
+    raw = (ROOT / source["path"]).read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == source["sha256"]
+    profile = json.loads(raw)
+    assert profile["caller"] == "kokoro-agent"
+    assert profile["authentication"]["fallback"] == "forbidden"
+    assert profile["mcp_principal"]["digest_version"] == 2
+
+
+@pytest.mark.parametrize(
+    "mutation", ["source_bytes", "source_commit", "missing_source"]
+)
+def test_service_auth_pin_rejects_tampering_before_business_contracts(
+    tmp_path: Path, mutation: str
+) -> None:
+    from kokoro_agent.platform_binding_contract import (
+        validate_platform_binding_artifact,
+    )
+    from kokoro_agent.execution.platform_request_binding_values import (
+        PlatformRequestBindingError,
+    )
+
+    pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+    source = pin["service_auth"]
+    dest = tmp_path / source["path"]
+    dest.parent.mkdir(parents=True)
+    if mutation != "missing_source":
+        dest.write_bytes(
+            (ROOT / source["path"]).read_bytes()
+            + (b" " if mutation == "source_bytes" else b"")
+        )
+    if mutation == "source_commit":
+        source["owner_commit"] = "0" * 40
+    (tmp_path / "contract/platform/v1/provenance.json").write_text(json.dumps(pin))
+    with pytest.raises((PlatformRequestBindingError, FileNotFoundError)):
+        validate_platform_binding_artifact(tmp_path)

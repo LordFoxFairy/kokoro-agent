@@ -29,7 +29,7 @@ from psycopg.errors import CheckViolation, UniqueViolation
 from support.model_http_mechanism import synthetic_final_digest
 
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
-from kokoro_agent.infrastructure.sql import execute_sql, fetch_one
+from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
 from kokoro_agent.infrastructure.postgres_model_call_repository import (
     PostgresModelCallRepository,
@@ -2886,3 +2886,579 @@ async def test_sealed_history_reads_exact_version_and_terminal_replay_writes_not
                 allow_create=False,
             )
     assert await snapshot() == before
+
+
+async def test_prepared_snapshot_reads_current_authorization_without_writes(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    repository, command, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    reader = repository.read_prepared
+    first = await reader(prepared.tenant_id, prepared.attempt_id)
+    assert first is not None
+    assert first.status == "prepared"
+    assert first.attempt_binding_bytes == prepared.attempt_binding_bytes
+    assert first.planned_bytes == prepared.planned_bytes
+    assert first.final_request_digest == prepared.final_request_digest
+    assert first.prepared_at.timestamp() * 1000 == prepared.prepared_at_ms
+    assert first.prepared_at <= first.observed_at < first.lease_expires_at
+    assert await reader("other-tenant", prepared.attempt_id) is None
+    assert await reader(prepared.tenant_id, str(uuid4())) is None
+    pending = await repository.begin_authorization(
+        BeginModelCallAuthorization(
+            tenant_id=prepared.tenant_id,
+            run_id=prepared.run_id,
+            attempt_id=prepared.attempt_id,
+            lease=command.lease,
+            attempt_binding_digest=prepared.attempt_binding_digest,
+            planned_digest=prepared.planned_digest,
+            request_ref="billing-prepared-reference",
+        )
+    )
+    second = await reader(prepared.tenant_id, prepared.attempt_id)
+    assert second is not None
+    assert second.status == "authorization_pending"
+    assert second.authorization_bytes == pending.authorization_bytes
+    assert second.authorization_digest == pending.authorization_digest
+    assert second.prepared_at == first.prepared_at
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"SELECT xmin::text AS tx,* FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')}",
+        )
+        before_attempt = await fetch_one(cursor)
+        await execute_sql(
+            cursor,
+            f"SELECT xmin::text AS tx,* FROM {qualified(run_chat_schema, 'kokoro_agent_run')}",
+        )
+        before_run = await fetch_one(cursor)
+        assert await reader(prepared.tenant_id, prepared.attempt_id) is not None
+        await execute_sql(
+            cursor,
+            f"SELECT xmin::text AS tx,* FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')}",
+        )
+        assert await fetch_one(cursor) == before_attempt
+        await execute_sql(
+            cursor,
+            f"SELECT xmin::text AS tx,* FROM {qualified(run_chat_schema, 'kokoro_agent_run')}",
+        )
+        assert await fetch_one(cursor) == before_run
+
+
+@pytest.mark.parametrize(
+    "authority", ["expired", "owner", "generation", "terminal", "released"]
+)
+async def test_prepared_snapshot_rejects_stale_current_run(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    authority: str,
+) -> None:
+    repository, _, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    reader = repository.read_prepared
+    updates = {
+        "expired": "lease_expires_at=clock_timestamp()-interval '1 second'",
+        "owner": "owner='another-worker'",
+        "generation": "lease_generation=2",
+        "terminal": "terminal=true,terminal_at=clock_timestamp(),interaction_phase='terminal'",
+        "released": "owner=NULL,lease_expires_at=NULL",
+    }
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET {updates[authority]}",
+        )
+    with pytest.raises(ModelCallAuthorityLost):
+        await reader(prepared.tenant_id, prepared.attempt_id)
+
+
+async def test_prepared_snapshot_is_not_a_second_dispatch_authority(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    repository, dispatch = await _authorized_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    reader = repository.read_prepared
+    snapshot = await reader(dispatch.tenant_id, dispatch.attempt_id)
+    assert snapshot is not None and snapshot.status == "authorized"
+    permit = await repository.start_dispatch(dispatch)
+    assert permit.newly_started
+    with pytest.raises(ModelCallAuthorityLost):
+        await reader(dispatch.tenant_id, dispatch.attempt_id)
+    replay = await repository.start_dispatch(dispatch)
+    assert not replay.newly_started
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "binding_digest",
+        "foreign_actor",
+        "legacy_planned",
+        "authorization",
+        "planned_feature",
+    ],
+)
+async def test_prepared_snapshot_fails_closed_on_corrupt_originals(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    corruption: str,
+) -> None:
+    repository, _, prepared = await _prepared_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    reader = repository.read_prepared
+    column = "attempt_binding_bytes"
+    raw = prepared.attempt_binding_bytes
+    if corruption == "binding_digest":
+        digest = "0" * 64
+    elif corruption == "authorization":
+        column = "authorization_bytes"
+        raw = b'{"request_ref":"unexpected","state":"requested_unknown"}'
+        digest = hashlib.sha256(raw).hexdigest()
+    else:
+        value = json.loads(
+            raw if corruption == "foreign_actor" else prepared.planned_bytes
+        )
+        if corruption == "foreign_actor":
+            value["actor"]["opaque_ref"] = "different-durable-actor"
+        else:
+            column = "planned_bytes"
+            if corruption == "legacy_planned":
+                value.pop("binding_version")
+                value["gateway_model_name"] = value.pop("request_model")
+            else:
+                value["feature_key"] = "foreign-feature"
+        raw = rfc8785.dumps(value)
+        digest = hashlib.sha256(raw).hexdigest()
+    digest_column = column.replace("bytes", "digest")
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} SET {column}=%s,{digest_column}=%s",
+            (raw, digest),
+        )
+    with pytest.raises(ModelCallEvidenceInvariantFailed):
+        await reader(prepared.tenant_id, prepared.attempt_id)
+
+
+async def test_prepared_snapshot_does_not_survive_late_authority_loss(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    repository, dispatch = await _authorized_attempt(
+        run_chat_database_url, run_chat_schema
+    )
+    snapshot = await repository.read_prepared(dispatch.tenant_id, dispatch.attempt_id)
+    assert snapshot is not None and snapshot.status == "authorized"
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET terminal=true,terminal_at=clock_timestamp(),interaction_phase='terminal'",
+        )
+    with pytest.raises(ModelCallAuthorityLost):
+        await repository.start_dispatch(dispatch)
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"SELECT status,dispatch_started_at FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')}",
+        )
+        assert await fetch_one(cursor) == {
+            "status": "authorized",
+            "dispatch_started_at": None,
+        }
+
+
+async def test_prepared_snapshot_real_http_transport_and_owner_boundaries(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    import base64
+    import threading
+    import httpx
+    from jsonschema import Draft202012Validator, validate
+    from pydantic import SecretStr
+    from kokoro_agent.interfaces.http.main import AgentHttpConfig
+    from kokoro_agent.interfaces.http.server import create_http_server
+
+    _, _, prepared = await _prepared_attempt(run_chat_database_url, run_chat_schema)
+    config = AgentHttpConfig(
+        database_url=run_chat_database_url,
+        database_schema=run_chat_schema,
+        internal_secret_agent=SecretStr("test-bff-reader-not-authorized"),
+        billing_model_call_reader_secret=SecretStr("test-billing-reader"),
+    )
+    instance = create_http_server(config, "127.0.0.1", 0)
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    try:
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{instance.server_port}", trust_env=False
+        ) as client:
+            path = f"/v1/model-call-attempts/{prepared.attempt_id}/prepared"
+            headers = {
+                "authorization": "Bearer test-billing-reader",
+                "x-kokoro-tenant-ref": prepared.tenant_id,
+                "x-request-id": "real-prepared-owner",
+            }
+            response = await client.get(path, headers=headers)
+            assert response.status_code == 200
+            assert response.headers["cache-control"] == "no-store"
+            assert response.headers["x-request-id"] == "real-prepared-owner"
+            result = response.json()["data"]
+            for prefix, original in [
+                ("attempt_binding", prepared.attempt_binding_bytes),
+                ("planned", prepared.planned_bytes),
+            ]:
+                raw = result[f"{prefix}_bytes_base64url"]
+                assert "=" not in raw
+                assert base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)) == original
+            contract = json.loads(
+                (
+                    Path(__file__).resolve().parents[3]
+                    / "contract/openapi/v1/openapi.json"
+                ).read_bytes()
+            )
+            validate(
+                response.json(),
+                {
+                    "components": contract["components"],
+                    "$ref": "#/components/schemas/PreparedModelCallSnapshotEnvelope",
+                },
+                cls=Draft202012Validator,
+            )
+            wrong = await client.get(
+                path,
+                headers=headers
+                | {"authorization": "Bearer test-bff-reader-not-authorized"},
+            )
+            assert wrong.status_code == 401
+            for header in [
+                {"x-kokoro-actor-ref": "self-reported"},
+                {"content-length": "1"},
+            ]:
+                # GET-body framing is rejected before any owner read.
+                req = client.build_request(
+                    "GET",
+                    path,
+                    headers=headers | header,
+                    content=b"x" if "content-length" in header else None,
+                )
+                assert (await client.send(req)).status_code == 403
+            assert (
+                await client.get(
+                    path, headers=headers | {"x-kokoro-tenant-ref": "foreign-tenant"}
+                )
+            ).status_code == 404
+            assert (
+                await client.get(path + "?request_ref=override", headers=headers)
+            ).status_code == 400
+            async with (
+                connect_pg(run_chat_database_url) as connection,
+                connection.cursor() as cursor,
+            ):
+                await execute_sql(
+                    cursor,
+                    f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} SET attempt_binding_digest=%s",
+                    ("0" * 64,),
+                )
+            corrupted = await client.get(path, headers=headers)
+            assert corrupted.status_code == 500
+            assert (
+                corrupted.json()["error"]["code"]
+                == "model_call_prepared_invariant_failed"
+            )
+            assert "postgres" not in corrupted.text.lower()
+    finally:
+        instance.shutdown()
+        instance.server_close()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("termination", ["deadline", "cancel"])
+async def test_prepared_snapshot_cancels_bounded_blocked_read_without_write(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    termination: str,
+) -> None:
+    _, _, prepared = await _prepared_attempt(run_chat_database_url, run_chat_schema)
+    repository = PostgresModelCallRepository(
+        run_chat_database_url, run_chat_schema, total_timeout_seconds=0.1
+    )
+    async with (
+        connect_pg(run_chat_database_url) as connection,
+        connection.transaction(),
+        connection.cursor() as cursor,
+    ):
+        await execute_sql(
+            cursor,
+            f"LOCK TABLE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} IN ACCESS EXCLUSIVE MODE",
+        )
+        task = asyncio.create_task(
+            repository.read_prepared(prepared.tenant_id, prepared.attempt_id)
+        )
+        if termination == "cancel":
+            await asyncio.sleep(0.02)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(TimeoutError):
+                await task
+    # The read cannot move preparation/authorization when its own I/O is interrupted.
+    snapshot = await PostgresModelCallRepository(
+        run_chat_database_url, run_chat_schema
+    ).read_prepared(prepared.tenant_id, prepared.attempt_id)
+    assert snapshot is not None and snapshot.status == "prepared"
+
+
+async def _history_reader_fixture(
+    database_url: str, schema: str
+) -> tuple[
+    PostgresModelCallRepository,
+    StartModelCallDispatch,
+    Mapping[str, object],
+    list[tuple[str, bytes, str]],
+]:
+    repository, dispatch, row = await _dispatched_attempt_row(database_url, schema)
+    first, raw1, digest1 = _strict_evidence(row, outcome="unknown", revision=1)
+    await _append_evidence(
+        repository, _append_command(row=row, lease=dispatch.lease, evidence_bytes=raw1)
+    )
+    second, raw2, digest2 = _strict_evidence(
+        row,
+        outcome="completed",
+        revision=2,
+        predecessor_event_id=first,
+        predecessor_digest=digest1,
+        normalized=True,
+    )
+    await _append_evidence(
+        repository, _append_command(row=row, lease=dispatch.lease, evidence_bytes=raw2)
+    )
+    return repository, dispatch, row, [(first, raw1, digest1), (second, raw2, digest2)]
+
+
+async def test_history_reader_returns_original_events_after_head_advances_and_run_retires_without_writes(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+) -> None:
+    repository, dispatch, row, events = await _history_reader_fixture(
+        run_chat_database_url, run_chat_schema
+    )
+    third, raw3, digest3 = _strict_evidence(
+        row,
+        outcome="completed",
+        revision=3,
+        predecessor_event_id=events[1][0],
+        predecessor_digest=events[1][2],
+        normalized=True,
+    )
+    await _append_evidence(
+        repository, _append_command(row=row, lease=dispatch.lease, evidence_bytes=raw3)
+    )
+    events.append((third, raw3, digest3))
+    async with connect_pg(run_chat_database_url) as c, c.cursor() as cursor:
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_run')} SET terminal=true,terminal_at=clock_timestamp(),interaction_phase='terminal',lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id=%s",
+            (dispatch.run_id,),
+        )
+
+    async def facts() -> list[list[dict[str, object]]]:
+        result: list[list[dict[str, object]]] = []
+        async with connect_pg(run_chat_database_url) as c, c.cursor() as cursor:
+            for table in [
+                "kokoro_agent_run",
+                "kokoro_agent_model_call_attempt",
+                "kokoro_agent_model_usage_evidence",
+            ]:
+                await execute_sql(
+                    cursor,
+                    f"SELECT row_to_json(t)::text AS fact,xmin::text AS version FROM {qualified(run_chat_schema, table)} t WHERE tenant_id=%s AND run_id=%s ORDER BY 1",
+                    (dispatch.tenant_id, dispatch.run_id),
+                )
+                result.append(await fetch_all(cursor))
+        return result
+
+    before = await facts()
+    for index, (event, raw, digest) in enumerate(events, start=1):
+        published = await repository.read_final_evidence(
+            dispatch.tenant_id, dispatch.attempt_id, event
+        )
+        assert published is not None
+        assert published.revision == index
+        assert published.evidence_bytes == raw
+        assert published.evidence_digest == digest
+        assert published.event_id == event
+    assert (
+        await repository.read_final_evidence(
+            "foreign", dispatch.attempt_id, events[0][0]
+        )
+        is None
+    )
+    assert (
+        await repository.read_final_evidence(
+            dispatch.tenant_id, str(uuid4()), events[0][0]
+        )
+        is None
+    )
+    assert (
+        await repository.read_final_evidence(
+            dispatch.tenant_id, dispatch.attempt_id, str(uuid4())
+        )
+        is None
+    )
+    import base64
+    import threading
+    import httpx
+    from pydantic import SecretStr
+    from kokoro_agent.interfaces.http.main import AgentHttpConfig
+    from kokoro_agent.interfaces.http.server import create_http_server
+
+    instance = create_http_server(
+        AgentHttpConfig(
+            database_url=run_chat_database_url,
+            database_schema=run_chat_schema,
+            internal_secret_agent=SecretStr("qa-not-history-reader"),
+            billing_model_call_reader_secret=SecretStr("qa-history-reader"),
+        ),
+        "127.0.0.1",
+        0,
+    )
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    try:
+        async with httpx.AsyncClient(
+            base_url=f"http://127.0.0.1:{instance.server_port}", trust_env=False
+        ) as client:
+            for index, (event, raw, digest) in enumerate(events, start=1):
+                response = await client.get(
+                    f"/v1/model-call-attempts/{dispatch.attempt_id}/usage-evidence/{event}",
+                    headers={
+                        "authorization": "Bearer qa-history-reader",
+                        "x-kokoro-tenant-ref": dispatch.tenant_id,
+                        "x-request-id": f"history-read-{index}",
+                    },
+                )
+                assert response.status_code == 200
+                assert response.headers["cache-control"] == "no-store"
+                assert response.headers["x-request-id"] == f"history-read-{index}"
+                data = response.json()["data"]
+                assert data["event_id"] == event and data["revision"] == str(index)
+                assert data["evidence_digest"] == digest and data["sealed"] is True
+                assert data["observed_at"] == json.loads(raw)["observed_at"]
+                encoded = data["evidence_bytes_base64url"]
+                assert (
+                    base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)) == raw
+                )
+    finally:
+        instance.start_draining()
+        await asyncio.wait_for(asyncio.to_thread(instance.shutdown), timeout=5)
+        assert await asyncio.to_thread(instance.wait_for_active_handlers, 5)
+        instance.server_close()
+        await asyncio.to_thread(thread.join, 5)
+        assert not thread.is_alive()
+    assert await facts() == before
+
+
+@pytest.mark.parametrize(
+    "damage", ["revision", "digest", "missing", "bytes", "unsealed", "time"]
+)
+async def test_history_reader_rejects_corrupt_actual_head_even_for_intact_historical_event(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    damage: str,
+) -> None:
+    repository, dispatch, _row, events = await _history_reader_fixture(
+        run_chat_database_url, run_chat_schema
+    )
+    if damage == "unsealed":
+        # The canonical state CHECK makes this corruption impossible to persist.
+        # Keep that protection instead of dropping a constraint to construct it.
+        with pytest.raises(CheckViolation, match="ck_model_evidence_state"):
+            async with connect_pg(run_chat_database_url) as c, c.cursor() as cursor:
+                await execute_sql(
+                    cursor,
+                    f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_usage_evidence')} SET sealed=false WHERE event_id=%s",
+                    (events[1][0],),
+                )
+        original = await repository.read_final_evidence(
+            dispatch.tenant_id, dispatch.attempt_id, events[0][0]
+        )
+        assert original is not None and original.evidence_bytes == events[0][1]
+        return
+    async with connect_pg(run_chat_database_url) as c, c.cursor() as cursor:
+        if damage in ("revision", "digest", "missing"):
+            column, value = {
+                "revision": ("latest_revision", 3),
+                "digest": ("latest_evidence_digest", "f" * 64),
+                "missing": ("latest_event_id", str(uuid4())),
+            }[damage]
+            await execute_sql(
+                cursor,
+                f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} SET {column}=%s WHERE attempt_id=%s",
+                (value, dispatch.attempt_id),
+            )
+        elif damage == "time":
+            await execute_sql(
+                cursor,
+                f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} SET sealed_at=sealed_at+interval '1 second' WHERE attempt_id=%s",
+                (dispatch.attempt_id,),
+            )
+        elif damage == "bytes":
+            await execute_sql(
+                cursor,
+                f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_usage_evidence')} SET evidence_bytes=%s WHERE event_id=%s",
+                (b"{}", events[1][0]),
+            )
+    with pytest.raises(ModelCallEvidenceInvariantFailed):
+        await repository.read_final_evidence(
+            dispatch.tenant_id, dispatch.attempt_id, events[0][0]
+        )
+
+
+@pytest.mark.parametrize("damage", ["digest", "bytes", "observed"])
+async def test_history_reader_validates_requested_row_independently_from_intact_current_head(
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    damage: str,
+) -> None:
+    repository, dispatch, _row, events = await _history_reader_fixture(
+        run_chat_database_url, run_chat_schema
+    )
+    async with connect_pg(run_chat_database_url) as c, c.cursor() as cursor:
+        column, value = {
+            "digest": ("evidence_digest", "f" * 64),
+            "bytes": ("evidence_bytes", b"{}"),
+            "observed": ("observed_at", datetime(2020, 1, 1, tzinfo=UTC)),
+        }[damage]
+        await execute_sql(
+            cursor,
+            f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_usage_evidence')} SET {column}=%s WHERE event_id=%s",
+            (value, events[0][0]),
+        )
+    with pytest.raises(ModelCallEvidenceInvariantFailed):
+        await repository.read_final_evidence(
+            dispatch.tenant_id, dispatch.attempt_id, events[0][0]
+        )

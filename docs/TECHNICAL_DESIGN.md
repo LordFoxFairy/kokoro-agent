@@ -1,3 +1,434 @@
+## 2026-10-29 隔离脚本执行详情
+
+沿既有本人 RunDisplay 只读接口补齐 execute 预览，不新增事件、表或消费者契约。冻结配方中的所有 peer 均为 Docker/E2B 且无 execute approval/review/pause 改写，才允许 execute；StateBackend 文件白名单维持原行为，混合或未知后端不推断权限。原始 typed call/result、同 Run opaque activity ID、终态和持久 journal 的 name/status/result 必须完全一致；仅 command 公共参数及已记录输出进入既有脱敏预览（2048/4096 UTF-8字节），不读取当前凭据、环境或文件。无 MCP/Skill journal 需求时只预算和读取 execute journal，避免无关工具挤占文件详情预算。既有 RR只读、5秒期限、8MiB预算及版本/主体边界保持。
+
+## 2026-10-29 已批准 Custom API 隔离执行接线
+
+Platform唯一拥有加密配置；本仓只消费固定Describe/Acquire运行契约，沿既有RunPlatformClient与在线proof，执行器使用现Docker/E2B而非宿主local_shell或通用HTTP代理。每次execute获取局部env，值不进argv/命令/prompt/recipe/日志，不写.env；描述为用户配置数据。adapter/provider及 Run/factory 已接入候选；正常进程尚未配对激活。
+
+HTTP8.10 Run仅增加safe profile_id/expected_state_version引用，原默认/省略行为及旧冻结digest保持；build/static recipe/backend_for使用同一受信有效Feature，选中才进入已配置隔离后端，缺配置即拒绝而非降级。Run级workspace隔离，同Run恢复走现sandbox CAS；Describe不进静态recipe，Acquire不进checkpoint。挂载、Archiving包装、取消/失败及终态清理须保持同一backend/provider与Docker daemon上下文。无新数据库模型或执行框架。
+
+运行配置由 worker 显式携带 HOME/DOCKER_HOST/DOCKER_CONTEXT/DOCKER_CONFIG/TLS 上下文，创建、execute、重连和清理保持同一 daemon，不继承整个 worker 环境。仅选中 API 的新 Docker 沙箱使用 CPU 0.5、512 MiB、128 PID、只读 root、64 MiB /tmp、drop ALL/no-new-privileges、local 日志轮转 10 MiB×2；只绑定当前 Run 子目录。CLI 上下文不写静态 recipe，隔离实现源码纳入现 recipe manifest；E2B 沿其已有资源生命周期。
+
+当前保证为每次 execute 的新鲜授权/取值、短生命周期进程环境及原值 stdout/stderr 脱敏，不声称任意脚本的编码、网络或文件写出被彻底阻止。正常环境开放前仍需核实配置的沙箱镜像、文件/产物处理与实际 owner 调用，不能仅凭菜单选中宣称可执行。
+
+### 任务执行镜像（待构建与真实验收）
+
+`docker/sandbox.Dockerfile` 是既有 Docker backend 的任务执行基础设施，不是新服务或 worker 镜像。复用根 Dockerfile 已固定的 Python 3.11-slim OCI index digest，仅使用基础镜像的 `sh`、`sleep`、Python 标准库 `urllib.request`/TLS 与系统 CA；构建时检查这些前提，不额外安装包，不复制仓库、worker 源码或任何服务凭据。默认 `/workspace`、`HOME=/tmp`、禁写 Python bytecode；构建参数 `SANDBOX_UID`/`SANDBOX_GID` 默认均为 65532，本机构建传入实际宿主 Run 目录所属 UID/GID，部署时必须保持镜像身份与卷目录 owner 一致，不在业务代码新增 OS 身份判定。空 `ENTRYPOINT` 与 `CMD sleep` 兼容既有 backend 的 TTL 覆盖；资源限额、只读 root、临时目录和唯一 Run mount 继续由既有 backend 设置，不增加监听端口。
+
+构建使用该 Dockerfile 的空上下文（stdin），验收后将结果的不可变 image ID/发布 digest 配到 worker 的 `KOKORO_DOCKER_IMAGE`，专用宿主根目录配到 `KOKORO_AGENT_LOCAL_SHELL_ROOT`；不使用 Redis QA 或 Porta 服务镜像替代。真实验收须覆盖当前 UID/GID 的 workspace 写入、只读 root、系统 CA/HTTPS、exec、清理与限额；定义文件或静态检查不等于镜像已构建、正常进程已启用。
+
+供应链沿既有固定 Python/Debian 基础镜像，不引入新包源；Python 的 PSF 及基础系统各组件许可证随镜像保留，发布时按实际镜像清单核对许可证与漏洞。固定 digest 保证输入不漂移，不代表没有漏洞，升级需重建并复验。退出时先停止新 API 任务并处理在途 Run，再恢复原执行配置；保留个人 API 配置与历史，不做 DDL，仅在无容器引用后清理本次镜像和自有工作目录。
+
+## 2026-10-28 旧终态最终答复旁读（本轮实施门，未发行）
+
+目标是让缺显式 final 标识但已有可证明 native terminal 的旧 Run 复用正常整轮披露，不从最后一段公共正文猜 final。Agent 仍拥有事实；沿既有 RunDisplay 只读边界，复用 RR read-only、5 秒绝对期限和 8 MiB 输入预算。独立 checkpoint_final_answer 读取器完成隔离验证后，现已沿 read_run_display 接线：两个返回位置携带证明，共享同一预算与事务；正式HTTP8.9候选只增加可选身份字段，消费者/正常环境未生效。
+
+读取仅同受信 request/scope 的 completed Run、canonical 冻结配方、至多128个 exact Run root namespace locator，须是一条完整无分叉/循环/缺父的链；不跨 Run、不读全会话历史。所有 native tuple/blob/write 字节在反序列化前预检。使用官方 BaseCheckpointSaver 逐 parent Delta history 路径，通过限定 locator 的只读适配；不使用 Postgres 的全 thread 快路、不创建/执行 graph。仅终态时间之前无待执行 branch/tasks/writes 的 terminal checkpoint，官方 messages reducer 恢复的最终 AIMessage 无 tool calls，且与同 Run 唯一公开 assistant.completed 的原身份和完整正文一致，才返回证明。未知版本/不支持或缺证保持 absent，损坏/超界沿原错误边界；不更改历史 bytes。
+
+兼容性只核实际读取的 SDK 序列化、messages reducer 和终态语义，不建立动态旧代码加载器；0.6.6→0.6.7 的明确代码比较未完成前不宣称支持旧样本。新正式 terminal 标识仍优先。后继发行时，Agent 原 display optional final_message_id；BFF 自己核 exact parts/revision，再返回 optional final_answer；App 保持旁读事实独立于 durable final 版本合并，复用 completedTurnSections，身份/版本冲突拒绝，公开正文和失败不改。没有新表、端点、服务、权限或模型调用。每个 owner 机器契约按固定版本生成后才接消费者。
+
+最低验证：原生 delta 恢复/直接 snapshot、同 Run 完整链/异 Run/分叉/缺父/非终态/空值/工具尾项/预算/取消/未知配方，真实PG只读前后字节等同；之后正常旧 conv6530 收展/刷新及同次详情。缺失阶段正文/action_title不由此补造，整体样式仍须另外按原参考验收。
+
+本轮独审发现 native saver 对 checkpoint `v<4` 会额外查询未含 namespace 的 parent pending sends；现仅 scalar 预检接纳已证明的 checkpoint `v=4`，其他格式在 native getter 前退出。隔离 PG 负控先实际失败，再修复通过；流 API `version="v3"` 与该持久格式版本无关。旧 factory 精确源码 `ff367592` 的 SHA 与当前构造均已审为 SDK 默认 root state，支持范围只扩大到这两个已审摘要，不加载历史代码。
+
+候选验证（2026-10-28）：原生离线 unit 3 项；隔离真实 PG 含只读前后全表摘要、共享 8 MiB 超界、后继 Run 隔离、公开正文不符及 v<4 禁止 native load 均通过，测试独立资源已回收。原 cab07 Run 在正常数据库强制 RR/read-only 和整个操作 5 秒期限下取得原 public final identity，48.89ms（单次样本，不是全接口性能承诺）。无历史回填、模型/工具调用或进程切换。**后继已接候选HTTP8.9；BFF和App尚未配对生效，旧会话整轮展示仍OPEN，不能据此称页面修复。**
+
+## 2026-10-28 整轮过程与最终答复边界（设计门，候选）
+
+目标为用户指定 Manus 任务中已实测的“整轮过程披露 → 有序公开正文/动作组”，最终答复独立显示。Agent 只发布执行事实，不拥有折叠 UI。基线 ba6c5a5 / HTTP8.7；不改 SDK、图、模型提示词、工具权限、计费或执行结果，不重写旧记录。
+
+最终答复由已批准原生图的正常终止语义判定：v3 四投影完全排空后，`await run.output()` 的末项必须为有稳定 ID、无 tool_calls/invalid_tool_calls 的 AIMessage；不向前搜索非空正文。先按同 tenant/namespace/session/Run 的原持久公开 assistant completed 记录核验，再由原唯一终态事务重新核验、与成功终态一同冻结。子代理/摘要/此前 Run、return_direct 的 ToolMessage、未知输出不绑定；空最终 AI 可绑定其自身空段，不晋升前一阶段文字。HITL waiting/unknown、失败、取消不发布 final；resume 使用同一判定，checkpoint 已完成而本次没有新流时仍核对同 Run 已持久记录。
+
+内部 RunCompletedPayload 可选 final_segment_id 只承载原生段 ID；安全 Chat 终态转为已有 assistant_message_id 派生的 final_message_id，不公开原生 ID。仅已证绑定有值；缺省统一表示没有可证明的最终答复身份，不额外建立“已知无答复”状态。旧事件/恢复保持缺省，禁止倒推或回填。现 token usage 补全/terminal replay 必须保留绑定，重复终态异值冲突。
+
+写区为 execution 的原生输出判定、RunEmitter 的同 Run 公开事实核验、protocol/events、Chat projection/repository 与既有 terminal transaction。HTTP canonical 发布 8.8 decoded run.completed profile；BFF 固定发行物后贯穿原 ledger/ordered history，App 最后消费。reader-first 配对前不激活正常 producer；回滚只回程序，保留能读取新字段的消费者。Agent 无 Schema/数据迁移，BFF 持久边界由其设计门单独承接。
+
+验证必须覆盖真实原生图的多步/纯文本/空最终段/HITL resume/return_direct，错 Run/子代理/不存在记录、租约/取消竞争、checkpoint 后重建、终态原子性及 replay；mock 不称真实持久集成。此设计不是 UI 已完成或正常环境已生效。
+
+实施发现独立既存 Swarm 缺口（2026-10-28只读复现）：外层 bare compile 未装四投影，pump读取不存在的tool_calls；v3直接peer消息位于原生subgraphs，不在root.messages；锁定DeepAgents0.6.6 FilesystemMiddleware同步/异步处理Command时只重建update，丢失graph/goto路由。原正控实际29 PASS/1 FAIL；单进程三项假设探针通过不等于可部署补丁，保留RED、不skip/xfail。
+
+后续设计门：scoped transformer与直接peer消费仍归既有swarm/execution，必须区分已声明直接peer和真正native task，不把所有子图提升为公开正文；最终身份双证保持。Command路由兼容尚未裁决：create_deep_agent的用户middleware全部位于原FilesystemMiddleware内层，已证仅追加本仓middleware不足以保留外层处理后路由。不得修改venv、全局monkeypatch、伪造active_agent或跳过文件处理。需评估带固定版本/许可证/退出路径的上游修复或最窄维护补丁，再实施生产修复；普通Agent、HTTP8.8及BFF/App消费者可独立推进，但Swarm未验收不得冒全链闭环。
+
+### Swarm Command 兼容落点（2026-10-28，候选依赖修复）
+
+主方核实并选择上游正式 `deepagents==0.6.7`，不维护本仓 Command monkeypatch、不追最新版本。官方 [PR3391](https://github.com/langchain-ai/deepagents/pull/3391)／fix `d92aef68f70a5e5277c43a50581e7895e682c417` 已由 [0.6.7](https://github.com/langchain-ai/deepagents/releases/tag/deepagents==0.6.7) 发布，release commit `bbeb869e2f9870ccdf93987e8bd0ad6ba2bef05c`。它在原同步／异步文件结果处理中保留 graph/goto；不声称保全部 Command 字段。许可证仍MIT、Python约束和六项直接依赖声明不变；发行还含未知扩展名base64读取修复与DeepAgentState导出，profile文件未变。官方wheel SHA256 `3518c1e5f4b9f6588ba39912b668b42b5c864b99a638e94c166d1c7176c7388e`；PyPI无provenance attestation，记录为供应链限制而非哈希替代证明。
+
+本片只更新pyproject精确pin、uv生成lock、原native_profile版本硬门与runtime provenance版本，保其他锁定版本、权限与插件拒绝规则。原生同步／异步父图handoff正控在0.6.6真实两项失败，后继必须在0.6.7以同一断言通过，并复核文件处理、profile／recipe、HITL与普通Agent。Swarm四投影和直接peer消费仍是独立未修项，不用依赖升级冒整链完成。无Schema、HTTP字段或旧历史写入。
+
+验证仅在独立候选虚拟环境，不改正常HTTP／worker或原0.6.6环境。正常激活需先确认没有旧recipe在途（含HITL暂停、待恢复与已冻结未终态Run）；旧recipe不重算、不假装兼容，按原摘要检查拒绝漂移。回退恢复源码＋lock＋native profile整套基线并用原环境，不单独降包；回退前同样检查新recipe未终态Run。新版本若不通过现行为门，候选不激活。此为既定Agent owner内的最窄已发行修复，不增加新模块/服务或自定义执行器。
+
+### Swarm 原生流接线（2026-10-28，候选已实施、未正常激活）
+
+保持官方runnable与SwarmState，不做router、agent包装或第二协议。`swarm.py`只为已编译声明peer校验原生`name`与固定`stream_transformers`配方；外层compile加官方ToolCallTransformer与scoped SubagentTransformer工厂，root无task声明，peer与其后代使用对应peer自己的原生工厂，不拼接所有peer或借第一peer声明。messages/subgraphs由SDK提供，现CustomTransformer继续沿原入口加入。未知配方／scope拒绝，不探私有闭包。
+
+使用SDK公开StreamTransformer扩展携带编译时不可变的root scope／声明peer集合；只作本地消费判定，不是网络状态或模型自报属性。`protocols.py`描述现原生extensions／subgraphs和直接子图视图。`pump_run`有Swarm声明时并发抽干root四投影及合法直接peer；验证path深度／父前缀／graph_name／节点名一致后，peer按同一公开Run进入现queue／drainer。peer内部task仍由原subagent消费者发布subagent事件，不递归提升peer.subgraphs；未知直接peer拒绝。两路都完成后才发哨兵，取消与持久失败沿原cancel-and-join清退，final原生输出＋同Run公开记录双证不改。
+
+实际SDK订阅约束：StreamChannel在同步`aiter()`时订阅，未订阅会丢事件；不是缓冲满才回压。root的subgraphs及每个run四投影先同步订阅，再启动消费者；收到tool即订阅output_deltas并仅传同一cursor。ModelStream的text/reasoning是可回放projection，保持现有权威终值读取。直接peer使用TaskGroup并发消费，避免等待前一peer结束才订阅下一peer首帧；其异常沿原运行失败路径，不把未知scope变成公开正文。持久写失败在唯一drainer原样传播，取消/退出仍join全部拥有的协程。测试替身与见证wrapper只补相同原生属性，不删除原断言。
+
+写区限制为现swarm.py、protocols.py、publish_agent_events.py与对应支持/行为回归；三文件已在recipe resource manifest，不新增helper或owner。验收含原final正控、异构peer子代理声明隔离、task不提升公开正文／final、往返handoff、HITL／checkpoint恢复、取消与持久失败清退、普通Agent回归。现已沿本节实施。原 final handoff 正控已转绿；真实 SDK 往返交接、异构子代理、审批后新图恢复、取消及持久失败已取得候选证据。正常部署和真实持久组合另验，未据此关闭产品展示。
+
+## 2026-10-28 逐调用公开行动说明：生产与绑定设计门（源码已接线，未激活）
+
+用户要求以 Manus 的具体行动而非内部调用日志组织主线。Agent 保持唯一执行展示 owner：同一次模型 tool call 的模型可见 schema 增加可选保留字段 `_kokoro_action`，表达简短公开行动/对象，不含推理、秘密或成功断言；不是 provider description。使用官方 ModelRequest/ToolCallRequest override，不替换 mounted 工具、循环或远端 schema，不增加模型请求。保留键冲突/非对象/strict schema不扩展、不剥离原业务字段。
+
+`tools/action_display.py` 只负责模型 schema副本、标题校验和执行前剥离。原 checkpoint保留模型调用原文；观测按原call ID、工具名、去元数据后参数摘要绑定，回调由本 Run emitter持有，不设全局map或新表。原权限/审批/journal继续执行；审批改变参数后摘要不符，原标题缺省。标题不影响授权、结果或状态，危险/缺失标题不伪造；未知工具不剥离、不新增授权。
+
+**候选复核修正（同日，现已源码装配但未激活）。** 剥离资格来自本次模型请求实际扩展的 schema，不能按执行侧同名 mounted tool 重算。模型返回边界、HITL 之前复制原 AIMessage，将本 Run／call ID／原工具名／去展示元数据参数摘要／已校验标题写入原消息 `response_metadata.kokoro_action_source_v1`，覆盖 provider 同名键；不修改原 tool_calls。checkpoint 原生保存它，实际 OpenAI wire serializer不发送 response metadata；原调用参数中的 `_kokoro_action` 仍属于模型历史，不声称也被从上下文移除。执行只承接最新 AIMessage 唯一 call ID 的同 Run 资格；审批改参数保留剥离资格但不发布旧标题，缺证据／跨 Run／重复 ID 不借历史。实际 SDK interrupt→新 graph 实例→approve/edit→恢复已经覆盖，不以观察之后改参代替真实审批顺序。无新表、无全局来源缓存。model_guard 装饰顺序和原 Chat 首事实持久化已在本切片核对；配对消费者和实际页面仍待交付，本模块通过不代表浏览器已修复。
+
+**当前实现写区。** 公开文本校验从 projection/preview 抽到无模型依赖的 `domain/chat/display_text.py`，`action_intent.py`仅承载exact-call意图/参数摘要。worker显式把本Run emitter观察回调经既有builder/factory传入主peer middleware，不新建ContextVar、全局store或传输通路；处于guards之后、model_guard之前，使真实模型请求包含装饰后的schema。`RunEmitter`在原调用首次投影前匹配工具名/ID/参数，沿 `first_tool_activity` 冻结标题与缺省，重启 returned不重选说明。普通child subagent工具不是现ChatToolActivity，本片不改其私有通道。`runtime_profile_sources/plan`包含新增实现与选择规则，不默改旧冻结Run。
+
+同一切片已把精确观测写入原 Chat activity 的 optional `action_title`，started/returned与replay复用首次事实；临时观测索引不成为持久真源。BFF/App reader-first沿原AG-UI活动消费者，旧历史缺省，不补写原事件。由既有runtime recipe计入新middleware源码/规则。无新端点、数据库DDL、独立事件流或解释服务。先用真实SDK离线循环证明模型原call/checkpoint保留、工具实参剥离、call绑定和原错误保持，再做持久活动/消费者/实际模型验收。当前不得把此门或源码接线称产品修复完成。
+
+## 2026-10-28 MCP 同 Run 工具说明（展示修复，候选未激活）
+
+沿现 Agent RunDisplay 私有读取增加 optional `activity_details[].tool_description`（与既有预览相同 text/truncated/redacted 形状，UTF-8 至多1024字节）。它仅表示本 Run 实际观察到的 provider 能力说明，不是逐调用目的、工具title、执行结果或权限。Agent仍唯一事实 owner；BFF固定正式契约透传、App纯文本消费，不新建服务/表/端点/第二事件协议，不查询当前目录回填历史。
+
+来源只采用原 Run exact activity＋typed call＋succeeded/non-error journal 的 `mcp_describe_tool` 正式返回格式；按完整 connection＋selector匹配，先校验原说明和参数schema，再从原说明过滤/裁剪。不同连接同名不互借，同一目标冲突说明全部省略；旧历史缺证、错误或危险说明省略，不从输出预览反解析，不补造自然语言。该事实可附到同Run匹配的 describe/call（失败调用也可有说明，但状态保持）。原函数身份、输入输出和失败不改；发现列表仅首行摘要，不用它冒完整说明。
+
+HTTP8.6正式增量只加该optional字段及其mcp目标条件；生成/消费者配对前不替换正常服务。预算沿原百万字节Run读取收缩，说明亦参与收缩；过滤不保证任意文本完全无敏感信息，因此仍限本人私有Run，禁止Share或执行其中指令。无Schema/依赖/执行授权变化；回退旧reader并保原数据。
+
+验收：同Run精确关联、跨连接同名/旧Run/冲突/失败/未知/坏schema/敏感/UTF8预算负控，完整旧契约原件逆证、同owner实际HTTP读取和消费者回归。最终以原MCP会话可读说明、具体请求/结果与刷新可见的产品证据验收，不以新增字段或测试通过声称Manus一比一。
+
+## 2026-10-28 流式阶段正文完成帧修复
+
+新真实 Run 已观察到公开文本 delta 非空、随后 assistant.completed 为空，阶段文字被擦除。根因为发布器将 assembled AIMessage.text 当作 SDK 文本投影终值；已 finalized 的工具块可使 assembled message 不含尚未 finalized 的文本块。修复保持四路并发 drain，但保存同一 text projection，迭代 delta 后 await SDK 权威终值；不采用 `final.text or deltas`，以保留非追加式文本修订。SDK 终值非字符串按错误传播，不伪装为空。
+
+此为既有消息内容语义的局部修复，无网络契约、Schema、依赖或历史回填。真实 AsyncChatModelStream dispatch 回归复现混合文本/工具块擦除，并覆盖权威修订与真正 tool-only 空段；原取消、无输出及 replay 测试保留。原生模型脚本测试只覆盖完整 AIMessage，不能替代流式块回归；新模型 Run 的端到端观察作为激活后验收。
+
+## 2026-10-28 General 公开阶段说明（原行为内补齐）
+
+沿Root现有Agent展示计划及Manus实测：通用Agent在多步任务首组实质操作、关键结果/目的变化时输出简短公开说明；直接回答/简单单步不强加前言，同目的操作不逐项播报。不披露推理、不生成空泛状态、不预称成功。复用现GENERAL_PROMPT和原TEXT_MESSAGE投影，不新增API、事件字段、持久状态或历史回填；MCP行标题仍只消费原事实，不把说明推断为工具成功。
+
+原生DeepAgents测试已覆盖同AIMessage正文+tool_calls；本片补两段公开说明/两个实际离线工具/最终正文与Chat replay/history次序、直接回答无合成阶段说明。此证明是确定性模型＋真实原生图，ChatRepository为测试double，不是实际provider顺从性、真实持久化或任意投影调度保序证明。生产闭环还须新Run真实模型与浏览器观察。prompt原字节已在现runtime recipe来源内，切换仅在无非终态Run时进行，不用新prompt恢复旧冻结Run；不改依赖或模型profile。
+
+## 2026-10-28 HTTP8.5 私有工具详情（Root 已批准；候选）
+
+复用本人已授权 Run 的现有 GET `/v1/runs/{run_id}/display`，仅增加 `activity_details`；不改 Chat/SSE、worker执行、数据库或授权。每项通过原 Run activity、typed AIMessage tool-call、journal 与 frozen selection 精确绑定；未知来源不输出。运行中只输出有证据的输入，terminal journal 才输出结果；旧 tool_facts/失败证明/首帧 detail 和活动顺序不变。GET只读，不补历史、不查询当前连接器目录、不生成连接器名。文件仅承接已证明的安全 virtual target。
+
+严格 DTO 为 activity_id、tool_name、可选 target（复用原ToolDisplayDetail安全域）、input_preview/output_preview。preview严格为 text/truncated/redacted；输入最多2048 UTF-8字节，输出4096；activity_details最多128且ID唯一。纯文本/代码展示，不执行、不autolink、不作为指令，不进入Share/公开快照。缺证缺省，不伪造正常元数据。原5秒、32locator、8MiB输入、1MiB完整JSON响应预算保持；预览按稳定顺序在序列化预算内缩短并标truncated。
+
+本次产品裁决允许本人Run有限参数/结果正文预览；结构化敏感键删除，文本疑似秘密、凭据、内部host路径/配置或traceback时整块省略。只投影模型参数，不取runtime注入/transport material/env/reasoning；MCP仅text及structuredContent，binary/resource/metadata不公开。深度6、每容器32项、总节点128，JSON反序列化先作深度/字节预检，重复键/非法Unicode拒绝。generic redaction是受控私有公开策略，不是任意文本不含秘密的证明；未知格式/编码秘密仍有残余风险。缺少可显示内容时保缺省，不把省略声称空结果。
+
+MCP 结果只在单个 text block 与 `structuredContent == {"result": 原文本}` 严格重复时直接预览该自然语言原文，避免重复 envelope 消耗 4096 字节预算。有效 JSON、疑似 JSON 起始文本、额外结构键、不同值及多文本块保留原表示；过滤、截断、非文本省略标记仍适用。此为只读投影，不修改 journal 或工具执行事实。
+
+discover/describe仅按现正式wrapper格式投影：discover逐行核冻结connection前缀，去掉connection ID后保selector/description；describe核本调用exact server/tool首行，去ID后保说明与解析后的input_schema，结构敏感键继续删除；非格式字符串省略。文件继续沿原display_detail/tool_paths，不按类别编造read_file/write_file等函数名。
+
+读取仍为原RR read-only同Run定位，不扫描session。扩大原locator到discover，并允许started journal读取冻结配方以取得运行中输入；每次输入/输出只绑定自身call ID，成功兄弟调用不证明本调用参数/结果。现known legacy describe错误只按原精确SHA/常量/typed message证据承接，不开放任意错误栈。Agent正式8.5原件/生成物/provenance先交付，BFF固定消费后App接Canvas；不先发新Chat/SSE字段。
+
+## 2026-10-28 历史 MCP 真实动作对象（Root 已批准；HTTP8.4候选）
+
+旧describe仅对已审源SHA `f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea`，exactRun原native调用与同ID/name的typed ToolMessage、journal完整结果同时等于该版本内建三错误常量，才补该activity的failed事实；其它版本、substring、远端内容与无typed证据均不归类。
+
+沿 Agent669 既有 exact Run display owner，只读扩展原GET，不改Schema、权限、worker协议、Chat source/id/digest或Run终态。旧截图11条活动中，原journal独立证明的失败可与原safe activity精确相交；名字只由同Run成功mcp_call的native typed调用、成功CallToolResult、frozen peer连接与原journal共同见证，再按exact(server,tool)关联describe。旧failed／describe错误字符串不授名字，旧server人工名缺证不造。未来check输出优先实际批准public selector，不把cap.display_name说明长句当工具名。
+
+MCP读取独立于Skill缺省补全，禁止Skill齐全／未选择Skill的early-return跳过MCP。保总5s、32相关locator、8MiB native输入与1MiB输出；原序列化pending-write的call-id token仅筛候选，解码仍用锁定native saver serde，随后严格验证typed AIMessage、原journal与safe activity；不重建Delta、不扫描完整session、不查当前Platform目录。journal失败可不依赖native args恢复；缺证字段缺省，合法空tool_facts只表示无可恢复事实。source不回填，BFF/App后继reader-first按原activity ID提供独立展示overlay，Share不接。
+
+## 2026-10-28 Skill 名称／虚拟路径 D0（Root 已批准，候选实施中）
+
+**Owner／基线及实证。** 基于 Agent `fc8b0f09f3cfd96211b33d863d5e629bbed13e46`／HTTP8.2；不改 Platform owner／Schema／依赖／Redis worker 协议。Root 已只读解码用户正看的旧 baf57 Run：13 个同 Run checkpoint 中10份 native `skills_metadata` 一致，name 为 `kokoro-pin-consistency-20261016`，path 为本次 `/.skills/{exact-segment}/SKILL.md`，没有 revision/version；全 session 的latest state不作旧Run真值。当前 `ResolvedSkill` 有 exact source_ref/revision/asset/digest/manifest 与mount映射，没有title；原SDK已从验包后的SKILL.md解析name/path并核expected集合，不查当前catalog补名。SDK包名不冒充Product display_name，也不按名字定位（同名不同source合法）。
+
+**未来原事实。** 保原resolving/loading/error及fence，只有原生异步Skill loader成功且exact expected paths齐全后，原ready安全Chat activity才附 bounded `display_skills`（API首节）；原factory包预检后的ready承载点移至此处，不能提前宣称native metadata已就绪。以实际path与本次ResolvedSkill一对一绑定source_ref、name、virtual_path与已取得的exact revision；多peer／重建不得借另一Run或同名来源，冲突拒绝。通过现progress sink的本地可选展示参数传入Chat投影，如现tool_detail边界；SkillPhase/SkillProgressPayload等Redis wire仍原形，不把展示字段塞进worker事件。名称／路径不安全只省略展示事实，不伪造标签或改变执行资格；ready不等于模型实际调用该Skill。
+
+**文件展示。** 原 `display_detail.name` 仍是basename。file分支只增 optional `virtual_path`，沿现实际ToolNode／schema／backend构造及本Run `.skills` 挂载证明，取已校验的真实工具path；保NFC／UTF8界、无控制、无逃逸、无host／secret／URL／unknown backend等原守卫。相对值仅保旧basename而不添未证明的absolute virtual_path，绝不把容器／宿主根当公开路径或造friendly alias；MCP detail不接此字段。首次invoked冻结，returned／重启读原Chat首事实；旧event及缺省不改写。
+
+**MCP同片展示。** `check -> _binding`的已准入public声明优先安全display_name，缺失/不安全时仅回退同声明的public selector（原runtime要求等于native tool.name）；不解释privatekey、不新增当前owner lookup。多peer展示只交所有peer都独立证明的相同connection/selector/label，不能对整名称集合取交集误丢共同项，也不能union借另一peer。无单对象参数的discovery保原generic准备语义；旧无typed事实继续unknown，不回填旧事件。
+
+**旧Run不裁掉。** 新增具名 `GET /v1/runs/{run_id}/display`，仅这个Run的有限展示read view。既有 `/runs/{id}/events` 是Redis执行事件，`/sessions/{id}/events` 是不可变Chat source；都不适合在每次poll扫描checkpoint或更改源digest，Billing evidence/prepared也不挪作展示。新口复用现service bearer、可信ExecutionIdentity及 `get_request_scoped` 的tenant／稳定subject namespace准入，不受理自报thread／checkpoint／args选择器。优先原安全Chat已有展示；旧缺省时仅只读恢复exact Run的原生checkpoint。原 `metadata.kokoro_run_id`＋可信thread＋loader后channel版本／expected path绑定必须同时成立；tool仅在该Run journal IDs、原safe activity、原真实工具声明与virtual来源可证时提取单个path。journal本身无args，不能从result猜；普通workspace来源缺证则省略。本旧例name/path可据已验证值恢复，numeric revision缺证继续缺省，不拿frontmatter metadata.version或目录当前值补。
+
+**原生恢复与界限。** messages采用DeepAgents `DeepAgentState` 的原生DeltaChannel；零messages blob不是丢失证明。只调用部署锁定native saver的exact `aget_tuple`；Skill依据exactRun的新loader channel version恢复。旧tool仅考虑同Run typed pending writes中的直接AIMessage工具调用，再交原journal IDs与首safe activity，无法证明就缺省；不重建messages Delta、不调用session history、不自行解码delta、不build／execute graph、不启动模型或重派工具；session累计messages还须与本Run journal IDs取交集，不能只凭checkpoint属Run就公开整段历史。SQL先限定同Run、parent已知且loader metadata新版本，并按version选必要原checkpoint；读取至多32个相关checkpoint locator／8MiB累计native输入、16条Skill／128条tool path、UTF8响应1MiB；5秒总deadline涵盖连接至编码，超界／损坏／超时按503而非截断或假空。现HTTP threaded transport的disconnect限制不伪称新增端到端取消能力；内部取消／deadline关闭自有连接。合法无可恢复字段返回空展示清单仅表示unknown，不改变原活动／选择／未读事实。
+
+**落点及交付。** 新read职责在 `application/run_display.py`、`infrastructure/checkpoint_display.py`、`interfaces/http/run_display.py`；仅在现server加具名dispatch，ingress复用scoped准入。未来metadata接线限现 `skills/middleware.py`、`agent_factory.py`、`execution/events.py`、`domain/chat/projection.py` 与原progress sink的本地类型，必要原Run/Chat窄读取补具名batch，不建通用checkpoint浏览器。正规HTTP8.3／provenance及完整8.2父逆证先交BFF、再App；reader-first，不回填event、不放宽匿名Share。无新表、cache、全局状态中心或worker网络协议。Root未核本节前只改三设计面，不写业务；测试须含原生Delta无blob旧Run、同名／跨Run、缺revision、safe路径与source bytes不变。
+
+## 2026-10-27 具体动作对象 D0（HTTP8.2 候选，Root 已核；实施中）
+
+**Owner／基线。** Agent 唯一拥有执行事实及其安全 Chat 投影；BFF 拥有 AG-UI／匿名 Share，App 只呈现受信字段。本门绑定干净源码 `38c294d38cf05149c320622f52490f82fb1fff91`、HTTP8.1.0，OpenAPI SHA256 `1642829ccf5364692051e836938ef33b36cffeca25f2b7766ad95cd44a1542c9`、provenance SHA256 `879695cfacd55014b9f6a28e3138d88bc009ba9d46acfac27497a26f0025acad`；本门Root已核，候选已沿原装配／安全Chat接线，机器8.2与原生成链进入本地验证；未启正常资源或宣称发行。后文“不公开路径／名称”的旧切片描述仍适用其原版本，不覆盖本门唯一受限增量。
+
+**唯一增量。** 现 tool activity 增 optional、闭合 `display_detail={kind:"file"|"mcp_tool",name:string}`；无 null、自由 title 或其它键。name 为 1–120 Unicode scalar、最多480 UTF-8 bytes，原值必须 NFC，拒控制字符、Unicode Cf 与孤立代理；不截断、不 trim／改名。file 仅用于 read／write／deliver 的 basename，mcp_tool 仅用于 describe 精确单目标／call；其它类别、分支及无证明来源一律 absent。详情仅面向用户自己 Run 内本已可见的文件名／owner 公开声明；不进入匿名 Share，BFF 后继须在既有 Share 投影／快照和发行验收锁住此门，不能因 activity 可见就扩大分享权限。
+
+**来源及路径域。** 现 `tools/toolset.py::mounted_display_codes` 对真实官方 ToolNode、原对象 identity、保留名和锁定 ReadFileSchema／WriteFileSchema 的证明继续唯一；只从该绑定 schema 的 `file_path`，或现 delivery 分支实际创建且挂载的 DeliverArgs.`path` 定向严格校验。schema 证明字段语义，不把模型字符串变成可信标题；content／title／note／result／description 永不参与。原路径先限4096 UTF-8 bytes并拒控制／Cf／孤立代理、非NFC、反斜线、Windows drive／UNC、URL、`~`、去掉唯一根分隔符后的空／`.`／`..` 段及路径逃逸；仅接受合法相对路径或本次构造已证明的公共虚拟根。实码 `sandbox/backend.py` 的 local_shell 与 `sandbox/docker_backend.py` 文件面均 `virtual_mode=True`，文件工具公共虚拟根实际为 `/`，如 `/report.md`；Docker `/workspace` 仅是 execute 的容器 mount，不能据此剥前缀。`agent_factory.py::_with_native_skills` 的 StateBackend 是图内虚拟文件，不是宿主根；可在已核该构造时承接同 `/` 域。CompositeBackend 另挂 `/.skills/` 只读来源；仅本次真实声明并挂载的TypedSkillBackend可承接其安全basename，不推断“加载某技能”或拼技能显示名。Toolset可信绑定可携带上述有限source policy，由实际owner构造／对象证明生成，不按外部自报bool、backend字符串或宿主真实root授予；custom／e2b等未证明公共文件面默认省略detail（含相对输入），不影响执行。即使已证虚拟根，宿主风格 `/Users/`、`/home/`、`/private/`、`/etc/`、`/proc/`、`/sys/`、`/var/` 等路径仍不发布详情；相对形式也核各段敏感目录和凭据文件。所有拒绝仅影响 detail，不改工具的路径／schema／权限或执行结果。
+
+**敏感投影。** 拒 `.ssh`／`.aws`／`.gnupg` 等凭据目录、`.env` 及其变体、私钥／credential／token／secret 文件名，以及可识别 bearer／JWT／API-key／private-key 形态；对原路径各段和最终 basename 均检查，命中整项 omit，错误／日志不附原值。文件只输出 basename，永不输出目录、宿主绝对路径、内容或其他参数；MCP 名只取下述 owner 公开声明并同样有界校验。规则只剔除已知敏感形态，不保证识别任意未知秘密；名称语义仍可能携敏感内容，此残余边界靠限定本人已可见对象／公开声明与匿名 Share 排除收敛，不宣称正则万能，不扫描环境或建立 secret 缓存。
+
+**MCP 最小接线。** `clients/mcp_runtime.py::_binding` 现已核 Connection／Connector／Server、声明 digest、selector／scopes；真实公开名是匹配 `McpCapabilitySummary.display_name`，不是远端 SDK McpTool.description。让现 `McpClient.check` 在原 `_binding` 读取中返回窄 typed 公开声明快照，经 `resolve_declared_mcp`／既有 capabilities／Toolset／AgentHandle 传递，只按内部 `(connection_id,selector)` exact 定位；零新增 owner 请求，不新增发现调用或全局缓存。raw server／tool 只定位已绑定且匹配的声明，不原样公开、不回退 description／selector／result；空／歧义／无公开名则 absent。现 ProcessToolbox.source_bindings 仅证明 web_search／web_fetch 来源键，没有额外 MCP 人类标签。公开快照只授展示，不授执行资格；原 call 的当前授权、Acquire、schema、grant、SDK、deadline 和 unknown 恢复完整不变。Swarm 共同绑定交集需比较 code、详情策略及匹配声明，不能同名借另一 peer 的来源。
+
+**稳定性及恢复。** 首次 invoked 冻结同调用 `(segment_id,tool_id)` 的 code 与 detail presence／value；returned 没有 args，只复用，不从 result 补全；原真实 status／opaque ID／顺序保持。cache miss 先由现 ChatRepository 具名只读方法，按 trusted tenant／namespace／session／run 与相同 opaque activity_id，读取安全 Chat 首条 tool activity（source_index ASC、LIMIT1）；有旧事实则冻结原 code 和原 detail（含 absent），不按新绑定回填。没有原事实的 returned 只用受信类别并省略详情；新 invoked 才按当前已证明绑定生成。读取失败／损坏与“无行”区分，沿现 ProgressPersistenceError／取消关闭连接，不因超时当作无历史重算。现 PK `(tenant_id,namespace,run_id,source_index)` 支持 exact Run 范围和顺序；activity_id 在 payload 内过滤、无专门索引，LIMIT1 不等于常数扫描成本，现connect_pg／SQL helper没有内建总deadline，本门给该具名读取至多2秒总deadline、零自动重试（Root已核的局部读取界，不是既有能力或性能承诺），隔离真实PG验证范围／取消／大Run成本。详情留原 chat_event.payload_json；无DDL／新表／索引／日志／journal字段，不读私有 journal／result／Redis raw 参数回填，不增checkpoint state或重派工具。原 lease／recipe、取消、审批、journal succeeded／failed 重播及 started unknown 保持。
+
+**精确写区及生成。** 本门已核；候选业务沿现 `src/kokoro_agent/domain/chat/projection.py`、`domain/chat/repositories.py`、`infrastructure/postgres_chat_repository.py`、`tools/toolset.py`、`clients/mcp.py`、`clients/mcp_runtime.py`、`agent_factory.py`、`execution/events.py`、`execution/run_agent.py`、`worker/supervisor_execution.py`；原capabilities传递仅扩现 `agent_factory.py::_ResolvedCapabilities`，不新建容器文件。`mcp/tools.py`、`execution/runtime_profile_plan.py` 只在原声明／装配一致性确有需要时窄改。机器为 `contract/openapi/v1/openapi.json`、`src/kokoro_agent/chat_contract_check.py`、`src/kokoro_agent/contract_check.py`；沿原 `scripts/generate_failure_models.py` 正规派生 `src/kokoro_agent/protocol/run_failure_generated.py` 和 `contract/provenance.json`，failure业务tuple不变。`src/kokoro_agent/execution_proof_contract.py` 与现proof／MCP selection测试仅同步 current HTTP pin，proof2／usage／selection语义不变。不改canonical SQL Schema、Redis执行wire、依赖／lock或SDK；无新生产文件时不扩manifest，现源码摘要自然进入原recipe，旧已派发Run不改recipe。
+
+**验收／发行。** 先在现 toolset／factory、chat projection／emitter、MCP managed-client／tools、tool journal、invoke／supervisor测试建立具体名缺失与安全边界RED；再测真实schema／实际挂载、同名／metadata伪造、4096bytes路径界、120scalar／480bytes名称界、NFC／Cc／Cf／代理、敏感路径／canary整项omit、MCP exact声明及零额外请求、三状态同对象、Swarm／Run隔离。现 `tests/contract/test_machine_contract.py`、`test_chat_response_envelopes.py` 核闭合union与旧absent；真实恢复沿 `tests/integration/database/test_run_outbox_filter.py`、`test_run_interaction_transactions.py` 核durable首条／重建emitter／returned、旧bytes不变、失租／超时／取消与journal不重派，资源由Root另授。HTTP8.2唯一逆去detail/schema和版本必须还原完整8.1原bytes/SHA，保8.1→8.0及更早父证明；BFF固定owner commit/version/OpenAPI及provenance SHA正规生成，App固定BFF后继，live／compact snapshot／ordered parts同值。旧严格reader会拒新增字段，先部署配对reader再准入producer；新详情持久后回退producer仍保可读新旧历史的reader，不删改／回填旧事件。全部focused／格式lint／typecheck／contract／pure unit与contract／分发及独立资源门须实际运行后分别报Root；真实PG由Root另授，本D0不冒充已验。
+
+## 原生写文件与交付文件的安全展示类别
+
+**边界与基线。** 本片沿既有 Agent 安全 Chat 投影扩展两个受信工具类别；不改变工具执行、授权、journal／receipt、取消、lease、opaque ID 或数据 Schema。本片父机器 HTTP 为 8.0.0，OpenAPI SHA256 为 `93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff`，provenance SHA256 为 `4333d87e7f2199d549afb1c3334bebf17af99682bcbc093e9b2bba204982570f`。现 `mounted_display_codes` 只给原生 read_file 分类，delivery 装配没有展示绑定，因此真实 write_file／deliver 都投影为 tool.execution；BFF／App 未遗漏一个已有的更具体公开字段。
+
+**唯一增量。** 本片 HTTP 后继为 8.1.0，仅在 ChatActivity 的 tool 分支 display_code 原七值后追加 `tool.file.write`、`tool.file.deliver`。这是需配对部署的输出闭集扩展，不因采用 minor 编号就声称旧严格 reader 能接受新值。原字段、状态、顺序、其它分支与全部请求不变；没有 filename、路径、参数、内容、任意标题或结果字段。成果文件名继续属于已有 Artifact 卡片，不在 activity 上推断关联。
+
+**来源证明。** 原生 write_file 沿现 read_file 方式，在真实构造后的官方 ToolNode.tools_by_name 核实际挂载对象、保留名碰撞边界及锁定 SDK 的 WriteFileSchema 身份；缺节点、伪节点、错误 schema 或缺来源证明不升级类别。deliver 仅在现 delivery 来源分支为实际 `_deliver_tool` 创建的对象加入 `display_bindings`，继续由现对象 identity 检查证明真实挂载。调用名只定位该受信定义；同名任意工具、metadata、description、args／result 不授类别，不新增 executor 或另一展示 registry。AgentHandle／Swarm 的共同绑定交集、RunEmitter 的调用身份与类别一致性围栏原样承接。
+
+**发行与历史。** 唯一 canonical OpenAPI → 原 failure generator 更新源摘要／provenance → BFF 固定 owner commit、8.1.0 与两个原件 SHA，正规生成并发布同闭集 public 后继 → App 固定 BFF 后继并本地化。BFF／App 的写入和正常激活由各 owner／Root 后继承担。原 tool.execution 历史保持原值，不回填、不重派；未知公开类别仍拒绝。新值写入后，回滚 producer 不意味着旧 reader 能读取新历史，恢复时保留已配对 reader。
+
+**精确拟写区。** 设计为本文件及 `docs/API_CONTRACT.md`；机器为 `contract/openapi/v1/openapi.json`、`src/kokoro_agent/chat_contract_check.py`、`src/kokoro_agent/contract_check.py`，正规派生为 `contract/provenance.json`、`src/kokoro_agent/protocol/run_failure_generated.py`；业务只改 `src/kokoro_agent/domain/chat/projection.py`、`src/kokoro_agent/tools/toolset.py`。回归沿 `tests/unit/tools/test_toolset.py`、`tests/unit/chat/test_emitter.py`、`tests/unit/chat/test_projection.py`、`tests/contract/test_machine_contract.py`、`tests/contract/test_chat_response_envelopes.py` 的相关现有覆盖追加。必要发行闭包另含 `src/kokoro_agent/execution_proof_contract.py`、`tests/contract/test_execution_proof_jwks_http.py`、`tests/contract/test_mcp_selection_contract.py` 的 current HTTP 版本核验；proof2／selection 语义及父摘要不变。实际 Factory 覆盖另在 `tests/unit/agents/test_factory.py` 承接新增 write 类别与原无 delivery／Swarm 来源边界，不改 factory 业务。必要索引只更新相邻现有 INDEX；不触 BFF／App、lockfile、SQL、协议事件或任务外源文件。
+
+**验证。** 先建立缺类别的行为 RED，再证明真实原生 WriteFileSchema／实际 deliver 挂载、同名／伪节点拒绝、缺 delivery 不造类别；新类别 running／completed／failed 同调用身份稳定，路径／内容 secret canary 不进 Chat payload。当前 8.1.0 只逆去两个新增值并还原版本后，必须逐字得到完整 8.0.0 原 SHA；原 8.0.0 → 7.4.0 及更早父证明保留，不以局部字段比较代替完整父图。生成 Failure 的业务 tuple 逐字不变，仅源摘要更新。focused、格式／lint／类型、contract、默认测试和分发构建的实际结果分别交 Root 复核；不启动正常服务、SQL 或模型。
+
+## 2026-10-26 安全工具展示语义（历史设计：Agent8）
+
+**基线与 owner。** 正常 producer 与本次可维护 checkout 均为 `83e9e36efeb8086074648ea9d5bd9a3bea43d5cd`，本仓 HTTP7.4 原件 SHA256 为 `7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad`。`domain/chat/projection.py` 当前把普通工具压成 `tool.execution`、opaque activity/segment ID 和真实状态；BFF/App 没有收到被遗漏的具体语义。Agent 仍唯一拥有执行事实与安全 Chat 投影，BFF 拥有 durable AG-UI，App 只本地化呈现。本片仅补工具定义的安全类别，不读取模型原文推断意图，不改执行、授权或计费结果。
+
+**实施状态。** Root 已复核本门；候选以实际 `get_graph().nodes["tools"].data` 的官方 `ToolNode.tools_by_name` 获取原挂载对象。自有 MCP/Web 绑定逐对象 identity 核对，官方 read_file 另核原 native 来源/保留名边界与 SDK ReadFileSchema；缺失或伪节点不升级类别，不创建第二 read_file。`AgentHandle` 保存不可变 code tuple，现 invoke 在启动前绑定到原 RunEmitter，emitter 只把受信类别传给纯 Chat 投影；Swarm 只承接各 peer 都已证明且相同的绑定，避免按重名借用其他 peer。当前仅 SDK 构造/测试证据，不是正常模型或工具执行验收；尚未提交发行、配对 BFF/App 或启正常源。
+
+**采用的最小链路。** 在现工具装配边界，从真实挂载对象及其已验证来源建立不可变的闭集展示绑定，经 `AgentHandle`、现 invoke/pump/emitter 的请求内可信上下文交给 `project_chat_fact`。不向 Redis `ToolInvokedPayload`/`ToolReturnedPayload` 加字段，不让模型参数、工具返回值或任意 `BaseTool.metadata` 自报公开类别；不复制 SDK 工具选择/路由算法，不补第二 executor、遥测总线、缓存或事实表。普通调用名只允许定位该已验证的定义绑定，禁止按字符串/正则/description 猜类别。已注册但不在本片语义集的工具及缺少受信来源证明的工具继续使用 `tool.execution`；未知公开 code 则是契约错误，不转通用成功。
+
+| 受信定义/来源 | 固定 `display_code` | 语义边界 |
+| --- | --- | --- |
+| 自有 `make_mcp_tools` 实际创建的 list/describe/call 三对象 | `tool.mcp.discover`、`tool.mcp.describe`、`tool.mcp.call` | 仅固定 wrapper 的能力类别；不公开远端 server/tool 名、Connection、schema、参数或结果，不声称某次发现/调用成功。 |
+| 自有 web_search/web_fetch 构造器及 `ProcessToolbox.source_bindings` 的对象身份 | `tool.web.search`、`tool.web.fetch` | 不公开 query、URL、网页标题/正文或 provider；不解析自述生成标题。 |
+| 已批准锁定 native 来源中实际注册的官方 read_file 工具 | `tool.file.read` | 在真实挂载工具边界核对象与封闭 native 来源，不因任意同名对象/stream name 就授类别；不改或重建官方文件工具。 |
+| 其余/历史通用工具 | `tool.execution` | 不发明更具体的行为。 |
+
+**Skills 的真实边界。** 本仓没有独立 Skill-read 工具；实际链是官方 read_file → 原 `CompositeBackend` → `TypedSkillBackend.aread`。因此本片一律只声明“读取文件”，覆盖 Skill 文件读取而不把其他文件冒作 Skill；既有 `activity=skill` 的真实 preflight 及其 phase 原样保留。不得按 `/.skills/` 参数、文件名、SKILL.md 内容或 raw payload 猜 `tool.skill.read`。官方 read_file 的实际挂载来源与稳定绑定须有原生构造正控；若既有公开 SDK 边界不足以取得该证明，先交 Root 裁决，不以私有 SDK introspection、patch 或名称表代替。
+
+**稳定性与失败恢复。** 同 Run 冻结的实际工具定义决定同一 call 的类别；running/completed/failed 沿原执行事实，开始/结束不得改类、串 call 或跨 peer 借绑定。绑定实现沿既有 recipe/source digest 自然冻结，不新增可编辑 recipe 镜像；resume/重启仍受原 recipe/lease/tenant/主体/工具 journal 围栏约束，不能借分类恢复重做工具。取消、HITL、未知外部效果及迟到事件沿原语义，无合成完成/失败。只有本请求内已验证的类别能进入安全 Chat；name、args、result、error、description、路径、秘密、标题、phase 与时长均不新增公开字段。旧 generic 活动保持原 bytes/digest 和原类别，不回填、不从私有事件反推 R6、不重派旧 Run。
+
+**本次写区（Root 已复核；只改实际需要的路径）。** 下列均相对本仓；列出允许的精确落点，不要求无差别修改：
+
+- 定义/装配：`src/kokoro_agent/tools/toolset.py`、`tools/toolbox.py`、`mcp/tools.py`、`tools/web_search.py`、`tools/web_fetch.py`、`agents/native_profile.py`、`agent_factory.py`。工具来源校验与有限 code 定义留在现职责内，不新增通用注册框架或依赖。
+- 可信上下文/投影：同一源码根下 `execution/protocols.py`、`execution/run_agent.py`、`execution/publish_agent_events.py`、`execution/events.py`、`domain/chat/projection.py`、`worker/supervisor_context.py`、`worker/supervisor_execution.py`；保持原 Redis payload、存储与业务状态机。`execution/runtime_profile_plan.py` 仅在绑定/实际装配一致性需要时窄改，不能放宽 recipe 验证。
+- 机器/生成：`contract/openapi/v1/openapi.json`、`contract/provenance.json`、`src/kokoro_agent/contract_check.py`、`src/kokoro_agent/chat_contract_check.py`；现 `scripts/generate_failure_models.py` 正规生成 `src/kokoro_agent/protocol/run_failure_generated.py` 与 provenance，保原 failure/proof/usage/其它 owner 契约语义。没有新源文件时不改 source inventory、包资产、`pyproject.toml` 或 lock。
+- 行为/机器回归：`tests/unit/tools/test_toolset.py`、`tests/unit/agents/test_factory.py`、`tests/unit/agents/test_native_profile.py`、`tests/unit/execution/test_runtime_profile_plan.py`、`tests/unit/execution/test_invoke.py`、`tests/unit/execution/test_supervisor.py`、`tests/unit/chat/test_emitter.py`、`tests/unit/chat/test_projection.py`、`tests/contract/test_public_contract.py`、`tests/contract/test_machine_contract.py`、`tests/contract/test_chat_response_envelopes.py`。真实持久/replay 独有风险复用 `tests/integration/database/test_run_outbox_filter.py`、`tests/integration/database/test_run_interaction_transactions.py`，资源由 Root 另授，不在文档门启动。
+
+**发行与验证。** Agent8.0 先发布唯一 OpenAPI/provenance 与新旧完整父证明；BFF 再固定精确 commit/digest 正规生成，发布 Public28 的同一 code 闭集，App 固定 BFF artifact 后统一消费 live、compact snapshot 与 ordered parts。现 Agent7.4/BFF27 的严格 decoder 不接新 code，故不能先正常启新 producer。定向测试先证明六类真实构造/挂载来源、同名伪对象/未挂载/未知来源负控、同 call 状态一致、跨 Run/peer 隔离、秘密零公开、旧 generic、取消/恢复/replay；再运行本 owner Ruff/Pyright/contract/generator/pytest/build 等相关完整门，资源与浏览器证据由 Root 单独完成。设计稿或本地候选测试不等于正常运行验收。
+
+**激活/回滚。** Root 独占正常资源、成套版本、排空/切换与 Git。保持正常 `83e9` 和既有持久事件不动；本 writer 不操作 normal producer、模型、外部工具、数据库或服务。运行切换须先具备可读新旧 code 的 BFF/App，再准入 Agent8 新 Run；不迁移已派发 Run 的 frozen recipe。新 code 一旦持久化，先停新 producer/派发并保留能够读取 Agent8/BFF28 事实的消费者，再处理恢复；不能直接降回只认 generic 的旧 reader，也不能删改事件“回滚”。没有新 code 落库的阶段才可成套回退旧组合。具体正常切换与恢复操作另由 Root 授权。
+
+## 2026-10-25 Personal MCP SSE 固定消费者（候选已实施，尚未正常激活）
+
+**来源与边界。** 固定 Platform 正式本地交付 `8cfead647856ef54ec851a3bebe169a3ca14d212` 的 Runtime1.5 与 personal-SSE profile；owner 仍拥有当前连接／授权／材料，Agent 只消费 typed `sse` 新 case、执行官方 SDK 会话。Browser/BFF 只运输 exact Connection ID，不由 Prepare 成功推断 Agent 已可运行。不新增 RPC、权限、Schema、依赖、工具或协议框架，不开放个人任意 STDIO／SSE 项目发布。原 Streamable HTTP、受管包 STDIO、两 operation/E2/request-binding-v3、当前 Run/lease/selector/grant/原参数字节及工具 journal 不变；原 30 秒总上下文与 resolution/material/grant 最小到期时间不延长。
+
+**最小落点。** 现 `clients/mcp_runtime.py` 显式绑定 owner enum 的 STDIO／STREAMABLE_HTTP／SSE_COMPAT 到同名 `stdio`／`streamable_http`／`sse` resolution；现 `mcp/managed_session.py` 核 resolution 与 credential 同 typed case、reference SHA／unknown 字段／最小 expiry，再接官方 `SSEConnection`。新具名局部 `mcp/sse_transport.py` 只拥有本片的 SDK factory、SSE 字节／endpoint guard 与上下文日志净化；复用现 egress 的全 DNS 集合资格、选中 IP pin、原 Host/TLS SNI、无 redirect／环境代理，不在原 HTTP 路径塞 SSE 逻辑。SDK 继续拥有 initialize／JSON-RPC id／tools 与 TaskGroup；guard 不派发 RPC、不合成结果、不建第二会话状态。新可执行文件进入现 `execution/runtime_profile_sources.py` 有限清单，旧 recipe/已派发 Run 不重写或重派。
+
+**有界协议与压缩。** 广告 endpoint 的原数据及解析后的完整 URL（含临时 query）各限 8,192 UTF-8 bytes；只允许 canonical endpoint 的精确 scheme/host/有效 port，拒 userinfo、fragment（含空 `#`）、控制字符／反斜线、跨源与降级。临时 query 只在当前会话内存，不回写配置、state、journal 或日志。局部流 guard 在 SDK 消费 endpoint 前检查有界事件帧，保持原字节和事件顺序；不替代官方消息 parser。会话 GET SSE 流累计上限 4,194,304 bytes，每个 POST ACK 单独同上限，覆盖头／流／EOF／关闭且不重置原绝对期限；202 ACK 只 drain，不当工具结果。
+
+SDK factory 仅在原已校验 header 中**没有** `accept-encoding` 时增加协议默认 `identity`；已有配置值原样保留（大小写按原 header 规则归一），不默默覆盖 secret Header，也不新增其请求值禁用规则。GET 和 POST 响应在 transport 原始 headers/stream 层只接受缺省或单一 `Content-Encoding: identity`，其它编码明确拒绝并关闭，**无通用解压器／解压回退**。接受 identity 后压缩前后表述体字节相同，再作上述硬计数，不能仅以较小压缩 wire 计数冒解码后上限。配置值要求 gzip 而服务确实返回 gzip 时按本片边界失败，不改配置、不重连／重派；已发 POST 后失败不证明无副作用，原 journal unknown/failed 恢复规则保持。
+
+**只作用本 SSE 的日志边界。** 锁定 SDK 会在 MCP 来源及 HTTPX/httpcore I/O 记录完整 URL／校验异常：`mcp.client.sse` 用具名 logger，但 `mcp/shared/session.py` 直接用 root logging，`mcp/client/session.py` 用名为 `client` 的 logger；仅按 `record.name` 的 `mcp.*` 判定会遗漏。安全错误包装并不足够。局部实现用 ContextVar 分离本 SSE 会话 scope 与该 factory 的 request/body-read/close scope；过滤／净化挂到实际生产 task 的输出 handler（含测试 caplog handler），不能仅挂父 logger 假覆盖子 logger；若存在 QueueHandler，必须在生产 task 尚持 ContextVar 的 enqueue handler 前完成净化，不能等 listener 线程再取 scope。只在匹配 scope＋来源时把 record 变为闭合安全阶段，保原 level/source；移除 URL/query/header/原消息参数、exception/缓存 traceback 字段，不吞业务异常或日志记录。MCP 以锁定模块来源的 `record.pathname` 资格覆盖实际 `mcp.*`、root/client 命名及 shared/session／TaskGroup 错误路径，不解析原消息来猜来源；HTTPX/httpcore 仅本 factory I/O 净化，其它 root/client 来源、非 SSE／其它并发 HTTP 原日志不变。handler 挂载只管理自身 filter 的并发引用，不改全局级别、RecordFactory、SDK 源或通用日志配置；若实际需要这些越界机制先另报。子任务 teardown 和连接／stream 关闭完成后才清 context／释放自身 filter；cancel/HITL/失败也清 secret bytes、SDK header dict 与临时 URL 引用，不宣称 Python immutable bytes 可物理擦零。
+
+**固定 artifact 与证明。** 本片起始 Agent pin 是 `c3decfdc0910d1f9ddd992b90629d9ce3350b1b6`／Runtime1.1，而非1.4。其 runtime Proto／TS／请求 binding／RPC input／vectors 与 producer1.4父字节相同，但 descriptor 依赖图不同；1.5→1.4 的完整逆证不冒称已恢复原1.1全图。后继从上述正式 Git 对象固定完整 Proto、runtime7源、descriptor/generated 与 provenance，沿现 generator 正规生成／check，current-pin 断言更新到真实新发行；旧 operation24、service-auth、package-profile、请求向量／历史证明保持，缺失的必要父闭包单独列明再接。无手改 generated、浮动 sibling 读取或运行双 reader。
+
+**后继验收。** 先真实 RED 再 typed case／官方 SSE loopback GREEN：exact id/材料同 case、槽与 secret、wrong case/unknown/expiry/撤权、202 ACK、有界 URL/query／流／ACK、非 identity 响应、原 deadline、DNS/IP pin／redirect／TLS、cancel/HITL/teardown。最终 handler 输出和 caplog 同时核 `mcp.*` 校验／TaskGroup 与 HTTPX/httpcore 的 secret canary 零泄漏、safe phase/level 保留，另一并发 HTTP 正控未改变；不能用父 logger Filter 或关闭日志假绿。原 HTTP／受管 STDIO SDK、两 op/v3 vectors、工具 journal single-call/replay/unknown 正控完整保留。原 worker 仅 `basicConfig(INFO)`；锁定 SDK 的离线 import／handler 拓扑 probe 观察 root StreamHandler、相关 logger propagate=true／无自身 handler、无 QueueHandler（不是正常进程内存探测）。本段记录设计门要求；候选业务与正规生成已实施，实际 handler/caplog、QueueHandler 及其余门结果绑定最终冻结收据，真实正常链未执行。
+
+候选另承接锁定SDK会吞POST异常的边界：仅已观测本会话transport失败置latch，managed正常退出前核验；GET exact-id结果先到或后到均不把已拒绝的压缩／超界ACK冒成功。未观察完成的合法ACK、普通close、取消／HITL不置失败、不重派；官方SDK实际loopback与先后序负控证据由最终候选收据绑定。
+
+**日志入场。** SSE进入SDK前要求root已有实际handler；未配置时静态失败且零SDK/网络调用，不触发basicConfig、不添加占位handler。这样不依赖可能被level抑制的info/debug记录来发现懒创建sink。保actual lastResort及现handler的本filter并发lease；原worker/main.py在asyncio.run(serve)前已basicConfig，HTTP入口不执行MCP。会话期间由其它组件整体重配logging不在本片支持范围；没有动态全局logging监控、root父filter或stdlib patch。
+
+## 2026-10-25 原生摘要消息投影边界
+DeepAgents 的原生摘要在同一 `model` 节点内调用，现 publisher 仅按 node 的保护不足以区分；锁定 LangGraph v3 的 messages transformer 不把 `lc_source` 传至 typed model stream。唯一 summary adapter 已识别 `metadata.lc_source=summarization` 并绑定独立 `call_kind`，故在此复制原 config、保留 tags/metadata/callback，再追加公开常量 `TAG_NOSTREAM`。SDK messages handler 只跳过该摘要调用的消息投影；不关闭 provider 流、不删除 usage callback，不影响 capsule/预算/ACK/原生状态或工具过程。普通回答与子代理回答仍走既有 publisher，不以内容判断可见性；恢复/失败/取消保持原边界，不回填历史投影。
+
+## 2026-10-25 SDK send 安全cause诊断
+
+私有cause诊断只落既有 `model/call_runtime.py` 的handler异常边界；真实SDK类型与真实DNS/TLS证书及SSL、OS拒绝/重置/中止连接、RuntimeError、HTTPX网络/超时/协议类型使用固定白名单，显式cause链最多4层、防环，未见根或未支持类型保unknown。只写闭合枚举及本地call/attempt UUID，不输出异常原文、请求/响应、URL/headers、traceback或任意动态类型名；telemetry失败吞回诊断边界，原API primary、denial还原、seal与secondary pending、资金hold、派发次数、零重试及原生summary行为不变。不建helper模块/协议/持久模型，不由类别自动恢复或重派。
+
+## 2026-10-25 SDK 连接失败的安全分类
+
+在既有 `execution/failures.py` 安全归码边界，以真实 SDK `APIConnectionError`／`APITimeoutError` 的类型判断输出既有 `model_unavailable/false`，即使 assembly supplied default 也保留该分类；不按类名或文字猜测，不公开原异常。仅修正失败表达，不改变 API 主异常与 secondary settlement 的优先级、pending ACK／hold、single-dispatch、零自动重试、历史终态或 preflight/start。底层连接子因仍未证明，本片不声明外部供应商恢复可用。
+
+## 2026-10-25 原生摘要结果的最小持久恢复（设计门，未实施）
+
+**范围/基线。** 候选 HEAD `8639d99078d6ca53863462ee8e7459983afd8c57` 上的 summary adapter/原生 guard 正在独立收口；本节只裁决该后继的最小持久结果，不表示源码、SQL、真实 PostgreSQL 崩溃恢复或正常服务已经通过。DeepAgents 0.6.6 的自动摘要先独立 `ainvoke`，再调用普通模型，后者返回后才产生 `_summarization_event`；现成功摘要的 usage/金融 ACK 可先于 graph checkpoint 提交，但 journal 没有摘要正文，因此原恢复正确停止且不重付，尚非可续跑。只承接已有 Agent model-call owner，不建第二 graph/state、后台摘要服务、通用响应缓存或新的系统权限。
+
+**取舍/数据归属。** 在现 `kokoro_agent_model_call_attempt` 增 nullable `summary_result_bytes` / `summary_result_digest`，具体约束见 DATA_MODEL 本节。复用原 Run→Attempt 锁序、DB 时间、首次 revision1 usage seal 事务、金融 reconciler 和原生 helper。现 StateBackend/offload 只把历史排入 native channel，持久性仍依赖 checkpoint；官方 `@task` 的 RETURN 写同样晚于被包裹的 ACK 且由框架调度持久化，单独包 task 没有关闭此窗口。PgMemoryStore 的可覆写独立事务与 tool journal 的工具/GC 语义均不成为 model-result 旁路。不改 usage2/HTTP wire、跨 owner API、Billing 定价/资金/ACK 事实；无新 API 文档或 contract。
+
+**最小 capsule。** `summary_result_bytes` 是 RFC8785 canonical UTF-8 envelope，SHA-256 由 companion digest 校验；完整 envelope 固定上限 **4,194,304 bytes**，取现 request-profile string-token 资源界且低于总请求 8,388,608 bytes。System 精确 `max_output_tokens`/`context_window` 和最终请求 profile 继续生效，不由 token 数推算字节上界。message 只保留 `{role: "assistant", content: response.text}` 的可见文本（保存未 strip 值，仍由原 helper `.text.strip()`）；不序列化完整 SDK 对象、reasoning/tool calls、usage metadata/callback、headers、credential 或原请求/prompt。超界/非法正文保持真实用量封口和资金语义，按执行失败停止，不截断、补造或重发。
+
+capsule 还绑定版本/domain、tenant/run/call/attempt、peer path、native checkpoint id/ns/task id、`call_kind=summarization`、原 recipe/planned/attempt binding/final request digest、revision1 event id/digest 与原 usage 的已报告 input/output/total 或明确 unknown。稳定 call/attempt UUIDv5 继续由现 locator 算法生成；普通 model 旧 ID 不变。只持久摘要 prompt 的 digest：覆盖送入 SDK 的实际 prompt、stop 与生效参数、调用 profile 版本；当前输入逐值核 locator/peer/recipe/planned route/参数摘要，capsule.final_request_digest 严格等原 attempt.final_request_digest，绝不为命中重跑 SDK 或重建网络请求。摘要仅回到原生 helper 的原文本位置，不变成新的 system instruction、policy、工具清单或授权；控制/身份仍取受信请求与当前 owner。
+
+**首写与一次预算。** 原 SDK 成功且 same-stream consumption/压缩完整性已验证后，在现 `seal_observation` 同 cursor 事务内同时写 revision1 usage/head、两列 capsule 与摘要已报告 total 对现 `Run.token_total` 的一次增量。首次 `latest_revision=0`→1 是唯一累计门；精确重播比较原 bytes/digest/绑定并返回原 receipt，零重复加法，异值冲突；事务未知先读原 attempt，不把超时视为没写。事务提交后才运行原 reconcile，只有 exact captured ACK 才释放摘要文本。原 budget 上限用持久累计判断，超限停止后继，不回滚已经真实发生的 usage/资金事实。
+
+摘要封口/恢复返回最小 typed receipt（原文本、original bindings、当前 lease 校验后的 `token_total`）；摘要 adapter 保留现 Terminal/取消检查，按已冻结 `run_token_budget` 只读核该累计，**不再套摘要的 TokenBudgetMiddleware.add_tokens**。普通 model 的既有 chain 不变，不为读累计新增通用 RunRepository.get_tokens。恢复合成 AIMessage 不带 usage_metadata、且不再次发 SDK/usage callback，不重复预算/segment 增量。`token_total` 是预算累计；原每 invoke/lease 的 callback usage segment 与 Billing evidence 是不同事实，本片不得把恢复文本构造成新的 usage segment，也不从 segment 缺口推定零用量。
+
+最低可续跑门只覆盖 **revision1 已报告 known input/output/total、完整 SDK 响应且 captured** 的摘要。missing/unreported/unknown usage 保留原 pending/unknown，金融端只沿同 event/key reconcile，不补 0、不重派。未来补证才取得 known totals 的场景，在明确“first-known evidence revision 同事务只累计一次”及真实 PG 验证前仍停止；latest ACK 后来 captured 不单独取得重播资格，不把该路径当已关闭。正文读取不改 unknown usage 或旧 bytes。
+
+**恢复/并发。** result lookup 位于 SDK/prepare/authorize/start_dispatch 之前。当前可信 RunRequest、tenant/namespace/recipe、当前 owner/generation/DB lease/非终态及取消决定读权限；旧 attempt 的 lease、authorization、dispatch、usage 和 result 原样保留，不拿新 lease 重做旧 prepare，也不授旧 dispatch 新权限。只接受同 native locator/peer/prompt/route/recipe 的原结果；缺失与损坏分开，异 digest/版本/绑定/超界一律具名失败，不降级网络 cache miss。只有 attempt 真不存在或按现状态证明未派发时，才进入原正常授权流程；已派发无 result 或旧 NULL 停止，绝不换 ID/attempt 重试。
+
+对 original revision1 结果验证原事件链，并核 latest head 全部前驱 ACK 完整、exact `admission/run/attempt/event/revision/digest` 和 `captured`；None/pending/released/错 event 或 digest 均不是完成许可。读 pending 只能调用现 reconciler，再严格重读；read 过程不持 Run 行锁做外部 I/O。持久 reader 在同一有界事务内以当前 Run 锁/fence检查取得一致快照并返回 typed receipt，释放前/交还文本前继续响应取消；失租后不交还摘要或开启后继网络。两个合法重播只读相同结果，首次 seal/重播与 terminal/接管串行于原 Run→Attempt 锁，旧 lease 拒绝写，终态不复活。
+
+**验收与明确非目标。** 原 summary 成功、主模型尚未 dispatch 时可从 exact result 继续；若主模型也已经 dispatch 且其正文尚未 checkpoint，主模型继续保持已有 fail-closed，本片不泛化为所有模型回复持久化。原 native state 已有 `_summarization_event` 时仍由 SDK 正常使用，不扫 latest capsule 强塞新 summary。需真实 PG/AsyncPostgresSaver + child kill + 新 handle/新 lease 验证：seal事务两写间回滚、commit未知、seal→金融通知、资金ACK已发生但本地未记、exact captured ACK→adapter/预算/checkpoint、并发相等/异值、失租/取消、坏 bytes/ACK/旧NULL/超界及 main 已派发负控；物理 summary 1次、token_total 1次、无第二金融效果。原图 StateBackend files/offload 与恢复正文配对验证，不能用纯 in-memory saver 冒真实崩溃证据。
+
+**实施写区/包/运维。** 后续唯一源码 writer 交接现 summary adapter/call runtime/call models/execution、现 model repository 的 seal 委派、canonical `database/schema.sql`/精确 verifier、相邻 unit/真实 PG tests；具名 pure capsule/reader 可用 `model/summary_result.py` / `infrastructure/postgres_model_summary_result.py`，不继续拉长现 repository 或建通用框架。新增可执行源码逐个入现 finite runtime-profile source manifest，并核 wheel/sdist/installed 字节。摘要正文随原 attempt/evidence 恢复/审计保留，不进日志、公开 usage/Chat/trace，不借 Chat/tool GC提前清除；删除与原 owner 生命周期同裁决，无正文副本或回填。只先审本小门，再实施 schema/source；正常库数据、进程、派发与资金无操作，旧冻结 Run 不覆盖 recipe，正常保留数据升级/回滚另走既有门。
+
+## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
+
+**基线/问题。** 当前 Agent `4bfb5cc`（运行源码8cc975e）通用 CHAT_FEATURE 的 GENERAL_AGENT.mcp 为空；AgentFactory 只消费 Feature 静态声明。BFF `674fed3` 的 mcp_servers 仅写 trace，App `f0740f3` 没有可发送的连接器选择。因此原生 ToolNode 直接调用成功，不证明普通产品聊天会挂载它。本稿承接原 AGENT-1/SKILLS-MCP-1，不另起目标；作用域问题已异步征询；本轮按最小合理默认采用当前会话草稿，不新增账号全局偏好，未把未观察的账号默认语义当 Manus 事实。
+
+**取舍与 owner。** 不把测试 Connection 固定进通用 Agent，不从 trace/名称恢复业务选择，也不默认枚举并启用整个账号。采用正式选中 Connection ID：App 呈现选择，BFF冻结用户业务输入并运输，Agent冻结/恢复执行及每次动态重验，Platform仍唯一拥有连接/授权，Storage/Billing/IAM边界不变。无需新服务、顶层模块、表或跨 owner SQL。
+
+**Agent 写区和顺序。** 唯一HTTP机器源先发行 optional selected_mcp_connection_ids，再沿现 ingress→RunRequest→dispatch/journal 的原装配链传递。AgentFactory在prepare_feature之前以不可变副本将选择加入entry Agent的已有mcp声明；稳定去重，不突变全局Feature，不将选择授予其它peer，也不接收prompt、policy、URL或工具图配置。当前通用Agent的空选择不增加Connection引用、不解析Platform MCP；保留现有恒定mcp_list_tools/mcp_describe_tool/mcp_call三工具及其空集合行为。准备后的精确refs进入原静态recipe/fingerprint；先冻结，再原resolve_declared_mcp/current proof检查及make_mcp_tools。重建/恢复只读原Run选择；连接退休、tenant/subject/scope不符按现McpClientError失败，不自动删去失效项继续执行或替换同名连接。
+
+**身份与恢复。** selected IDs是用户意图，不是授权；每次仍沿现run lease/proof/IAM/Platform gate。trace.mcp_servers即使存在也不启用任何能力。Run请求/fence、未知提交、工具journal和原授权幂等键必须一致；已发送unknown MCP不自动重发。空选择的Run序列化必须保留旧字节：使用当前锁定Pydantic原生exclude_if只省略新增空字段，不能修改旧字段、历史JSON或摘要。非空选择序列化并纳入原canonical fence；相同Run改变ID/顺序拒绝。必须先用旧真实JSON、旧fence及持久读取回归验证，不通过则停在设计面，不以重写旧数据迁就新模型。
+
+**失败/部署/验收。** body ID错误在admission前拒绝；当前资格失败在模型/工具派发前失败。新字段须由固定Agent artifact生成BFF消费者，再同步App公共pin；Agent/BFF/App完整配对前不正常激活producer。代码源hash本来参与冻结recipe，旧活跃Run的profile不可改写；切换前drain，若存在未完成恢复先沿原二进制完成，不宣称新空字段能使旧profile兼容。回退须保留可读已接纳新请求的consumer，不把旧Agent直接重载到有新非空请求的队列。真实验收走浏览器选择→正式消息→不可变Run→实际模型工具→原journal重放/产物/积分；独立真实MCP只供前置证据。
+
+## 2026-10-24 主链用量待核对的具名失败（实施中）
+
+沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。
+
+## AGENT-1：完整响应与可结算用量分开判断（2026-10-23）
+
+现观察器将 OpenRouter 的 `usage.cost` / `cost_details.upstream_inference_cost` 误判为 token 类别；同时，SSE 已完整结束但缺最终 usage 帧时抹掉有效 response.id。沿原观察器及 usage producer 修正，不新增认证、查询服务、Schema 或结算接口。
+
+- 仅识别上述已文档化的费用说明，值为非负 JSON number 或 null，cost_details 为对象或 null，未知成员及非法形状仍判 unsupported。说明字段不作为本地积分价格、用量、折扣或支付事实，不进入既有 token projection digest；缓存写入、音频及其他未支持计量仍拒绝结算。
+- SDK 消费完成、SSE `[DONE]` 且解码完整性通过后，即使无最终 usage 也保留各帧一致的有界 response.id/model；观察 status=complete 只证明传输观察结束。缺 usage 仍 unresolved/missing_usage，counts 缺失、projection_digest=null，不构造原始用量摘要，不生成零用量。
+- 编号/model 冲突、截断、无 DONE、解码尾未验证仍沿原规则拒绝采信；同 attempt 首次 seal 原子保存编号，金融 pending 阻断后续派发不变。此修复不为历史无编号调用补造凭据，不重发供应商请求。
+
+参考：[OpenRouter Usage Accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)，核对日期 2026-10-23；只用于解析已文档化响应语义，不证明当前转接网关支持补查或相同费率。验收覆盖真实 HTTPX 消费的 JSON/SSE、非法费用与未知计量、缺 usage 的编号/冲突/压缩边界，以及原 SDK→HTTP→PostgreSQL 首次封口/pending 旅程。供应商与金融 peer 证据单独标注，不冒真实扣分验收。
+
+## AGENT-1：保留同一次供应商响应编号（2026-10-23）
+
+当前正常 attempt 的缓存用量缺失，且观察器丢弃 response.id，结算异常发生在模型 checkpoint 之前，后续没有可靠查询编号。沿既有 Agent owner 修复：原物理响应观察器读取有限 ASCII id；流式各帧有 id 时必须一致，冲突或非法值不产生可查询编号。完整且解码验证通过的观察才传给现 seal_observation；编号与原 usage evidence 在同一事务写入 attempt，先封口再写编号，任一步失败全部回滚。精确重放必须匹配原编号，不因 SDK 合成 ID 或别的请求填充。
+
+写区限观察器、既有 seal 命令/执行/仓储、canonical schema/校验、相邻回归及三份设计文档。没有新服务、公开 API、依赖、执行权或 Billing 写入口；原 usage digest/费用/终态/幂等保持。此字段只是后续供应商核查的 locator，不证明用量或重新派发权限。旧原始缺失事实保持 NULL；不补造编号、不清数据。正常 schema/服务在完整数据验收与保留数据切换前保持原样。
+
+验收先复现非流式/流式编号丢失，再验证冲突、非法/缺失、截断、压缩；真实 PG 验证 seal 原子保存、失败回滚、精确重放无写与改变编号冲突，以及 fresh schema 检查。后继补查仍须核网关能力、同 attempt 绑定及 terminal 补证权限，不能把本片称为真实扣分已完成。
+
+## 2026-10-23 AUTH-1：Agent → Platform 直接服务凭据（实施中）
+
+依据 Root ADR-035 与 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的正式 agent-execution-service-auth-v1。
+在现 `clients/platform_credentials.py` 保留 owner-only、完整读取、重复字段/替换检测，改读 version/entries，
+仅消费 caller=kokoro-agent、单用途 tenant_execution、固定 tenant 的唯一记录；每请求重新读取，删除 OAuth generation/cache/single-flight。
+Worker 只配置 Platform origin、独立服务凭据文件及原 proof signer，不再配置 IAM token endpoint 或创建 OAuth HTTP pool。
+RunPlatformClient 先生成原 fresh proof，再在派发前读取当前凭据；同一总 deadline、取消和不可变 Run tenant 保持。
+原 URL 安全校验移入既有 platform_transport，与 Storage 已复用的 BoundedConnectTransport 同属传输职责，不新增通用工具层。
+
+新环境变量仅 `KOKORO_AGENT_PLATFORM_SERVICE_CREDENTIALS_FILE`，旧 client_credentials 环境和 JSON 不做兼容。
+接收端可接受多 caller 的部署总文件，Agent 私有文件只含本 caller 且每 tenant 恰一项；拒绝重复 ID/secret/tenant、其他用途和空文件。
+credential_id 是机器记录身份，不冒充 OAuth client_id；调用只发送 Bearer secret，租户和用户授权继续由原 proof/owner 判断。
+固定 auth profile 原件及 commit/digest 到现 Platform provenance/checker/安装资产；Proto、执行 operation、SQL、Run 请求与资金协议不变。
+删除 platform_tokens.py 和 OAuth 专属测试；其文件安全、轮换失效、取消/超时、tenant 隔离风险由直接读取及原传输回归承接。
+验证包括真实文件轮换/删除/不合法权限、旧配置拒绝、实际 loopback worker→Connect 零 OAuth、原 proof/租约/取消负控、contract 和完整 owner 门。
+本片未启用正常服务；须消费者与接收方配对验收后再集成，不将 peer fixture 视作真实 Platform/IAM 或产品整链。
+
+## AGENT-1：正式模型执行与同流用量（2026-10-23，本地已验；正常整链待验）
+
+沿现预算／整数结算裁决和原主线，在现final request hook按prepare→原BudgetAuthorizer→唯一start_dispatch串接，不新建服务／表／wire或用户token回程。只有newly_started=true才交还HTTPX发送；相同attempt重放不重发provider。Worker只装配一份现私钥signer／当前PG lease reader，Platform与预算按Run复用同一原proof supplier；签名描述符不再要求配置Platform token client，恢复仍无proof。原Run行锁内阻止已有未ACK／pending财务证据后的新派发，当前lease／终态／冻结身份保障保持。
+
+复用原capture_model_usage和生产ModelHttpClients的同一响应stream，不另读／回放／drain响应、不以AIMessage推测token。只映射实际reported整数／明确unreported，校验原profile、总数／子集、service_tier与压缩完整性，未知不补0；Agent不定价或取整。成功、失败、取消均先以现owner DB时钟和原attempt绑定seal，再通过原reconciler通知；取消／失租／崩溃仍由原terminal closure与Worker恢复承接，未知／超预算停止后继模型／工具，不把pending冒成功。
+
+本轮具名实际归属取可信System精确连接＋已校验最终请求和credential binding＋同一HTTP响应中一致且与声明精确匹配的reported provider model name；它表示受信提供方API声明的执行模型，不证明供应商内部硬件或未披露转发。绑定digest覆盖同attempt、final request digest、冻结revision/provider/model和reported name，不含密钥；单独response.model、目录存在或planned复制均不足。缺／混合／不同reported名、非该响应或不完整用量保actual unknown／pending，不按别名猜测，不接fallback模型集合。
+
+写区：现model runtime／factory／usage observer和具名pure producer、原model repository内DB时钟封口及派发财务guard、现worker proof／预算factory装配与finite manifest、相关真实PG／SDK原路径／Billing组合及现文档。先验证同流归一化／归属与唯一许可正负行为，再完整工程／包门与有限真实供应商、用户会话／工具／产物／积分验收；正常执行开关及数据未因文档开放。
+
+本地验收：418输入完整八门均0，默认2588 PASS／853按marker未选、927上游warning保留；原生图十向量与原授权／封口／恢复184真实PG PASS，原SDK／金融HTTP323 PASS。双claim原始拒绝被closed遮蔽的RED2FAIL已修为原denial、取消仍优先，GREEN2PASS；后继captured放行、pending／坏ACK阻断已验。实际四方恢复36检查和仓外同锁hash安装／209份runtime包字节核同通过，独审Approved；模型／usage ACK图用具名财务fixture，实际四方仅QA100／hold及release10，零真实供应商／usage扣分，不冒正常整链。首次架构门／旧credential fixture、HTTP配置子进程原3秒偶发、harness缺fixture等失败留证；不弱化原期限、断言或权限。正常数据／进程保持，本片未PR合并。
+
+## AGENT-1：Worker金融恢复装配（2026-10-23，本地已验；真实派发待接）
+
+沿原主线与abd1186c交付，在现Worker composition接同一个BFF预算pool和Agent金融repository；不新增服务／表／wire／token broker。部署显式提供BFF origin及按tenant隔离的专用机器secret快照（env-only、有限严格JSON、SecretStr，不复用System或浏览器凭据）；未配置完整时Worker启动拒绝，不保免费执行旁路。恢复不调用首次reserve／proof／provider，仍只按原requested六事实recover与原sealed event结算。
+
+恢复task归现Worker进程context，独立于Supervisor租约心跳／用户事件；每拍有界page、逐条有限reconcile，失败只记安全类型并继续，取消向下传播、先停止恢复task再关闭pool。原list_pending增加tenant/attempt键游标，扫完回绕；pending/miss/坏行不永久占首page而饿死后项，无新持久调度状态。先验配置／跨tenant／secret脱敏、分页公平及失败隔离／取消、真实PG分页与原结算恢复，再完整门与仓外包／真实隔离组合。当前finalhook仍拒绝实际派发，后继与真实usage同片解除，不以本片冒实际扣分或正常激活。
+
+本片证据：412非文档输入冻结、完整八门0，默认2569 PASS／837 marker未选，927原上游warning保留；25金融PG专项与历史／预算回归合计154 PASS／0SKIP，库94→94。实际Worker pool／恢复step→BFF／Billing及IAM隔离36检查通过：owner释放10而本地ACK前崩溃后，新Worker按原事件恢复ACK，无第二资金效果；Chat来源／签名JWKS仍具名fixture，未跑正常Supervisor用户旅程。仓外同锁hash安装及206份runtime Python在wheel／sdist逐字核同，独审Approved。缺配置与原keyset cursor／短canary错误外露均有实际RED；首缺模块setup错误、第一次红控移除语句未匹配而未真正改变baseline等日志均留证，不算业务RED。正常Schema／进程／资金不变，真实供应商／工具／usage扣分0，本片未PR合并。
+
+## AGENT-1：持久金融关联／逐事件ACK（2026-10-23，本地已验；worker装配待接）
+
+沿已验consumer与Root原16项，只在Agent现attempt追加financial_admission_ref，在现sealed evidence追加financial_ack_bytes／digest／acked_at；不建钱包、服务、重复命令ledger或用户token回程。前者是单次原预算的独立关联，不改封存authorization；后者存已验证BFF原ACK的本地canonical投递回执，不成为价格／余额事实。按event永久稳定key，原ACK全字段摘要和身份校验；相同回放零写，漂移冲突。SQL仅fresh canonical，正式旧schema启动拒绝，不自动ALTER／兼容填充；本片只自有隔离schema，不改正常数据。
+
+现历史reader提取同cursor函数供短事务复用（查询／验证语义保持）。新具名financial repository复用原attempt行锁，无Run活租约前置、无HTTP在锁内，核原冻结facts／请求事件及独立head；按revision选择最早未ACK事件，前序须完整、相邻ACK为pending才处理后继。terminal后出现新sealed财务事实不补扣／重发，保留冲突待核对；seal本身不被金融ACK阻塞。原requested_unknown只能经recover同六事实／原key取得关联，精确miss留待恢复，不当作永久无hold证明；granted关联须等原admission。
+
+有限coordinator处理一个durable事件：从PG重读→必要时recover→存关联→原event settle→存完整ACK。超时／取消／任意崩溃不造成功，不改原bytes或补执行许可；下次同key恢复。库、实际PG／提交前后及取消恢复窗口已验；worker周期扫描／finalhook与真实usage装配仍待，不以内存通知冒正常持久恢复。写区为原canonical／严格schema gate、同cursor reader提取、新financial domain／repository／coordinator及相关测试／现文档；HTTP7.2、proof2、usage2及owner pin保持。
+
+本片验证：410非文档输入冻结、完整八门均0，默认2550 PASS／836按marker未选（927上游warning不称消除）；24专项真实PG与原历史reader／预算授权回归合计153 PASS／0SKIP，库94→94。实际Agent journal/client→BFF／Billing／IAM隔离36检查通过：QA100非现金发放／hold10，Run终态与IAM停止后恢复原关联、owner释放10而本地ACK前注入崩溃，新进程同event/key取原ACK，第二次财务效果及本地ACK重放均零写，原执行／sealed核心事实不变。真实供应商／工具／usage扣分均0，Chat提交和签名JWKS仍为具名fixture，不冒正常产品旅程。codec非法Unicode先1FAIL后统一安全冲突；首组合fixture未序列化sealed_at失败已修且留证，不改生产断言／门禁。仓外同锁hash安装、原contract及205份runtime Python在wheel／sdist逐字核同通过；独立只读审查Approved，正常Schema／进程／资金不改，本片尚未PR合并。
+
+## AGENT-1：正式结算／恢复消费者（2026-10-23，本地已验）
+
+沿Root同一16项与预算／真实结算裁决，Agent现有BFF consumer固定已验5a303f2／internal1.3 Git blobs，只开放原create、recover及settle三操作。既有build-only有限编译器承接实际anyOf／allOf／const／null／not-pattern，严格保每个branch约束；生成模型不手改，不引入JSONSchema runtime或依赖。原single pool客户端共享有界单发／UTF8闭集解析／无cookie代理跳转重试／取消与清理；recover不收proof，只原六事实／原key，精确404才返回miss，不自动reserve；settle四字段body＋原admission path／key，不收proof／金额，ACK须严格核原Run／attempt／event／revision／digest及三态依赖，unknown不是成功扣分。保原首次create fresh proof／201／held原时间要求。
+
+写区：原固定发行物／compiler／官方生成及provenance、原client共享私有transport、具名settlement本地command/result与decoder、既有包／资源闭包校验、直接contract／HTTP边界回归及现文档。无新SQL／journal／服务／用户token；原usage2／proof2／Agent HTTP7.2不变。资金持久关联／逐事件ACK与worker装配是依赖本consumer的下一段，不用内存HTTP冒崩溃恢复。本段验收：先缺操作／模型RED，逐分支／金额上界／Unicode／not约束与独立owner schema oracle；三个路由真实HTTP及deadline／取消／未知／无重试；原预算与proof门不删，再完整八门、仓外安装与只读审查。
+
+## AGENT-1：结算恢复读取精确历史sealed（2026-10-22，本地已验）
+
+沿Root有效计划及已验BFF恢复，不重开Skills/MCP任务。Agent唯一拥有immutable evidence；在现read_final_evidence按tenant／attempt／event读任一已sealed修订，仍用同一受限Billing身份与端点。HTTP发行7.2仅明确历史语义，envelope／usage1历史及usage2／proof2不改；完整7.1原件精确逆证、旧7.0父门保持，消费者后继固定新artifact，不新增fallback／服务／数据。
+
+从现大repository提取具名postgres_model_call_final查询，原方法薄委派；一个MVCC语句至多取请求事件与实际head两个row，历史返回与head独立检查，不锁行／写入，不查Run活租约或授新执行权。每个row都保原canonical bytes、artifact版本／digest／seal、row事件／修订／观察时间及冻结identity/planned/authorization/prepared/dispatch绑定；实际head再核latest event/revision/digest及observed_at等于原sealed_at。历史时间不与当前head sealed_at混比；缺head／坏head明确拒绝，不静默修复。相邻successor生产规则与封口不变。
+
+本片写区：具名只读query／原委派与模型说明、HTTP canonical／provenance／正规failure生成及版本检查与完整父门、真实PG历史／损坏／终态／零写回归、现文档。先原源码PG与wire RED，再完整八门／包闭包、独立只读审查及隔离真实HTTP／PG。没有金融ACK journal／执行装配，不以本片冒真实扣分闭环；它解除中间revision被head遮住，不以金融ACK屏障阻塞业务seal。
+
+## AGENT-1：本轮预算结算的实际归属 profile（2026-10-22）
+
+规则唯一说明见[API归属profile](API_CONTRACT.md)：本轮只接受具名认证证据映射到原System
+provider/model目录ID的verified归属；证据须绑定attempt／最终请求／冻结revision，
+缺依据／其他命名空间／actual fallback保留pending，不另选价或复制planned自证。
+通用usage2未改，真正producer和错归属运行验收尚待；未因本次文档启用执行。
+
+## AGENT-1：BFF 预算消费者与持久授权恢复（2026-10-22）
+
+固定 BFF 0082b5c／internal1.1 原件，只生成 createAgentModelAdmission 的请求／回包／错误模型，
+不复制或暴露其他 BFF operation。原件 SHA、单依赖回执、确定性生成和包 audit 同步检查，
+原 Agent HTTP7.1／proof2／usage2／SQL 保持。运行时客户端不读取仓外契约、源码或用户 token。
+
+BffModelBudgetClient 由部署注入固定 origin 和按可信 tenant 取独立工作负载凭据的 callback；
+共享 HTTPX pool、逐调用 fresh credential、无 cookie／环境代理／跳转／自动重试。单次总 deadline，
+metadata＋EOF＋32KiB、strict UTF-8／原 JSON 重复键／深度、生成闭集模型和六事实／held／原时间核验；
+close 清理独立上限100ms，失败不解释为未预占，错误不外露 body／URL／proof／credential。
+
+ModelBudgetAuthorizer 仅消费已 prepare 的精确 Run／lease scope，稳定 request_ref 与 key 均为
+agent-model-admit:attempt_id。原 begin 事务先落 pending；完整 model-admit:1 tuple 摘要申请 fresh proof，
+事务外单次 BFF 预占；回包 admission_id（不是 hold_id）以原 pending digest 写 grant。
+已 granted 必须 strict canonical 核验后原 grant replay，零 proof／HTTP；newly_requested=false 不当状态。
+超时、取消、失租、未知或晚 ACK 保留现 journal／原资金，由原 fence 拒绝非法 grant；不释放、换 attempt
+或补发 provider。本片止于授权，不调用 start_dispatch；原 finalhook 的 prepare 后拒绝不变。
+CLI／worker 配置和正式派发仍待后继一次接入，不把库内能力冒正常启用，不新增服务／表／token broker。
+
+## AGENT-1：消费 proof 复用原 Run 绑定（2026-10-22）
+
+沿用户确认的内部身份方案，原 ExecutionProofSupplier 的具名 context-bound 集合增加
+`billing.credit.consume`。与三个原 Skill 读相同，从不可变 LeasedRun 快照写入 proof2 的
+identity_assertion_ref、nullable project_ref、原有序 Skills selection digest；tenant、actor、subject、
+Run、execution_session、lease generation 和具体请求摘要仍用原字段。MCP 等其他 operation 保持原样。
+
+仍逐次读取当前 DB lease、核时钟偏差／剩余有效期、生成 fresh jti 并由原私钥签名；失租和取消不签，
+不缓存、不重试、不新增 token／服务／表／协议或另一个 signer。该 supplier 可独立于 Platform token
+调用，但正常 worker 的预算客户端／装配尚未接入，不以此宣称新的生产入口已经启用。
+机器凭据证明调用服务，Run proof 证明绑定；direct-user、当前成员资格、BFF live 来源和预算权限
+仍分别由 IAM／Billing 正式校验，不把“签名成功”等同消费许可。App 不增加取用户 token 的回程。
+
+## AGENT-1：当前 prepared 快照（2026-10-22，实施设计）
+
+沿已批准的预算预占方案，在现 Agent HTTP 增加专用 Billing GET，复用现有
+`billing_model_call_reader_secret`，不新增服务、配置、表、状态机或供应商成本保证。
+读取 Agent 自有 attempt 与 Run 的同语句快照，原 canonical identity/planned/current authorization
+字节与摘要、final request 摘要、prepared_at、当前 status、DB observed_at 与 lease_expires_at。
+只有当前 usage2、未派发／未封存的 prepared、authorization_pending、authorized 可读；
+须同 tenant、Run 非终态、当前 owner/generation 等于冻结 fence 且租约在 DB 观察时未过期。
+不存在／跨租户404，合法但已失去准入时机409，持久化不变量损坏500；只读事务无行锁或写入。
+
+快照不是许可或可缓存 TTL。首次 Billing admission 还须验证 pending/requested_unknown 的原
+request_ref 和本次授权、精确模型与价格；authorized 仅核原 ACK，不产生第二笔预占。
+既有资金回执重放／对账不再依赖当前活租约读取，继续以 Billing 原永久快照和 sealed usage
+读取恢复。prepare 后固定拒绝仍保持，后继合法 Billing consumer 接入前不发送 provider 请求。
+start_dispatch 的当前 fence／取消／single-dispatch 检查不替换。本片没有资金 I/O。
+
+## AGENT-1：预算预占替代供应商成本保证前置（2026-10-22，用户已确认）
+
+本节替代R252-AGENT-BOUND-D0中“缺供应商capacity-and-usage guarantee就必须永远阻断资金正路”的前置，以及为此预建capacity-derived bound artifact/reader的强制计划。后台按业务模型配置正式价格及单次整数积分预算，Billing以预算预占；预算不是输入token计数或成本绝对上界，不从4096/256、字符数或/models推导费用。沿现System受控取钥／精确revision、现最终请求绑定和request profile、现prepare→begin/grant authorization→single dispatch CAS／严格usage2／原租约与取消屏障，补正式Billing consumer；不删除这些保护来发模型请求，不新增预算服务。
+
+结算规则已确认：同attempt已验证实际用量按冻结价格统一一次整数ceil；actual<=预算capture实际并release余量；执行或用量未知／超预算保留预占和证据进入pending_reconciliation，并停止该Run后续派发，不猜价、补0、夹到预算、自动补扣、因TTL/取消自动释放或重发供应商请求。仅确认未派发可无actual释放；failed/cancelled有已验证actual仍按同规则结算，恢复复用原attempt/receipt。Billing拥有预算、金额与资金状态，Agent不计算价格/余量/收费，不复制计价配置或建立钱包。
+
+当前仅Billing包内决策正在独立实施，Agent运行源码尚未改、正式consumer和派发正路未接；配置token上限继续约束请求，不称财务保证。后继正式契约设计按上述现owner装配，复用已有证据读取/鉴权，不再以新增供应商保证合同阻塞主线；用户确认并不替代真实runtime/资金验收。
+
+## MC-02：System 受控密钥领取（2026-10-20，已批准实施）
+
+沿用户已批准的 System 现模块方案，不新增服务或密钥缓存。Agent 复用 SystemModelClient 原连接池，在 resolve 后、构造任何模型客户端/沙箱前，携带可信 tenant、原始 feature/可选 label 选择及精确 provider/revision/digest 读取。默认选择保持缺省，不改造成显式 label 以绕过当前默认策略。响应逐项比较 feature/label/provider/revision/digest/handle，Key 只以 SecretStr 在该模型客户端生命周期持有；错误脱敏、有界读取/总 deadline、禁跳转/重试和取消沿既有边界。
+
+固定消费为 System `550d65498822d8d2e629199482de4f6990b62708` /6.0.0；artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`，provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`，22来源与两操作receipt经Git原件及安装发行物检查。组件验证与正常未激活边界见CURRENT。
+
+删除旧凭据文件 parser、配置字段及 YAML 入口；旧环境配置明确报退役，不双读或回退原生环境 Key。model/credentials.py 只保留严格的内存凭据值；ModelHttpClients 必须显式接收绑定凭据，原 provider/handle 校验保留。非路由原生 SDK 分支本片不扩改。先固定 System6 已验证 source/artifact/provenance 再消费；新构建 profile 自然变化，冻结 usage1/usage2、历史 Run/证据与 SQL 不重写。正常 worker 停用，真实模型/工具/扣费不启动。
+
+## MC-02A：共享业务模型的固定消费（2026-10-20）
+
+按用户已确认的“共享模型配置、业务分别组合”，System5 由现有 label/routing 保存业务归属、默认项及可选别名；物理 revision 不再绑定 feature。Agent 继续只调用既有 resolve，发送受信 tenant、feature_key 与可选稳定 label_key；返回 feature/label 仍是业务解析上下文，不由 revision 推断。
+
+本片只将唯一 System 依赖收据固定到 `b7fe78e25e3c569ae0e1cb9b42cddab02074ca07` / 5.0.0；已从 Git 原件核对 System4→5 resolve 操作及全部递归引用语义相等、20 项来源摘要精确。保留当前严格 decoder、tenant/feature/label 一致性、deadline 和错误处理，不新增 HTTP client、协议、运行模块或兼容回退。原凭据读取方式本片不变；Key 存储/读取候选不视为已批准。正常 Agent 仍停用，不发送模型、工具或扣费请求。
+
 ## 内部通知重试收敛（2026-10-19，本地验证，未激活）
 
 沿已接受ADR-003：PG Run/outbox/Chat是事实，Redis只作可丢失通知，BFF通过HTTP Chat补读。只退休published等待外部ACK的周期重发及其宽限配置/返回字段；queued仍按原identity先恢复Chat再发布、成功才标published。started/delivery保原两事务补偿，terminal保原原子提交；control私有回执不冒公开Chat。
@@ -3456,3 +3887,10 @@ crypto 前拒绝，且不截断或转成 string。
 A2b separates three lifetimes: `execution_proof_keys.py` owns worker-only private PKCS#8 loading and signer construction; `interfaces/http/execution_proof_jwks.py` owns an anchored immutable public-ring snapshot; `interfaces/http/main.py` owns only HTTP business configuration and the public descriptor. The HTTP process never imports worker, private loader, signer, provider, model, sandbox, or MCP configuration. The OpenAPI `1.1.0` JWKS route is dispatched before body/auth/identity/dependency creation. Private parent directories remain a deployment-trusted secret-mount boundary; the public ring performs the stricter anchored parent walk.
 
 A2c adds exactly one production `issue_execution_proof` caller inside the standalone supplier. IAM verification and the inactive Platform owner contract have since shipped in their owner repositories; worker signer gating, Agent Platform transport/call sites, and the real cross-owner transport remain later work.
+## 2026-10-25 模型建连重试与handler绝对期限
+
+沿现 factory/call runtime 最小修复：正式 OpenAI-compatible SDK request_timeout 显式 connect5/read120/write30/pool5；native AsyncHTTPTransport retries=1只包 httpcore TCP/TLS 建立循环，SDK max_retries仍0，HTTP已经write后的失败不重放。transport保 trust_env=false、TLS验证与原HTTP/limits默认；main和原生summary仍共享该peer owned clients，原close/usage tap不变。
+
+现每个 middleware handler 用一个600秒绝对期限，不按chunk、阶段或native connect retry重置；包括handler内最终request hook的prepare/授权，但不包之后的seal/drain。handler可能先调用native summary，故外层覆盖摘要等待（包括其独立seal）而不冒称已经存在main物理attempt；内层拥有独立原身份/usage/capsule，不能给外层续期。专属内部deadline异常只在本期限实际expired转换，经现失败归码为model_unavailable/false；普通TimeoutError、外部取消、失租、denial及secondary金融失败保持原优先。已有未完整usage保unknown/pending，旧R5/账本不改、不重派。
+
+验证用锁定真实SDK、生产final hook/middleware、隔离loopback/受控低层backend证明最终Request.extensions四值、TCP/TLS connect一次重连与唯一POST/准入/封口、read/write/protocol/5xx零重发、共享客户端、绝对总预算及取消/denial/失租/封口边界。低层故障注入不冒真实供应商或正常资金闭环；Root独占Git/正常激活。600秒是新增有限wall策略，不声称等同当前显式None或对全部合法超长推理零影响。

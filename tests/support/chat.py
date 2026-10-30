@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 
 from kokoro_agent.domain.chat.models import (
     ChatEventRecord,
@@ -25,6 +26,24 @@ class FakeChatRepository:
         self.records: list[ChatEventRecord] = []
         self.messages: dict[tuple[str, str], ChatMessageRecord] = {}
         self.sessions: dict[tuple[str, str, str], ChatSessionRecord] = {}
+
+    async def completed_message_exists(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        chat_message_id: str,
+    ) -> bool:
+        record = self.messages.get((tenant_id, chat_message_id))
+        return bool(
+            record
+            and record.namespace == namespace
+            and record.session_id == session_id
+            and record.run_id == run_id
+            and record.role == "assistant"
+            and record.status == "completed"
+        )
 
     async def ensure_session(
         self,
@@ -193,6 +212,30 @@ class FakeChatRepository:
             key=lambda event: event.seq,
         )
         return tuple(events[:limit])
+
+    async def first_tool_activity(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        activity_id: str,
+    ) -> ChatEventRecord | None:
+        for row in sorted(self.records, key=lambda row: row.source_index):
+            if (
+                row.tenant_id,
+                row.namespace,
+                row.session_id,
+                row.run_id,
+                row.event_type,
+            ) == (tenant_id, namespace, session_id, run_id, "activity"):
+                value = json.loads(row.payload_json)
+                if (
+                    value.get("activity") == "tool"
+                    and value.get("activity_id") == activity_id
+                ):
+                    return row
+        return None
 
     async def history(
         self,

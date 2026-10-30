@@ -1,3 +1,112 @@
+## 2026-10-28 最终答复身份与原终态原子保存（设计门，候选）
+
+Agent 不新增表、列、索引或 checkpoint 状态。最终答复绑定随既有 terminal outbox 的 payload_json、同事务安全 Chat terminal payload_json 保存；公开引用使用原 ChatMessage 身份。首次写入前核 tenant/namespace/session/Run、assistant role 与 completed status；已有 Chat 主键及 Run 范围约束复用，禁止跨 owner SQL。
+
+正常流和 checkpoint 完成后的恢复均只核同 Run 已持久正文；无证据省略绑定，不根据目前可见的最后一段填补。cancel/failed 不绑定，token usage 补齐和幂等 replay 不丢字段，异值沿原终态冲突规则拒绝。旧 payload/source_index/seq/digest 与数据原样保留；没有补写历史、自动 GC 或正常库升级。
+
+## 2026-10-28 Skill display 及旧Run只读恢复 D0（Root 已批准，候选实施中）
+
+无DDL／新表／列／索引／cache／独立日志／checkpoint state或数据回填。新Run有限展示随原fenced安全Chat activity `payload_json` 首次持久，沿既有outbox/replay保留；内部Redis SkillPhase/SkillProgressPayload及worker command/event网络形状不变，展示仅从本地sink参数进入安全Chat投影。原file basename、tool错误／状态／opaque IDs／顺序与lease围栏不变，returned只复用原事实。 MCP title/selector回退及peer共同声明只影响未来首次safe Chat展示，不更改原声明、执行授权或旧event/digest。
+
+旧Run展示只在新具名GET只读派生：原RunRequest定位trusted namespace+session，exact checkpoint还核metadata.kokoro_run_id。Root实际确认目标旧Run10份metadata name/path一致；SDK channel不含typed ResolvedSkill revision/digest，缺证继续unknown。checkpoint versions/blobs/writes属于原native state：messages由原生DeltaChannel恢复，不因单表无messages blob就称缺失，不自建delta decoder。只提取已证loader后的name/path；工具再以该Run journal ID／原safe activity及原virtual来源绑定后，定向提取file_path/path，不复制任意args/result。journal现仅name/status/result/is_error，不伪称已有path列。
+
+新read projection不改旧Chat event/id/digest、不补写旧worker事件，不污染原ingestion source身份；合法缺省／已清理保持unknown，不由当前catalog或新模型反推。5秒／32 checkpoint／8MiB输入及1MiB输出有界，无后台刷新任务；API闭集与reader-first见[API首节](API_CONTRACT.md)。资源和真实旧Run后验仍由Root独占，本D0不启动服务／模型或操作正常数据。
+
+## 2026-10-27 具体动作对象 D0（HTTP8.2 候选，Root 已核；实施中）
+
+绑定Agent源码 `38c294d38cf05149c320622f52490f82fb1fff91`／HTTP8.1基线。本门无DDL、新表／列／索引、独立日志、journal字段或checkpoint state；仅拟在现 `kokoro_agent_chat_event.payload_json` 的安全tool activity新增optional闭合display_detail，形状／有界公开域见同日期API_CONTRACT。无null／默认值、历史回填或旧JSON规范化；原bytes／source_index／seq／opaque ID不变。详情仍随原Chat事实保留／清理，不设新TTL、镜像或财务／执行事实owner。
+
+首次invoked冻结code与detail的presence/value；内存仅作原事实的请求内索引，不成为恢复依据。cache miss由现ChatRepository的具名owner方法读取首条原安全tool activity：trusted tenant_id／namespace／session_id／run_id精确范围，匹配原opaque activity_id，ORDER BY source_index ASC LIMIT1。现主键 `pk_kokoro_agent_chat_event(tenant_id,namespace,run_id,source_index)` 支持Run前缀和顺序，另有tenant/chat_event_id与tenant/namespace/session/seq唯一索引；activity_id目前仅在payload内，无单独索引，因此是受Run限制的过滤扫描，非全session回放，更不是常数查询成本。现connect_pg／SQL helper没有内建总deadline；本门给该具名读取至多2秒总deadline、零重试（Root已核，并非既有预算或查询性能承诺），调用取消及时关闭原连接；真实PG验证索引范围、大Run及取消边界，不靠LIMIT1声称性能已验。不改索引或建可编辑summary表；如实际成本不满足门限先报Root，不越界加索引。
+
+有首条事实则复用原code／detail（包括absent），不按当前声明改名；无原事实的returned省略详情。损坏／超时／失租与无行区分，沿原安全投影失败处理，不以异常当absent后从私有来源重算。查询只读同owner安全Chat，不读raw journal／result／Redis参数，不调用MCP或工具恢复标题。原Chat append_fenced、immutable identity检查、Run lease／recipe、terminal事务、journal replay与started unknown保障保持，无新增执行许可或工具重派。
+
+MCP声明快照只在原check->_binding现有owner read内投影本次公开元数据，内部exact Connection/selector用于定位，不持久化owner配置、凭据、端点或schema副本；原记录内只保存通过有界校验的display_name。文件仅保存已准入basename，不保存原目录／host path／content／title／note。规则不能识别任意未知秘密，限定本人Run内本已可见对象和公开声明；BFF匿名Share投影与快照必须剔除新detail。历史absent永不补写；新事实写入后回滚producer仍保留可读8.2的reader，不删改Chat以适配旧reader。本门未执行任何数据／资源操作；隔离真实持久、重建emitter、旧bytes及跨主体负控通过后才能认定恢复验收。
+
+## 2026-10-25 原 attempt 的摘要结果 capsule（设计门，未实施）
+
+**唯一 owner/范围。** Agent 现 `kokoro_agent_model_call_attempt` 保存同一次 native summarization 返回的最小执行结果；Run、lease、usage evidence、Billing 资金与原生 checkpoint owner 不变。基线 `8639d99078d6ca53863462ee8e7459983afd8c57`；本节没有执行 DDL、fresh install、正常库升级或数据回填，不表示摘要崩溃恢复已通过。行为与取舍见 TECHNICAL_DESIGN 同日期小门。
+
+| 现表新增字段 | 类型/默认 | 不变量 |
+| --- | --- | --- |
+| `summary_result_bytes` | `BYTEA NULL`，无默认 | RFC8785 canonical UTF-8 summary capsule；完整 bytes 长度 1–4,194,304，严格版本/domain/message/绑定；摘要文本只取原 SDK `response.text`，无完整 SDK 对象/原请求/密钥 |
+| `summary_result_digest` | `TEXT NULL`，无默认 | 两列全空或全非空；非空为 64 位小写 hex SHA-256；应用按原 bytes 重算核同，不以格式 CHECK 代替完整性验证 |
+
+canonical SQL 仅在本表加具名 CHECK：`both NULL OR (both NOT NULL AND octet_length(summary_result_bytes) BETWEEN 1 AND 4194304 AND summary_result_digest ~ '^[0-9a-f]{64}$' AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL AND latest_revision > 0)`。沿原 PK/identity/唯一性、无 FK，不增 result 表、lookup index、状态列或第二可编辑 schema。`schema.py` 的精确列、nullability/约束 verifier 同步。普通调用及旧摘要缺失事实保持双 NULL；NULL 不代表免费、未派发或可重新请求，不回填/清空旧行。
+
+**capsule 的唯一语义。** 版本/domain、tenant/run/call/attempt、peer path、native checkpoint id/ns/task id 和 `call_kind=summarization`；original recipe/planned/attempt_binding/final_request digests、原 revision1 event id/digest；当前实际摘要 prompt+stop+生效参数+调用 profile 的 digest（仅 digest、不保存 raw prompt）；`message={role:"assistant",content:可见文本}`；首次 usage 的 reported input/output/total 或明确 unknown。capsule 使用当前 helper 实际消费的文本，未 strip 值恢复后由原 helper处理。完整 capsule 上限4MiB匹配现 request-profile string-token资源边界；总请求8MiB、System精确token执行界继续检查，不宣称4MiB必然适合任意context。拒绝超界/错误角色/字段、重复JSON键、非canonical bytes、未知版本与非文本/SDK对象；不截断、pickle或保存reasoning/tool calls/credential/headers。摘要不是 system权限/新身份或业务事实。
+
+**原子封口/immutable重播。** 只在原 Run→Attempt锁序、同cursor、DB时间/fence验证之后，第一次 revision1 usage/head与两列result同事务提交；result里的revision1 event/digest绑定实际新建原事件，任一步失败全回滚。同一次首次封口也把该摘要已reported total一次加到原Run.token_total，唯一门为原latest_revision=0→1；typed receipt读出当前lease下持久累计供预算检查。旧TokenBudget的摘要二次add_tokens退役，普通model不改；exact seal replay核全部result/usage/response绑定相等、零累计，异值冲突，不能overwrite或后补旧NULL。未知usage不补0、pending不准重播；原首次unknown而未来补证known后的first-known累计/恢复路径仍在明确事务门和真实PG验收前停止，不因后来的captured跳过预算。
+
+**只读恢复与资金。** result reader用当前可信RunRequest/tenant/recipe和当前有效Run lease检查一致快照，不把旧attempt lease改成新generation，不放宽read_prepared或start_dispatch。stable locator/prompt/参数/route/peer/recipe逐值相同且capsule.final_request_digest等于原attempt字段；result与original revision1 evidence绑定，同时核latest head/全部前驱ACK完整、exact admission/run/attempt/event/revision/digest且captured。None/pending/released/错ACK/坏result/旧NULL/已派发无body均停止；pending只允许现同event/key reconcile，零重新authorize/reserve/provider。恢复只返回无usage_metadata/callback的原文本，不制造第二预算/usage segment/费用。失租/取消/终态不交还正文或开启新调用；并发只读原结果，旧持有者无新写权。
+
+**审计/删除/验证。** 两列与原attempt/evidence同恢复和审计生命周期，不借Chat/tool GC清正文，不进公开usage、Chat、trace或日志；审计只安全ID/digest/状态。未来删除须与原终态/金融收口/恢复保留策略一并裁决，不新建自动TTL或副本。fresh schema精确门与真实PG验证result/usage/token原子回滚、exact重播零写、并发异值、DB commit未知、失租/取消、旧NULL与4MiB边界；真实AsyncPostgresSaver/child kill验证captured ACK到graph checkpoint前恢复、summary请求一次和累计一次。主模型已经dispatch但无持久正文仍沿原fail-closed，不用本摘要字段假称全图可续跑。新增codec/reader源码入finite manifest及wheel/sdist/installed绑定，正常数据保留升级、recipe切换和回滚不在本节执行。
+
+## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
+
+无DDL、表、列、canonical SQL或owner变化。仅在现RunRequest的非空JSON业务输入中持久化精确selected_mcp_connection_ids，原dispatch/Run/lease/checkpoint/journal仍为唯一写入边界。新增字段不存token、URL、工具结果或Platform镜像。
+
+历史未选择请求必须保持原JSON、canonical fence及持久读取的字节比较；空字段采用原生条件省略，不补写旧行、不批量规范化。非空选择进入原请求身份和prepare前构造的静态recipe；原recipe冲突、权限退休、未知调用恢复均保留失败关闭及journal重放。旧活跃profile不因默认空字段自动兼容新源码，部署drain与已接纳请求的可读回退见TECHNICAL_DESIGN。
+
+## 2026-10-24 主链用量待核对的具名失败（实施中）
+
+沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。
+
+## AGENT-1：原 attempt 保存供应商响应编号（2026-10-23）
+
+唯一 canonical database/schema.sql 在 kokoro_agent_model_call_attempt 新增 provider_response_id TEXT NULL，无默认/回填。NULL表示原响应没有有效编号，不是兼容分支。CHECK限定可见 ASCII 1–256字符，非NULL必须已派发且封口；schema verifier 同步精确列/空值/约束。编号与首次封口同事务保存，重放只读核相等，不更新旧行；现 evidence bytes/digest 与已知计量不变。暂不新增查询 API、补证表或通用恢复状态。正常数据仍保留，实施与隔离 fresh schema 验证不自动授权丢弃 pending 资金事实。
+
+## AGENT-1：Worker公平扫描无新数据模型（2026-10-23）
+
+沿abd1186c两表，DDL／索引／CHECK均不变。list_pending只增加tenant/attempt keyset分页；每进程短暂扫描游标不成为任务／资金事实，重启从头、尾页回绕，相同事件依旧由持久ACK与原owner幂等决定。未ACK／unknown／坏行保留原数据，不因分页略过即视为成功或删除；无跨owner SQL／migration／正常数据改写。
+
+## AGENT-1：原两表金融投递元数据（2026-10-23，本地已验；worker装配待接）
+
+attempt新增nullable UUID financial_admission_ref及tenant／ref部分唯一索引；现sealed evidence新增nullable BYTEA financial_ack_bytes、TEXT financial_ack_digest、TIMESTAMPTZ(3) financial_acked_at，三者全空或全非空／有界／摘要CHECK，未ACK部分索引供有界扫描。原核心evidence／authorization bytes、digest、revision和observed_at不变；只有独立投递元数据更新，原Run完整性计数不动。无新表／FK／migration／跨owner SQL，原canonical和readiness精确门同步；fresh自有schema验收，正常旧schema本片不升级／清空。逐事件ACK作为可恢复投递事实保留，与原attempt／evidence共生命周期，不借Chat GC回收、不把本地ACK当新的余额或资金owner。
+
+## AGENT-1：金融consumer本段无持久化变化（2026-10-23）
+
+本段只接正式传输与本地不可变结果，无表／列／状态／schema或正常资金写。Run不携用户token；客户端收到ACK不自行改sealed authorization或授dispatch。后继须按原事实保存独立金融关联及逐事件持久ACK，本consumer通过不代表durable恢复完成。
+
+## AGENT-1：历史sealed读取无新事实（2026-10-22）
+
+复用原attempt和全修订model_usage_evidence，无SQL schema／新列／表／缓存／状态或数据修复。一个只读MVCC快照读取请求row与实际head，返回原immutable版本；精确核原事件、摘要、观察时间和冻结绑定，并独立保head完整性。终态／失租后可读原财务证据，不改authorization bytes，不补grant／派发权。后继金融关联／逐事件ACK仍待单独按原owner事实装配，不借Chat outbox或用户token。
+
+## AGENT-1：预算消费者复用原授权 journal（2026-10-22）
+
+无 Schema／列／新状态。首次 begin 先冻结唯一 agent-model-admit:attempt_id 及原 requested bytes/digest，
+资金 I/O 在事务外；grant 以原前驱 digest 绑定原 admission_id，余额／hold／金额仍在 Billing。
+begin 的重放可能返回 granted，不根据 newly_requested=false 猜 pending；已 granted 恢复保持原字节／
+摘要和 admission_ref，零网络。原 Run／attempt fence、租约、终态及 CAS 检查均承接，失租不补 grant。
+未知／取消不删 pending、不把 hold_id 当许可、不换 key／attempt、不自动释放；唯一次派发仍由后继
+start_dispatch.newly_started 决定，本片没有 provider dispatch 或 usage／capture／结算写入。
+
+## AGENT-1：消费 proof 不保存登录凭据（2026-10-22）
+
+本片无 DDL、RunRequest 或 journal 状态变化。billing.credit.consume 的 execution_binding
+复用原 durable RunRequest 的 assertion／project／selected_skill_source_refs 快照；proof 的时效
+仍由当前 Run lease 限制。用户 access／refresh token 不写入 Run、attempt、evidence 或 journal，
+浏览器会话不作为本 supplier 的输入。机器身份不覆盖持久提交来源或 IAM 当前授权，授权／预占／
+唯一派发／用量与资金事实仍分属原 owner；既有 receipt 恢复不因 proof 过期被解释为可重新执行。
+
+## AGENT-1：prepared 只读快照（2026-10-22）
+
+无 canonical SQL／索引／表／列变化。现 `kokoro_agent_model_call_attempt` 和同 tenant/run 的
+`kokoro_agent_run` 是唯一事实源；同一只读查询取当前 fence、lease 和 DB 时钟，不更新
+attempt、Run completeness、水位或授权状态。当前 authorization 是可变状态的当次观察，
+不塞回 PreparedModelCall 的 immutable creation receipt；历史 usage1 原字节读取不变。
+
+## AGENT-1：预算方案不复制财务数据（2026-10-22）
+
+用户确认退役额外供应商成本保证前置；本片纯设计裁决，无Agent DDL或数据写入。预算、冻结价格和hold/capture/release由Billing唯一拥有；Agent复用现attempt、planned/final摘要、authorization与dispatch状态和严格usage2，不预建旧capacity-bound表或双轨证据。历史证据、SQL、正常数据不改写，不把未知/超预算改成not_dispatched或免费终态；后继恢复沿原attempt/receipt，源码/持久状态调整须随正式consumer具体收敛。
+
+## MC-02：密钥只存 System（2026-10-20，实施门）
+
+无 Agent DDL 或数据迁移。System 独占密文、创建标记、路由与领取授权；Agent 领取值只活在当前内存客户端，不写 Run、checkpoint、journal、证据、profile、日志或 Redis。删除本机模型密钥文件消费；旧 usage1/usage2 artifact 及历史字节/摘要固定，不用新密钥重放旧记录。正常环境不切换，本片只做隔离验证。
+
+## MC-02A：共享配置的 Agent 数据边界（2026-10-20）
+
+本片无 DDL、Run/调用证据字段或历史数据变化。共享 revision 与业务组合仍由 System 拥有；Agent 不复制目录、别名、租户路由或密钥存储。仅更新构建期唯一 System consumer receipt 和其来源聚合摘要，历史请求与 usage 证据原字节不重写。正常数据库、配置及进程不切换。
+
 ## 通知重试收敛的数据边界（2026-10-19，实施门）
 
 canonical database/schema.sql不改，不增删表/列/索引、不迁移或重写历史。正常无外部receipt/manifest时保留published outbox至既有Run TTL；已有watermark的原GC和active delivery保护仍按原Run行锁核验，不引入提前删除资格。receipt已存在却manifest缺失仍为损坏，rejected原终态隔离保持。Chat历史不随此变更释放；无新manifest writer或跨ownerSQL，正常库不操作。

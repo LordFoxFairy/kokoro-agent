@@ -1,3 +1,24 @@
+<!-- HTTP8.4：现GET RunDisplay增加required bounded tool_facts；完整8.3父逆证，不改旧Chat/worker/Schema。 -->
+
+## HTTP 7.4 MCP 选择候选（2026-10-24）
+
+唯一 OpenAPI 在 LaunchRequest 增加 optional selected_mcp_connection_ids，缺省／空选择保持旧 Run 字节和 fence，非空冻结 exact Connection IDs；这不是授权或 Agent 图配置。完整7.3父 SHA 逆证，再沿原7.2／7.1证明链保留全部旧边界。BFF/App 固定 artifact 与配对前不激活正常 producer；没有新Schema。
+
+## 当前历史 sealed 读取发行（2026-10-23）
+
+HTTP7.2 原件 SHA256 `4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db`。
+原专用 Billing GET 按精确 event 返回原 immutable sealed 修订，独立校验当前 head；不授执行权。
+路径、响应 schema、usage1历史／usage2及proof2不变；仅撤销新增description及版本可逐字恢复整个7.1原件，原7.0逆证明仍在。
+消费者固定本次Git commit／原件／provenance后正规生成，不从live checkout猜配对。工程与真实PG／HTTP及包验收见[CURRENT](../docs/CURRENT.md)；金融关联与逐事件ACK尚待，不宣称实际扣分已闭环。
+
+## 当前 BFF 预算／结算／恢复消费者
+
+`bff/internal-v1/openapi.yaml` 固定BFF `5a303f2003fabeb50376c7f7e1f66f0d163adebb` 的internal1.3原字节，SHA256 `4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39`。
+只生成原create／recover／settle三操作及必要模型／标量，单一依赖回执和audit闭包由原checker核验。
+有限编译器保anyOf／allOf／const／null／not及codepoint／整数字符串上界；独立owner-schema oracle保护不丢条件分支。
+运行时不读取契约或运行生成器，只使用包内生成模型；原专用机器凭据单池，首次create需proof，恢复／结算禁proof，miss不重预占。
+HTTP7.2／proof2／usage2及Schema保持；库接线不是持久金融ACK或正常真实扣分完成证据，详见[CURRENT](../docs/CURRENT.md)。
+
 # kokoro-agent 契约治理
 
 ## Owner
@@ -45,21 +66,23 @@ BFF 是浏览器 Product API 和 AG-UI projection 的 owner；Capability、Stora
 
 ## Visibility
 
-本契约所有 HTTP operation 都是 `internal-owner`，只供 BFF 或受信服务调用；除 `/healthz` 与 exact `GET|HEAD /v1/execution-proof/jwks` 外需要
-Agent service bearer credential，`/v1/*` 还需要由受信调用方传入的 tenant、subject、actor 和 IAM
-assertion headers。浏览器不得直接调用此服务。每个 operation 的 `x-kokoro-*` 扩展是机器可审查治理元数据。
+本契约所有 HTTP operation 都是 `internal-owner`，浏览器不直连。
+`/healthz` 与 exact `GET|HEAD /v1/execution-proof/jwks` 匿名；普通业务入口使用
+Agent service bearer 与受信 tenant/subject/actor/assertion。两个 model-call reader
+使用独立 Billing bearer，仅收 tenant 与 request-id，不接受人类身份／service 覆盖头或正文。
+每项 operation 的 `x-kokoro-*` 是本 owner 机器治理元数据。
 
 ## Version
 
-当前候选 HTTP 机器 contract version 为 `4.0.0`，路径仍为 `/v1`；尚待 Root 协调发布。
-本次 breaking 将 resume 一次切为 required expected_pause_revision/pause_ref、全集 item_id 决策，
-Chat 源改为完整 interaction.state；旧 tool_id/request_id 寻址与 interaction 事件不保留 alias。
-此前 Failure code/required retryable/合法 tuple 保持原义，不增加公开 reason。
-`info.version` 与内部 URL major 分别计数。2.0 已要求的 selected_skill_source_refs/[] 保持不变，
-不接受旧 trace fallback。Agent 固定 commit → BFF strict repin/正式 Product+AG-UI → Web 固定消费 →
-Root 仅对已授权自有 fixture 有序停止/清理/fresh 切换；禁止旧 failure JSON 双读或默认补字段。
-Protobuf/RPC 不在本仓发布；其他 Redis envelope 的 kind 与 payload 继续由现 Pydantic 定义。
-正式对外发布后的 breaking 仍需评审版本、消费者与数据切换，不能沿用本地 fixture 清理作为生产迁移。
+当前候选 HTTP contract version 为 `7.1.0`，URL 仍为 `/v1`，未据此声称已合并或正常激活。
+本次只新增 `GET /v1/model-call-attempts/{attempt_id}/prepared` 与两个响应 schema；
+完整 HTTP7 父图由固定 SHA256 的精确逆证保护，原 proof2、usage1/2 及 sealed evidence
+读取保持。prepared 快照是当次有界活租约观察，不是消费许可、成本保证或历史恢复入口。
+详见 [API 契约](../docs/API_CONTRACT.md) 与 [技术方案](../docs/TECHNICAL_DESIGN.md)。
+
+`info.version` 与内部 URL major 分别计数。既有 required typed Skill selection、project_ref、
+完整 interaction.state／resume 决策全集和严格 failure 形状不变；不增加旧输入 alias 或 fallback。
+消费者各自固定 owner artifact，Root 仅聚合已验证已合精确版本，不把配置读取冒真实执行。
 
 ## Generation
 

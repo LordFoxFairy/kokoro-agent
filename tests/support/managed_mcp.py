@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
-from collections.abc import Callable
+from collections.abc import Callable, AsyncGenerator
+from contextlib import asynccontextmanager
 import hashlib
 import time
 from uuid import uuid4
+from types import CoroutineType, FunctionType
+from typing import Literal, cast
 
 from protobuf import Oneof
 from pydantic import JsonValue
@@ -17,13 +21,54 @@ from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as r
 from kokoro_agent.mcp.schema import schema_digest
 
 
+@asynccontextmanager
+async def isolated_mcp_server_state() -> AsyncGenerator[None]:
+    """Own the test-provider process shutdown state, not client or production state."""
+    from sse_starlette import sse
+
+    previous = sse.AppStatus.should_exit
+    baseline = asyncio.all_tasks()
+    watcher_code = cast(FunctionType, getattr(sse, "_shutdown_watcher")).__code__
+
+    def is_watcher(task: asyncio.Task[object]) -> bool:
+        coro = task.get_coro()
+        return isinstance(coro, CoroutineType) and coro.cr_code is watcher_code
+
+    try:
+        yield
+    finally:
+        # The caller's existing finally has already stopped and joined its
+        # provider Server. Only its newly spawned SDK watchdog is ours to retire;
+        # never touch pre-existing tasks, disable SDK drain or clear its state.
+        owned = [task for task in asyncio.all_tasks() - baseline if is_watcher(task)]
+        for task in owned:
+            task.cancel()
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*owned, return_exceptions=True), 2
+            )
+        finally:
+            if all(task.done() for task in owned):
+                sse.AppStatus.should_exit = previous
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(
+                result, asyncio.CancelledError
+            ):
+                raise result
+
+
 class ManagedMcpOwner:
     def __init__(
-        self, *, endpoint: str, schemas: dict[str, dict[str, JsonValue]]
+        self,
+        *,
+        endpoint: str,
+        schemas: dict[str, dict[str, JsonValue]],
+        transport: Literal["streamable_http", "sse"] = "streamable_http",
     ) -> None:
         self.on_authorize: Callable[[], None] | None = None
         self.tool_calls = 0
         self.endpoint = endpoint
+        self.transport = transport
         self.schemas = schemas
         self.requests: list[PlatformRequest] = []
         self.revoked = False
@@ -60,7 +105,9 @@ class ManagedMcpOwner:
                     p.McpServer(
                         server_id=p.McpServerId(value="server-1"),
                         provider_key="owned",
-                        transport=p.McpTransport.STREAMABLE_HTTP,
+                        transport=p.McpTransport.SSE_COMPAT
+                        if self.transport == "sse"
+                        else p.McpTransport.STREAMABLE_HTTP,
                         declaration_digest="a" * 64,
                         status=p.McpServerStatus.REGISTERED,
                     )
@@ -112,6 +159,11 @@ class ManagedMcpOwner:
                     resolution_ref=reference,
                     expires_at_unix_seconds=expiry,
                     transport=Oneof(
+                        "sse",
+                        r.McpRuntimeSseConnection(canonical_endpoint=self.endpoint),
+                    )
+                    if self.transport == "sse"
+                    else Oneof(
                         "streamable_http",
                         r.McpRuntimeHttpConnection(canonical_endpoint=self.endpoint),
                     ),
@@ -132,6 +184,8 @@ class ManagedMcpOwner:
                     request.resolution_ref.encode()
                 ).hexdigest(),
                 expires_at_unix_seconds=expiry,
-                transport=Oneof("streamable_http", r.McpRuntimeHttpCredential()),
+                transport=Oneof("sse", r.McpRuntimeSseCredential())
+                if self.transport == "sse"
+                else Oneof("streamable_http", r.McpRuntimeHttpCredential()),
             )
         raise AssertionError(type(request))

@@ -23,6 +23,12 @@ def _object(value: object) -> dict[str, object]:
     return _OBJECT.validate_python(value)
 
 
+def _parent_document() -> dict[str, object]:
+    from kokoro_agent.chat_contract_check import http82_display_parent_bytes
+
+    return _object(json.loads(http82_display_parent_bytes(_document())))
+
+
 def _document() -> dict[str, object]:
     return _object(json.loads(CONTRACT.read_text(encoding="utf-8")))
 
@@ -31,7 +37,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "7.0.0"
+    assert _object(document["info"])["version"] == "8.10.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -76,7 +82,10 @@ def test_every_operation_declares_governance_metadata() -> None:
     for operation in operations:
         assert operation["x-kokoro-owner"] == "kokoro-agent"
         assert operation["x-kokoro-visibility"] == "internal-owner"
-        if operation["operationId"] == "getFinalModelCallUsageEvidence":
+        if operation["operationId"] in {
+            "getFinalModelCallUsageEvidence",
+            "getPreparedModelCall",
+        }:
             assert operation["x-kokoro-stability"] == "candidate"
         else:
             assert operation["x-kokoro-stability"] == "stable"
@@ -91,9 +100,11 @@ def test_http_route_set_is_explicit() -> None:
         "/readyz",
         "/v1/execution-proof/jwks",
         "/v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}",
+        "/v1/model-call-attempts/{attempt_id}/prepared",
         "/v1/runs",
         "/v1/runs/{run_id}/control",
         "/v1/runs/{run_id}/events",
+        "/v1/runs/{run_id}/display",
         "/v1/sessions",
         "/v1/sessions/{session_id}/messages",
         "/v1/sessions/{session_id}/events",
@@ -111,6 +122,7 @@ _FAILURE_CODES = {
     "model_unavailable",
     "dependency_unavailable",
     "model_access_denied",
+    "model_settlement_pending",
 }
 
 
@@ -227,6 +239,7 @@ def test_failure_contract_http_payload_string_has_explicit_failed_discriminator(
         "discriminator": "event_type",
         "property": "payload_json",
         "mapping": {
+            "run.completed": "#/components/schemas/ChatRunCompleted",
             "run.failed": "#/components/schemas/ChatFailure",
             "interaction.state": "#/components/schemas/ChatInteractionState",
             "activity": "#/components/schemas/ChatActivity",
@@ -526,9 +539,11 @@ def test_hitl4_machine_rejects_invalid_pause_revision(bad_revision: object) -> N
 def test_owner_checker_rejects_relaxed_hitl_required_fields(
     component: str, field: str
 ) -> None:
-    from kokoro_agent.contract_check import validate_openapi_document
+    from kokoro_agent.contract_check import (
+        validate_http82_parent_document as validate_openapi_document,
+    )
 
-    document = _document()
+    document = _parent_document()
     schemas = _object(_object(document["components"])["schemas"])
     shape = _object(schemas[component])
     required = TypeAdapter(list[str]).validate_python(shape["required"])
@@ -548,7 +563,7 @@ def test_current_http7_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "7.0.0"
+    assert _object(document["info"])["version"] == "8.10.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -574,11 +589,13 @@ def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
     assert decoded["property"] == "payload_json"
     mapping = _object(decoded["mapping"])
     assert set(mapping) == {
+        "run.completed",
         "run.failed",
         "interaction.state",
         "activity",
         "todo.updated",
     }
+    assert mapping["run.completed"] == "#/components/schemas/ChatRunCompleted"
     assert mapping["run.failed"] == "#/components/schemas/ChatFailure"
     assert mapping["interaction.state"] == "#/components/schemas/ChatInteractionState"
     for kind in ("activity", "todo.updated"):
@@ -929,7 +946,7 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
     matches = [record for record in records if record["owner"] == "kokoro-system"]
     assert len(matches) == 1
     receipt = matches[0]
-    assert receipt["version"] == "4.0.0"
+    assert receipt["version"] == "6.0.0"
     assert set(receipt) == {
         "owner",
         "contract",
@@ -941,18 +958,21 @@ def test_r216_system_receipt_declares_complete_versioned_source_identity() -> No
         "operations",
     }
     assert set(_object(receipt["provenance"])) == {"path", "sha256"}
-    assert len(_object(receipt["source_sha256"])) == 20
-    assert receipt["operations"] == ["POST /v1/system/model-catalog/resolve"]
+    assert len(_object(receipt["source_sha256"])) == 22
+    assert receipt["operations"] == [
+        "POST /v1/system/model-catalog/resolve",
+        "POST /v1/system/model-catalog/credentials/read",
+    ]
     # Root verified this immutable release against Git objects, not a checkout.
-    # The canonical hash binds every receipt field and all 20 source path/hashes.
+    # The canonical hash binds every receipt field and all 22 source path/hashes.
     import hashlib
 
-    assert receipt["source_commit"] == "7f479f654c535077874d9cf63d1b25437e9420b6"
+    assert receipt["source_commit"] == "550d65498822d8d2e629199482de4f6990b62708"
     canonical = json.dumps(
         receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
     assert hashlib.sha256(canonical).hexdigest() == (
-        "4c3e8f4eeb314252f2543f8b994081aa5ffe5670e3cb39128b36bd8c34a44d01"
+        "9cf1529afa751490b389aee19689ceabcf46edb289de494381759ebadf69f7e8"
     )
 
 
@@ -973,3 +993,288 @@ def test_r216_system_consumer_has_source_and_audit_inventory() -> None:
     declared = package["tool"]["setuptools"]["data-files"]
     assert declared["share/kokoro-agent/audit/src/kokoro_agent"].count(relative) == 1
     # Declaration evidence only; Root must also execute the installed RECORD gate.
+
+
+def test_agent8_tool_display_is_a_closed_output_extension_with_full_parent_proof() -> (
+    None
+):
+    import hashlib
+
+    document = json.loads(json.dumps(_parent_document()))
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    codes = [
+        "tool.execution",
+        "tool.file.read",
+        "tool.mcp.discover",
+        "tool.mcp.describe",
+        "tool.mcp.call",
+        "tool.web.search",
+        "tool.web.fetch",
+        "tool.file.write",
+        "tool.file.deliver",
+    ]
+    assert document["info"]["version"] == "8.2.0"
+    assert tool["properties"]["display_code"] == {"type": "string", "enum": codes}
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.execution",
+    }
+    for code in codes:
+        validate({**payload, "display_code": code}, tool)
+    for code in ["tool.skill.read", "tool.web.search.secret", "", None]:
+        with pytest.raises(SchemaValidationError):
+            validate({**payload, "display_code": code}, tool)
+    with pytest.raises(SchemaValidationError):
+        validate({**payload, "name": "private-tool"}, tool)
+    from kokoro_agent.chat_contract_check import http81_parent_bytes
+
+    parent = json.loads(http81_parent_bytes(document))
+    parent["info"]["version"] = "7.4.0"
+    parent["components"]["schemas"]["ChatActivity"]["oneOf"][0]["properties"][
+        "display_code"
+    ] = {"type": "string", "const": "tool.execution"}
+    encoded = (json.dumps(parent, ensure_ascii=False, indent=2) + "\n").encode()
+    assert (
+        hashlib.sha256(encoded).hexdigest()
+        == "7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad"
+    )
+
+
+def test_http81_file_tool_categories_preserve_the_complete_http8_parent() -> None:
+    import hashlib
+
+    document = json.loads(json.dumps(_parent_document()))
+    assert document["info"]["version"] == "8.2.0"
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    assert tool["properties"]["display_code"]["enum"][-2:] == [
+        "tool.file.write",
+        "tool.file.deliver",
+    ]
+    assert set(tool["properties"]) == {
+        "display_detail",
+        "activity",
+        "activity_id",
+        "segment_id",
+        "status",
+        "display_code",
+    }
+    from kokoro_agent.chat_contract_check import http81_parent_bytes
+
+    parent = json.loads(http81_parent_bytes(document))
+    parent["info"]["version"] = "8.0.0"
+    del parent["components"]["schemas"]["ChatActivity"]["oneOf"][0]["properties"][
+        "display_code"
+    ]["enum"][-2:]
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    assert (
+        hashlib.sha256(raw).hexdigest()
+        == "93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff"
+    )
+    from kokoro_agent.chat_contract_check import http80_parent_bytes
+
+    assert http80_parent_bytes(document) == raw
+
+
+@pytest.mark.parametrize(
+    "mutation", ["unknown_code", "missing_code", "extra_field", "status", "request"]
+)
+def test_http81_full_parent_proof_rejects_any_other_delta(mutation: str) -> None:
+    from kokoro_agent.chat_contract_check import http80_parent_bytes
+
+    document = json.loads(json.dumps(_parent_document()))
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    if mutation == "unknown_code":
+        tool["properties"]["display_code"]["enum"].append("raw.private-tool")
+    elif mutation == "missing_code":
+        tool["properties"]["display_code"]["enum"].pop()
+    elif mutation == "extra_field":
+        tool["properties"]["filename"] = {"type": "string"}
+    elif mutation == "status":
+        tool["properties"]["status"]["enum"].append("unknown")
+    else:
+        document["components"]["schemas"]["LaunchRequest"]["additionalProperties"] = (
+            True
+        )
+    with pytest.raises(ValueError):
+        http80_parent_bytes(document)
+
+
+def test_http82_detail_is_typed_and_restores_complete_http81_parent() -> None:
+    import hashlib
+    from kokoro_agent.chat_contract_check import validate_decoded_chat_payload
+
+    document = json.loads(json.dumps(_parent_document()))
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.file.read",
+        "display_detail": {"kind": "file", "name": "report.md"},
+    }
+    validate_decoded_chat_payload(
+        document, event_type="activity", payload_json=json.dumps(payload)
+    )
+    from kokoro_agent.chat_contract_check import http81_parent_bytes
+
+    assert (
+        hashlib.sha256(http81_parent_bytes(document)).hexdigest()
+        == "1642829ccf5364692051e836938ef33b36cffeca25f2b7766ad95cd44a1542c9"
+    )
+
+
+@pytest.mark.parametrize(
+    "detail,code",
+    [
+        (None, "tool.file.read"),
+        ({"kind": "file", "name": "report.md", "title": "SECRET"}, "tool.file.read"),
+        ({"kind": "unknown", "name": "report.md"}, "tool.file.read"),
+        ({"kind": "file", "name": "/private/report.md"}, "tool.file.read"),
+        ({"kind": "file", "name": "report.md"}, "tool.execution"),
+        ({"kind": "mcp_tool", "name": "Search"}, "tool.mcp.discover"),
+        ({"kind": "file", "name": "e\u0301.md"}, "tool.file.read"),
+        ({"kind": "file", "name": "x\u200b"}, "tool.file.read"),
+        ({"kind": "file", "name": "x" * 121}, "tool.file.read"),
+    ],
+)
+def test_http82_detail_rejects_wrong_domain_and_cross_category(
+    detail: object, code: str
+) -> None:
+    from kokoro_agent.chat_contract_check import validate_decoded_chat_payload
+
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": code,
+        "display_detail": detail,
+    }
+    with pytest.raises(ValueError):
+        validate_decoded_chat_payload(
+            json.loads(json.dumps(_parent_document())),
+            event_type="activity",
+            payload_json=json.dumps(payload),
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["detail_budget", "detail_kind", "detail_condition", "other_output"]
+)
+def test_http82_inverse_rejects_unapproved_delta(mutation: str) -> None:
+    from kokoro_agent.chat_contract_check import http81_parent_bytes
+
+    document = json.loads(json.dumps(_parent_document()))
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    if mutation == "detail_budget":
+        tool["properties"]["display_detail"]["properties"]["name"]["maxLength"] = 999
+    elif mutation == "detail_kind":
+        tool["properties"]["display_detail"]["properties"]["kind"]["enum"].append("raw")
+    elif mutation == "detail_condition":
+        tool["allOf"] = []
+    else:
+        document["components"]["schemas"]["LaunchRequest"]["additionalProperties"] = (
+            True
+        )
+    with pytest.raises(ValueError):
+        http81_parent_bytes(document)
+
+
+@pytest.mark.parametrize("name", [".", "..", "/private/report.md", "a\\b", "C:secret"])
+def test_file_basename_machine_rejects_what_agent_already_rejects(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    tool = json.loads(json.dumps(_parent_document()))["components"]["schemas"][
+        "ChatActivity"
+    ]["oneOf"][0]
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.file.read",
+        "display_detail": {"kind": "file", "name": name},
+    }
+    with pytest.raises(ValueError):
+        ToolDisplayDetail(kind="file", name=name)
+    with pytest.raises(SchemaValidationError):
+        validate(payload, tool)
+
+
+def test_basename_correction_restores_complete_first_http82_parent() -> None:
+    import hashlib
+    from kokoro_agent.chat_contract_check import http82_basename_parent_bytes
+
+    document = json.loads(json.dumps(_parent_document()))
+    assert document["info"]["version"] == "8.2.0"
+    parent = http82_basename_parent_bytes(document)
+    assert (
+        hashlib.sha256(parent).hexdigest()
+        == "d16786d4b8214ba8ba22950c9b4ab9b297f0a2982724a89720bc268d2445cb71"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["pattern", "removed", "mcp_tightened", "unrelated"]
+)
+def test_basename_correction_inverse_rejects_any_other_delta(mutation: str) -> None:
+    from kokoro_agent.chat_contract_check import http82_basename_parent_bytes
+
+    document = json.loads(json.dumps(_parent_document()))
+    tool = document["components"]["schemas"]["ChatActivity"]["oneOf"][0]
+    detail = tool["allOf"][0]["then"]["properties"]["display_detail"]
+    if mutation == "pattern":
+        detail["properties"]["name"]["pattern"] = ".*"
+    elif mutation == "removed":
+        del tool["allOf"][0]["then"]["properties"]["display_detail"]
+    elif mutation == "mcp_tightened":
+        tool["allOf"][1]["then"]["properties"]["display_detail"] = detail
+    else:
+        document["components"]["schemas"]["LaunchRequest"]["additionalProperties"] = (
+            True
+        )
+    with pytest.raises(ValueError):
+        http82_basename_parent_bytes(document)
+
+
+@pytest.mark.parametrize(
+    "name", ["report.md", ".gitignore", "...", "..md", "résumé😀.md", "😀" * 120]
+)
+def test_file_basename_machine_retains_valid_unicode_targets(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    tool = json.loads(json.dumps(_parent_document()))["components"]["schemas"][
+        "ChatActivity"
+    ]["oneOf"][0]
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.file.read",
+        "display_detail": {"kind": "file", "name": name},
+    }
+    validate(payload, tool)
+    assert ToolDisplayDetail(kind="file", name=name).name == name
+
+
+@pytest.mark.parametrize("name", ["Search / docs", "server: tool", "a\\b", ".", ".."])
+def test_mcp_public_name_is_not_subject_to_file_basename_policy(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    tool = json.loads(json.dumps(_parent_document()))["components"]["schemas"][
+        "ChatActivity"
+    ]["oneOf"][0]
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.mcp.call",
+        "display_detail": {"kind": "mcp_tool", "name": name},
+    }
+    validate(payload, tool)
+    assert ToolDisplayDetail(kind="mcp_tool", name=name).name == name

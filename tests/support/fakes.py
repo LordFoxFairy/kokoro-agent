@@ -65,6 +65,7 @@ from kokoro_agent.protocol import (
 )
 from collections.abc import (
     AsyncIterator,
+    AsyncIterable,
     Awaitable,
     Callable,
     Mapping,
@@ -97,7 +98,7 @@ from kokoro_agent.domain.run.models import RunUsageSegment
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.execution.protocols import AgentRunnable
+from kokoro_agent.execution.protocols import AgentRunnable, ModelStream, PeerRunStream
 from kokoro_agent.infrastructure.checkpoint_interactions import (
     PauseReadTarget,
     ResumeReadTarget,
@@ -1817,6 +1818,23 @@ class FakeToolCall:
         return aiter_items(tuple(self.deltas))
 
 
+class FakeTextProjection:
+    """Test double for the SDK's iterable and awaitable text view."""
+
+    def __init__(self, deltas: AsyncIterable[str], final: str) -> None:
+        self.deltas = deltas
+        self.final = final
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self.deltas.__aiter__()
+
+    def __await__(self) -> Generator[object, None, str]:
+        async def complete() -> str:
+            return self.final
+
+        return complete().__await__()
+
+
 @dataclass
 class FakeModel:
     text_deltas: Sequence[str] = ()
@@ -1827,8 +1845,13 @@ class FakeModel:
     node: str | None = "model"
 
     @property
-    def text(self) -> AsyncIterator[str]:
-        return aiter_items(self.text_deltas)
+    def text(self) -> FakeTextProjection:
+        final = (
+            self.output_message.text
+            if self.output_message is not None
+            else "".join(self.text_deltas)
+        )
+        return FakeTextProjection(aiter_items(self.text_deltas), final)
 
     @property
     def reasoning(self) -> AsyncIterator[str]:
@@ -1841,11 +1864,11 @@ class FakeSubagentRun:
     trigger_call_id: str | None = "sub-call-1"
     task_input: str | None = "investigate"
     status: str = "success"
-    models: Sequence[FakeModel] = ()
+    models: Sequence[ModelStream] = ()
     tool_views: Sequence[FakeToolCall] = ()
 
     @property
-    def messages(self) -> AsyncIterator[FakeModel]:
+    def messages(self) -> AsyncIterator[ModelStream]:
         return aiter_items(self.models)
 
     @property
@@ -1863,16 +1886,23 @@ class FakeSubagentRun:
 
 @dataclass
 class FakeRunStream:
-    models: Sequence[FakeModel] = ()
+    extensions: dict[str, object] = field(default_factory=dict[str, object])
+
+    @property
+    def subgraphs(self) -> AsyncIterator[PeerRunStream]:
+        return aiter_items(())
+
+    models: Sequence[ModelStream] = ()
     tool_views: Sequence[FakeToolCall] = ()
     subagent_runs: Sequence[FakeSubagentRun] = ()
     custom_items: Sequence[object] = ()
     is_interrupted: bool = False
     raise_on_messages: bool = False
     context_exited: bool = False
+    output_state: dict[str, object] | None = None
 
     @property
-    def messages(self) -> AsyncIterator[FakeModel]:
+    def messages(self) -> AsyncIterator[ModelStream]:
         if self.raise_on_messages:
             raise RuntimeError("boom")
         return aiter_items(self.models)
@@ -1891,6 +1921,9 @@ class FakeRunStream:
 
     async def interrupted(self) -> bool:
         return self.is_interrupted
+
+    async def output(self) -> dict[str, object] | None:
+        return self.output_state
 
     async def __aenter__(self) -> "FakeRunStream":
         self.context_exited = False
@@ -2032,6 +2065,7 @@ def terminal_emitter(
         if isinstance(payload, RunCompletedPayload) and payload.status == "completed":
             payload = RunCompletedPayload(
                 status="completed",
+                final_segment_id=payload.final_segment_id,
                 token_usage=(
                     TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
                     if any(totals)
@@ -2396,6 +2430,9 @@ def _mutable_registry(value: object) -> TypeGuard[dict[object, object]]:
 def isolated_native_registry() -> Generator[None, None, None]:
     """Raw SDK unit probes restore exactly the registry state they inherited."""
     from deepagents.profiles import _builtin_profiles as bootstrap
+    from kokoro_agent.agents import native_profile
+
+    sealed_before = getattr(native_profile, "_sealed")
     from deepagents.profiles.harness import harness_profiles
     from deepagents.profiles.provider import provider_profiles
 
@@ -2414,3 +2451,5 @@ def isolated_native_registry() -> Generator[None, None, None]:
         provider.update(provider_before)
         for name, value in before.items():
             setattr(bootstrap, name, value)
+        # Restore the owner approval snapshot along with the SDK registry it authenticates.
+        setattr(native_profile, "_sealed", sealed_before)

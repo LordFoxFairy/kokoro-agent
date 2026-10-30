@@ -391,7 +391,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             if mcp_token is not None:
                 _MCP_CALL.reset(mcp_token)
         if isinstance(result, ToolMessage):
-            if name in {"deliver", "mcp_call"} and result.text.startswith("error:"):
+            if name == "deliver" and result.text.startswith("error:"):
                 result = result.model_copy(update={"status": "error"})
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。

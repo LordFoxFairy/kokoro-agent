@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from io import BytesIO
 import json
@@ -51,7 +51,7 @@ def _empty_counts() -> Mapping[str, ObservedCount]:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalUsageObservation:
-    """Only a bounded semantic projection; no body, credential, or provider identity."""
+    """Only bounded source facts and a lookup reference; no body or credential."""
 
     status: Status
     reason: str | None
@@ -61,6 +61,8 @@ class PhysicalUsageObservation:
     projection_digest: str | None = None
     service_tier: Literal["absent", "null", "default", "unsupported"] = "absent"
     unsupported_usage_category: bool = False
+    reported_model: str | None = None
+    provider_response_id: str | None = field(default=None, repr=False)
 
 
 class _ObservationError(Exception):
@@ -139,6 +141,52 @@ def _count(source: dict[str, object], name: str) -> ObservedCount:
     return ObservedCount("reported", value)
 
 
+def _reported_model(document: dict[str, object]) -> str | None:
+    value = document.get("model")
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 512
+        and not any(ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        value.encode("utf-8", errors="strict")
+        return value
+    return None
+
+
+def _response_id(document: dict[str, object]) -> str | None:
+    value = document.get("id")
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 256
+        and all(33 <= ord(character) <= 126 for character in value)
+    ):
+        return value
+    return None
+
+
+def _unsupported_cost_metadata(usage: dict[str, object]) -> bool:
+    """Documented monetary metadata is not a token category or our pricing input."""
+    details = usage.get("cost_details")
+    if details is not None and not isinstance(details, _JsonObject):
+        return True
+    if isinstance(details, _JsonObject) and details.keys() - {
+        "upstream_inference_cost"
+    }:
+        return True
+    amounts = [usage.get("cost")]
+    if isinstance(details, _JsonObject):
+        amounts.append(details.get("upstream_inference_cost"))
+    return any(
+        amount is not None
+        and (
+            not isinstance(amount, (int, float))
+            or isinstance(amount, bool)
+            or amount < 0
+        )
+        for amount in amounts
+    )
+
+
 def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
     raw = document.get("usage")
     presence: Literal["missing", "null", "object"] = (
@@ -150,8 +198,14 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
     counts = {name: _count(usage, name) for name in _NAMES[:3]}
     unknown = bool(
         usage.keys()
-        - {*_NAMES[:3], "prompt_tokens_details", "completion_tokens_details"}
-    )
+        - {
+            *_NAMES[:3],
+            "prompt_tokens_details",
+            "completion_tokens_details",
+            "cost",
+            "cost_details",
+        }
+    ) or _unsupported_cost_metadata(usage)
     for container, member in (
         ("prompt_tokens_details", "cached_tokens"),
         ("completion_tokens_details", "reasoning_tokens"),
@@ -209,6 +263,8 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
         sha256(_DOMAIN + canonical).hexdigest(),
         tier,
         unknown,
+        _reported_model(document),
+        _response_id(document),
     )
 
 
@@ -222,6 +278,10 @@ class _Parser:
         self.events = 0
         self.done = False
         self.projection: PhysicalUsageObservation | None = None
+        self._seen_model: str | None = None
+        self._model_conflict = False
+        self._seen_response_id: str | None = None
+        self._response_id_conflict = False
 
     def feed(self, chunk: bytes) -> None:
         if not self.streaming:
@@ -262,6 +322,23 @@ class _Parser:
             self.done = True
             return
         document = _document(data)
+        if "id" in document:
+            response_id = _response_id(document)
+            if response_id is None or (
+                self._seen_response_id is not None
+                and self._seen_response_id != response_id
+            ):
+                self._response_id_conflict = True
+            if response_id is not None:
+                self._seen_response_id = response_id
+        if "model" in document:
+            reported = _reported_model(document)
+            if reported is None or (
+                self._seen_model is not None and self._seen_model != reported
+            ):
+                self._model_conflict = True
+            if reported is not None:
+                self._seen_model = reported
         if document.get("choices") != [] or document.get("usage") is None:
             return
         candidate = _projection(document)
@@ -278,9 +355,18 @@ class _Parser:
         self.utf8.decode(b"", final=True)
         if not self.done:
             _fail("missing_done")
-        if self.projection is None:
-            _fail("missing_final")
-        return self.projection
+        # A completed stream can omit final usage. Retain its lookup facts without
+        # inventing a usage object, counts or a digest of nonexistent usage.
+        projection = self.projection or PhysicalUsageObservation(
+            "complete", None, "pending", reported_model=self._seen_model
+        )
+        return replace(
+            projection,
+            reported_model=None if self._model_conflict else projection.reported_model,
+            provider_response_id=None
+            if self._response_id_conflict
+            else self._seen_response_id,
+        )
 
     def clear(self) -> None:
         self.scratch.clear()
@@ -403,6 +489,8 @@ def _observe(
             projection.projection_digest,
             projection.service_tier,
             projection.unsupported_usage_category,
+            projection.reported_model,
+            projection.provider_response_id if integrity == "validated" else None,
         )
     finally:
         parser.clear()

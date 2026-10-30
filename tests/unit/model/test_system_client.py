@@ -70,6 +70,161 @@ def client(
     )
 
 
+async def test_reads_exact_route_credential_with_original_default_selection() -> None:
+    paths: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/resolve"):
+            return httpx.Response(200, json=route_payload())
+        route = route_payload()["data"]
+        assert request.headers["x-kokoro-tenant-id"] == "tenant-1"
+        assert request.headers["x-kokoro-service"] == "kokoro-agent"
+        assert json.loads(request.content) == {
+            "feature_key": "chat",
+            "provider_id": route["provider_id"],
+            "revision_id": route["revision_id"],
+            "digest": route["digest"],
+        }
+        return httpx.Response(
+            200,
+            headers={"cache-control": "no-store"},
+            json={
+                "data": {
+                    "feature_key": "chat",
+                    "label_key": "fast",
+                    "provider_id": route["provider_id"],
+                    "revision_id": route["revision_id"],
+                    "digest": route["digest"],
+                    "secret_handle_ref": route["connection"]["secret_handle_ref"],
+                    "api_key": "fixture-private-key",
+                }
+            },
+        )
+
+    async with client(httpx.MockTransport(handle)) as owner:
+        route = await owner.resolve(
+            tenant_id="tenant-1", feature_key="chat", label=None, request_id="r1"
+        )
+        credential = await owner.read_credential(
+            tenant_id="tenant-1", route=route, label=None, request_id="r1"
+        )
+    assert credential.api_key.get_secret_value() == "fixture-private-key"
+    assert "fixture-private-key" not in repr(credential)
+    assert paths == [
+        "/v1/system/model-catalog/resolve",
+        "/v1/system/model-catalog/credentials/read",
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "provider_id",
+        "revision_id",
+        "digest",
+        "feature_key",
+        "label_key",
+        "secret_handle_ref",
+        "api_key",
+        "cache-control",
+    ],
+)
+async def test_credential_response_is_bound_and_errors_never_include_key(
+    mutation: str,
+) -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.url.path.endswith("/resolve"):
+            return httpx.Response(200, json=route_payload())
+        route = route_payload()["data"]
+        assert json.loads(request.content)["label_key"] == "fast"
+        data = {
+            key: route[key]
+            for key in (
+                "feature_key",
+                "label_key",
+                "provider_id",
+                "revision_id",
+                "digest",
+            )
+        }
+        data.update(secret_handle_ref="model-key-v1", api_key="fixture-private-key")
+        if mutation != "cache-control":
+            data[mutation] = {
+                "provider_id": "44444444-4444-4444-8444-444444444444",
+                "revision_id": "44444444-4444-4444-8444-444444444444",
+                "digest": "b" * 64,
+                "api_key": "fixture-private-key\ninvalid",
+            }.get(mutation, "other")
+        return httpx.Response(
+            200,
+            json={"data": data},
+            headers={
+                "cache-control": "private"
+                if mutation == "cache-control"
+                else "no-store"
+            },
+        )
+
+    async with client(httpx.MockTransport(handle)) as owner:
+        route = await owner.resolve(
+            tenant_id="tenant", feature_key="chat", label="fast", request_id=None
+        )
+        with pytest.raises(
+            ModelResolutionError, match="MODEL_RESPONSE_INVALID"
+        ) as caught:
+            await owner.read_credential(
+                tenant_id="tenant", route=route, label="fast", request_id=None
+            )
+    assert "fixture-private-key" not in str(caught.value)
+    assert len(calls) == 2  # no retry of sensitive owner reads
+
+
+@pytest.mark.parametrize("failure", ["denied", "oversize", "timeout", "cancel"])
+async def test_credential_read_fails_closed_without_retry(failure: str) -> None:
+    count = 0
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal count
+        if request.url.path.endswith("/resolve"):
+            return httpx.Response(200, json=route_payload())
+        count += 1
+        if failure == "cancel":
+            raise asyncio.CancelledError
+        if failure == "timeout":
+            raise httpx.ReadTimeout("fixture-private-key", request=request)
+        if failure == "oversize":
+            return httpx.Response(
+                200, content=b"x" * 65537, headers={"cache-control": "no-store"}
+            )
+        return httpx.Response(
+            503,
+            json={
+                "error": {
+                    "code": "MODEL_UNAVAILABLE",
+                    "message": "fixture-private-key",
+                    "retryable": True,
+                }
+            },
+        )
+
+    async with client(httpx.MockTransport(handle)) as owner:
+        route = await owner.resolve(
+            tenant_id="tenant", feature_key="chat", label=None, request_id=None
+        )
+        with pytest.raises(
+            asyncio.CancelledError if failure == "cancel" else ModelResolutionError
+        ) as caught:
+            await owner.read_credential(
+                tenant_id="tenant", route=route, label=None, request_id=None
+            )
+    assert count == 1
+    assert "fixture-private-key" not in str(caught.value)
+
+
 async def test_resolves_trusted_tenant_and_opaque_label_without_provider_credentials() -> (
     None
 ):

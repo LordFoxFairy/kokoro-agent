@@ -1,3 +1,264 @@
+## HTTP8.10 CustomAPI Run 精确选择（候选，运行装配另验）
+
+唯一增量是现有 `LaunchRequest` 的 optional `selected_custom_api_profiles`：有序数组最多32项，每项仅 `profile_id`（1–191位ASCII opaque ID，`[A-Za-z0-9][A-Za-z0-9._:-]*`）和 `expected_state_version`（严格整数1–2147483647）。同profile ID即使版本不同亦拒绝；拒绝null、未知字段、名称、说明、环境变量或密钥。省略/`[]`均不向旧 `RunRequest` JSON写新字段，保留原dispatch fence及输入摘要；非空选择写入原request JSON、参与原fence并随原Redis envelope/恢复重放，顺序或版本漂移按原同Run冲突处理。无新表/列/事件/路由。
+
+协议内部为不可变 `CustomApiProfileSelection` 与tuple；HTTP仅解析safe intent，不授予权限。每个lease的proof supplier重建并冻结选择；`custom_api.describe_environment` / `custom_api.acquire_environment`仅在该快照非空时签发，仍逐调用执行原current lease/时钟/nonce门禁。新operation的 `execution_binding` 保持null；不改Skills的ordered selection digest或IAM既有execution-binding语义。受信factory负责把相同冻结refs交给Platform client；Platform当前本人/版本/授权与任务隔离沙箱执行仍是后续运行门，不由此字段代替。
+
+HTTP版本8.10.0：只删除该optional属性并还原8.9.0即逐字恢复完整已发行父SHA `875545c23cf4cd055adfb4aedf6ea3c994eab6be10a25f1f68db248ffecb32c9`，既有8.9→更早父链继续验证。沿唯一OpenAPI与正式failure generator更新生成物/provenance；BFF固定本owner commit/digest后消费，无共享DTO或第二契约。本片不代表BFF/App选择、正常环境或真实API整链已完成。
+
+## HTTP8.9 旧终态最终答复只读证明（候选）
+
+沿现本人Run `GET /v1/runs/{run_id}/display`，RunDisplay新增可选 `final_message_id`，仅公开派生的 `msg_` 加32位小写hex身份；不接受null，不公开原生ID/正文。来源是已审配方和checkpoint v4、同Run完整有界root父链、原生成功终态及唯一公开完成消息的身份/完整正文双证。缺证省略，不代表没有最终答复；原terminal显式绑定仍由消费者优先采用，冲突不得覆盖。无新事件、数据列或历史回填。
+
+final父链最多128locator，与原工具32locator独立计数，共享原8MiB输入预算、同一RR只读事务、原5秒绝对期限及1MiB响应界。后继/其它Run、Swarm或未审版本不猜测恢复；v<4可能触发SDK额外pending-send查询，已在native读取前拒绝。BFF必须通过自己的Message/ordered parts/revision将该身份绑定到本人同Run，不能把Agent序列当BFF版本，不能更新历史final列。
+
+8.9仅移除上述字段并还原版本即可逐字恢复已发行8.8（SHA `fd8b2857ecbc9577bd98ca73234e4d81c53d4fe189ba86badcf35c774b9a6830`）。沿现正式generator更新provenance；消费者尚未固定8.9之前不激活正常HTTP。此文档不代表BFF/App已接通或页面已验收。
+
+## HTTP8.8 最终公开答复身份（设计门，候选）
+
+父为 HTTP8.7.0 / OpenAPI SHA256 `74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc`。唯一 canonical `contract/openapi/v1/openapi.json` 增 decoded `run.completed` → `ChatRunCompleted`，required status=completed|cancelled，原 optional token_usage 不变；新增 optional final_message_id 非空公开 ChatMessage 身份，只允许 status=completed。缺省为未提供已证身份，null 不作为新的业务状态；历史 payload bytes 不补字段。HTTP 返回此绑定仍只在已有本人 Chat replay，不增加 endpoint 或匿名分享字段。
+
+内部 `RunCompletedPayload.final_segment_id` 为 optional，模型原生身份不直出安全 HTTP。原生最终 state 与同 Run completed Chat 记录双证、唯一 terminal 事务固定后，由原 assistant_message_id 转为 final_message_id。取消/失败无绑定；空最终段仍可引用其自身。不能用最后一页、文本 completed、Run完成或任意末段替代绑定。
+
+8.8 只移除该 decoded mapping/schema 并还原版本应逐字恢复完整8.7父，原所有父证明保持。沿既有 failure/provenance 生成与固定产物发行；BFF/App reader-first 之后才启新producer。完整线下/真实持久与浏览器证据另记，当前未发布或激活。
+
+## 2026-10-28 HTTP8.7 逐调用公开行动说明（候选，未激活）
+
+原 `ChatActivity` 的 tool 分支增加 optional `action_title`，纯文本1–256 UTF-8字节，不含首尾空白、控制/格式/代理字符或已识别私密文本；非法/缺失/不匹配省略，不用相邻正文、工具能力描述或返回内容猜测。不是执行权限、思考过程或结果状态。原 activity/segment身份、顺序、状态及端点不变，无DDL。这里只扩既有公开主Agent tool activity，子代理私有 `subagent.tool.*` 通道不变。
+
+说明由同一次模型调用的可选 `_kokoro_action` 提供，仅装饰模型可见schema副本；实际业务参数先剥离该元数据。原消息 checkpoint 中绑定本Run/call/name/原参数摘要，HITL修改后不沿用旧说明。首次原Chat活动冻结presence/value，后续状态及恢复复用首次事实；旧历史缺省保持缺省，不回填。敏感文本过滤是防御性约束，不承诺识别任意编码秘密。
+
+正式8.7仅逆去action_title并还原版本后，逐字得到8.6 SHA `de73c229a962e37afbf3f69aba160a8b6b9a56cd2603952a3d3d97f5a610b64b`；再承接既有8.6及之前完整父证明。BFF/App须先发布配对reader，沿原AG-UI/live/snapshot/ordered/replay读取，不新设解释接口。producer新增标题写入后，回退保留可读该字段的reader；不删历史。新装配代码进入原runtime recipe，已冻结旧Run不得暗换执行配方；上线时保留旧执行者处理其原Run，不在未核实存量前重启替换。
+
+## 2026-10-28 MCP 同 Run 工具说明（展示修复，候选未激活）
+
+沿现 Agent RunDisplay 私有读取增加 optional `activity_details[].tool_description`（与既有预览相同 text/truncated/redacted 形状，UTF-8 至多1024字节）。它仅表示本 Run 实际观察到的 provider 能力说明，不是逐调用目的、工具title、执行结果或权限。Agent仍唯一事实 owner；BFF固定正式契约透传、App纯文本消费，不新建服务/表/端点/第二事件协议，不查询当前目录回填历史。
+
+来源只采用原 Run exact activity＋typed call＋succeeded/non-error journal 的 `mcp_describe_tool` 正式返回格式；按完整 connection＋selector匹配，先校验原说明和参数schema，再从原说明过滤/裁剪。不同连接同名不互借，同一目标冲突说明全部省略；旧历史缺证、错误或危险说明省略，不从输出预览反解析，不补造自然语言。该事实可附到同Run匹配的 describe/call（失败调用也可有说明，但状态保持）。原函数身份、输入输出和失败不改；发现列表仅首行摘要，不用它冒完整说明。
+
+HTTP8.6正式增量只加该optional字段及其mcp目标条件；生成/消费者配对前不替换正常服务。预算沿原百万字节Run读取收缩，说明亦参与收缩；过滤不保证任意文本完全无敏感信息，因此仍限本人私有Run，禁止Share或执行其中指令。无Schema/依赖/执行授权变化；回退旧reader并保原数据。
+
+验收：同Run精确关联、跨连接同名/旧Run/冲突/失败/未知/坏schema/敏感/UTF8预算负控，完整旧契约原件逆证、同owner实际HTTP读取和消费者回归。最终以原MCP会话可读说明、具体请求/结果与刷新可见的产品证据验收，不以新增字段或测试通过声称Manus一比一。
+
+## 2026-10-28 HTTP8.5 私有工具详情（Root 已批准；候选）
+
+复用本人已授权 Run 的现有 GET `/v1/runs/{run_id}/display`，仅增加 `activity_details`；不改 Chat/SSE、worker执行、数据库或授权。每项通过原 Run activity、typed AIMessage tool-call、journal 与 frozen selection 精确绑定；未知来源不输出。运行中只输出有证据的输入，terminal journal 才输出结果；旧 tool_facts/失败证明/首帧 detail 和活动顺序不变。GET只读，不补历史、不查询当前连接器目录、不生成连接器名。文件仅承接已证明的安全 virtual target。
+
+严格 DTO 为 activity_id、tool_name、可选 target（复用原ToolDisplayDetail安全域）、input_preview/output_preview。preview严格为 text/truncated/redacted；输入最多2048 UTF-8字节，输出4096；activity_details最多128且ID唯一。纯文本/代码展示，不执行、不autolink、不作为指令，不进入Share/公开快照。缺证缺省，不伪造正常元数据。原5秒、32locator、8MiB输入、1MiB完整JSON响应预算保持；预览按稳定顺序在序列化预算内缩短并标truncated。
+
+本次产品裁决允许本人Run有限参数/结果正文预览；结构化敏感键删除，文本疑似秘密、凭据、内部host路径/配置或traceback时整块省略。只投影模型参数，不取runtime注入/transport material/env/reasoning；MCP仅text及structuredContent，binary/resource/metadata不公开。深度6、每容器32项、总节点128，JSON反序列化先作深度/字节预检，重复键/非法Unicode拒绝。generic redaction是受控私有公开策略，不是任意文本不含秘密的证明；未知格式/编码秘密仍有残余风险。缺少可显示内容时保缺省，不把省略声称空结果。
+
+discover/describe仅按现正式wrapper格式投影：discover逐行核冻结connection前缀，去掉connection ID后保selector/description；describe核本调用exact server/tool首行，去ID后保说明与解析后的input_schema，结构敏感键继续删除；非格式字符串省略。文件继续沿原display_detail/tool_paths，不按类别编造read_file/write_file等函数名。
+
+读取仍为原RR read-only同Run定位，不扫描session。扩大原locator到discover，并允许started journal读取冻结配方以取得运行中输入；每次输入/输出只绑定自身call ID，成功兄弟调用不证明本调用参数/结果。现known legacy describe错误只按原精确SHA/常量/typed message证据承接，不开放任意错误栈。Agent正式8.5原件/生成物/provenance先交付，BFF固定消费后App接Canvas；不先发新Chat/SSE字段。
+
+## 2026-10-28 HTTP8.4 Run display 后继（Root 已批准；候选）
+
+旧describe仅对已审源SHA `f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea`，exactRun原native调用与同ID/name的typed ToolMessage、journal完整结果同时等于该版本内建三错误常量，才补该activity的failed事实；其它版本、substring、远端内容与无typed证据均不归类。
+
+既有GET `/v1/runs/{run_id}/display`保原准入／transport／5s与1MiB界，RunDisplay仅增加必需`tool_facts`数组（返回缺证时[]，max128、activity_id唯一）。严格项为`{activity_id, display_detail?:{kind:"mcp_tool",name}, status?:"failed"}`，至少一个可选字段存在；name复用原安全公开名域，拒null、路径、server人工名与额外键。display_detail仅用于原MCPcall/describe，status只是该原tool的已证明失败，不是Run/assistant状态，也不授重试。保持原run_id/display_skills/tool_paths不变；完整HTTP8.3逐字逆证后正规发行，旧8.3原件不重发。没有独立endpoint、数据库变更或新权限。
+
+## 2026-10-28 Skill display／Run display D0（Root 已批准，候选实施中）
+
+唯一机器源拟发布HTTP8.3，保完整8.2父证明及全部旧操作；Redis worker协议不变。安全Skill activity仅在native loader成功后的ready附optional `display_skills`（最多16，按source_ref唯一且属于原source_refs）：`{source_ref,name,virtual_path,revision?}`；revision为已取得的exact正十进制字符串，不接受null，不取包frontmatter.version。name复用1–120 scalar／480 UTF8 bytes的NFC／控制／敏感文本边界；virtual_path最多4096 UTF8 bytes且必须通过原来源与路径安全校验。旧file `display_detail={kind:"file",name:<basename>,virtual_path?:<真实公共虚拟路径>}` 不放宽name；mcp_tool及其它activity不接该字段。unsafe／缺事实省略，不合成名称或截断。 MCP仍原`kind:mcp_tool,name`闭集，无新server kind；name只来自本Run批准public title或同public selector，非法title不输出，discovery不伪指单tool。
+
+新增 `GET /v1/runs/{run_id}/display`：沿现service bearer＋可信tenant/actor/subject/assertion；`get_request_scoped` 不匹配统一404。严格无query／body／Transfer-Encoding／Content-Length／Idempotency-Key，不开放任意thread/checkpoint/tool args读取。200沿原 `{data,meta:{request_id}}`，data闭集为 `{run_id,display_skills:[{source_ref,name,virtual_path,revision?}],tool_paths:[{activity_id,virtual_path}]}`；同Run至多16／128项，无分页或后台poll，整UTF8 JSON至多1MiB。两个清单仅列有证明的展示事实，缺项表示unknown，不表示没有Skill／工具或已读完整；旧baf57可恢复native name/path，revision保持absent。tool只用原safe activity opaque ID，不公开tool_call_id、checkpoint locator、description或raw args。公开文字仅纯文本，不授执行／文件读取授权，不生成href。
+
+5秒绝对read期限／32个同Run checkpoint locator／8MiB累计native输入；内部取消关闭自有连接。畸形请求400，缺service/trusted identity401，not-found／跨主体统一404；依赖、损坏、超界／超时503，原error envelope，不输出底层内容。合法缺失或清理过的历史仅缺省展示，不猜测。原Chat event_id／payload_json／seq／digest、事件分页、command／control、Share原件均不改；新GET是独立read projection，不把hint塞旧ingestion source。BFF显式消费正式后继并在当前Session／Conversation准入后才读，App按exact Run/source/activity关联；匿名Share剔除展示。先reader再producer，新持久事实出现后不得降回旧严格reader。旧Run与未来事实的来源／原生Delta规则见[技术首节](TECHNICAL_DESIGN.md)。
+
+## 2026-10-27 HTTP8.2 具体动作对象 D0（候选，Root 已核；实施中）
+
+基线源码 `38c294d38cf05149c320622f52490f82fb1fff91`，HTTP8.1.0完整OpenAPI SHA256 `1642829ccf5364692051e836938ef33b36cffeca25f2b7766ad95cd44a1542c9`、provenance SHA256 `879695cfacd55014b9f6a28e3138d88bc009ba9d46acfac27497a26f0025acad`。本门拟发8.2.0，只在 `ChatActivity.oneOf` 的 tool 分支增加 optional `display_detail`；九值display_code、原required、状态、opaque身份、其它分支和所有请求不变。后文旧版本不公开名称的限制保留在其原切片，不覆盖本门增量。
+
+| display_detail | 允许display_code | 语义 |
+| --- | --- | --- |
+| `{kind:"file",name:string}` | `tool.file.read`／`tool.file.write`／`tool.file.deliver` | 当前已核实际ToolNode/schema的file_path或实际deliver.path，经受限路径域／敏感检查后仅basename；不含目录或模型title |
+| `{kind:"mcp_tool",name:string}` | `tool.mcp.describe`／`tool.mcp.call` | 本次已绑定Connection中精确单目标匹配的owner公开声明display_name；不回显raw server／tool，不取description／result |
+
+detail对象严格只含kind/name，未知kind／额外键／null拒绝；name非空、最多120 Unicode scalar且UTF-8≤480bytes，NFC原值、拒控制字符／Cf／孤立代理，不截断／改名。JSON Schema的maxLength=120不能独自证明UTF-8／NFC／分类边界，运行时producer与消费者须按同一域验证。未获详情、路径／名称超界或敏感时producer整体omit；所有其它code、subagent／skill等分支禁带detail。field缺席不是空标题或未执行；status仍只反映原事实，不因有name宣称动作成功。
+
+原路径上限4096 UTF-8 bytes；只相对路径或实际构造已证明的Run公共虚拟根。实码local_shell／Docker文件面virtual_mode=True的公共根是 `/`，不是execute容器的 `/workspace`；原factory StateBackend仅在已核构造下作为图内虚拟根。`/.skills/`仅在本次真实声明／挂载的只读来源且basename安全时准入，不推断技能动作／显示名；custom／e2b等未证公共文件面（含相对输入）、宿主风格绝对路径、Windows drive／UNC、逃逸／敏感目录／凭据文件及可识别token形态均省略detail；不改传给原工具的路径或执行资格。精确剔除、未知秘密残余及来源绑定见同日期TECHNICAL_DESIGN；仅本人Run本已可见文件名／owner公开声明可进入此受限字段，匿名Share必须由BFF原投影和快照明确剔除，不让新字段扩张分享权限。
+
+首次invoked冻结code及detail presence/value，returned只复用；重启cache miss读取同tenant／namespace／session／run／opaque activity首条安全Chat事实，旧absent及原code原样保留，不从raw参数／journal／result回填。原私有ToolInvokedPayload／ToolReturnedPayload和Redis wire不新增展示字段；Chat仍由原payload_json durable replay，HTTP envelope／cursor／顺序和AG-UI种类不变。MCP原check->_binding的typed公开快照零新增owner请求，展示名不授grant，不改变当前授权／SDK／unknown链。
+
+唯一canonical仍 `contract/openapi/v1/openapi.json`；正常生成failure/provenance，不手改生成物。8.2只逆去唯一detail字段／新增schema与版本须逐字还原上述完整8.1原件；保所有更早父证明。BFF固定精确owner commit、8.2与完整OpenAPI/provenance SHA后正规生成、发布Public后继；App固定BFF后继，live／compact snapshot／ordered parts一致。optional不是旧严格reader兼容证明：先配对reader再启producer；新历史存在后回滚producer保留新reader，不改旧bytes。机器／runtime闭合校验、跨code错配、Unicode界、secret omit、恢复和Share负控须实际通过；本候选机器8.2及failure/provenance已沿原生成链更新，尚未发行或正常激活。
+
+## HTTP8.1 原生写文件与交付文件展示后继
+
+本片父机器版本为 HTTP8.0.0，完整 OpenAPI SHA256 `93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff`；本片后继为 8.1.0，仅在 `ChatActivity.oneOf` 的 tool 分支 `display_code.enum` 原七值末尾追加：
+
+| 新值 | 来源及语义 |
+| --- | --- |
+| `tool.file.write` | 实际官方 ToolNode 中通过保留名边界及 SDK WriteFileSchema 身份证明的原生 write_file 定义；仅声明工具类别，成功与否仍由原 status 表达。 |
+| `tool.file.deliver` | 现 delivery 来源分支实际创建并经 ToolNode 对象 identity 核验的 deliver 定义；不以此类别代替 Storage 成功或 Artifact 当前资格。 |
+
+没有新增字段或 endpoint；原 required、opaque activity／segment ID、三状态及 additionalProperties:false 保持。没有 filename、args、路径、content、result 或任意 title 的公开展示字段，产物继续由现 Delivery／Artifact 投影展示。原 Redis 工具事件、HTTP 请求、failure／proof／usage、权限、receipt 和 Schema 不变。原 tool.execution 历史保持，不根据工具顺序或产物标题重新分类。
+
+此 minor 是需协调消费者的输出闭集扩展，不是旧严格 reader 的兼容承诺。Agent canonical → 原 `scripts/generate_failure_models.py` → OpenAPI／provenance 固定发行 → BFF 正规消费／public 后继 → App 固定消费后，Root 才准入新 producer；现有正常资源不在本片操作范围。`8.1.0 → 8.0.0` 只移除两个新枚举并还原版本后必须得到完整父 SHA，继而保留原 8.0.0 → 7.4.0 及全部更早父证明；其它 delta 拒绝。生成 Failure 的业务声明不变，仅正规生成的源摘要及 provenance 更新，不手填 hash。
+
+## 2026-10-26 Agent8 安全工具类别（历史设计）
+
+**基线/变更性质。** 从正常 `83e9e36efeb8086074648ea9d5bd9a3bea43d5cd` 的 HTTP7.4.0（OpenAPI SHA256 `7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad`）演进到 HTTP8.0.0。`ChatActivity` 的 tool 分支当前 `display_code` 仅 const `tool.execution`；后继把它改为下列严格枚举，保原 required 字段、opaque ID、三状态与 `additionalProperties:false`。这是输出闭集扩展，旧严格消费者会拒绝新值，不能伪称兼容的小版本或先启 producer。
+
+| `display_code` | 可声明的公开语义 |
+| --- | --- |
+| `tool.execution` | 通用工具调用，包括旧历史与未获本片受信语义绑定的工具。 |
+| `tool.file.read` | 官方文件读取；包括经真实后端路由读取的 Skill 文件，但不额外声明“读取技能”。 |
+| `tool.mcp.discover` | 自有 MCP 固定 list wrapper 的工具发现操作。 |
+| `tool.mcp.describe` | 自有 MCP 固定 describe wrapper 的工具说明操作。 |
+| `tool.mcp.call` | 自有 MCP 固定 call wrapper 的工具调用操作。 |
+| `tool.web.search` | 自有联网检索操作。 |
+| `tool.web.fetch` | 自有网页读取操作。 |
+
+类别只由已验证实际挂载定义/来源绑定，经 Agent 请求内可信上下文进入安全 Chat 投影；调用名仅定位受信绑定，不按原始名称/参数/结果/description 推断。native read_file 必须证明实际官方挂载来源，同名对象不足以授类别；不读取 SDK 私有字段或修改第三方 runtime。未知公开 code 整条拒绝，不默认为 generic。现 Subagent、Skill preflight、Todo、HITL、Delivery、Run failure/usage/proof 及状态字段保持原定义；不新增 `tool.skill.read`、任意标题、参数、URL/路径、远端工具名、phase、时长或隐藏推理字段。MCP discovery/describe/call 标签不证明远端执行资格、调用成功或成果已发布。
+
+**生命周期/历史。** 同一冻结 Run 定义下的同 call 在 running/completed/failed 及合法恢复时类别一致，opaque 身份与源序号沿原算法；权限、tenant/actor、lease、取消、迟到、HITL/unknown 和 journal 不因展示改变。原 Redis `ToolInvokedPayload`/`ToolReturnedPayload` 及 PostgreSQL schema 不增字段，安全 code 仅进入既有 Chat activity payload。旧已发布 `tool.execution` 仍合法并保原 bytes/digest，重播原值；不回填旧活动、不推测 R6 工具名称、不重做旧 Run。缺新鲜来源证明不授权更具体的类别，也不以显示元数据授予执行许可。
+
+**唯一发行图。** 本仓 canonical OpenAPI8/`contract/provenance.json` → BFF 固定 owner commit、version、完整 OpenAPI/provenance SHA256，沿 `scripts/generate-agent-http-client.mjs` 正规更新 vendor、`contract/dependencies/agent-http.json` 与生成 decoder → BFF canonical Public28 `RunToolActivity.display_code` 同闭集 → App 固定 BFF 完整 artifact/生成物并同步唯一 activity schema 与本地化。BFF 仍用 `CUSTOM kokoro.activity.updated`，compact process、snapshot、ordered parts 与 live 必须同值，不加第二网络事件；App 不直读 Agent 或复制 Python 类型。跨仓 consumer 写入与正常装配由各 owner/Root 后继承担，不由本仓设计稿冒充已发行。
+
+**本仓机器/生成门。** 精确候选写区见本仓技术设计本节；只改 `contract/openapi/v1/openapi.json`、`contract/provenance.json`、`src/kokoro_agent/contract_check.py`、`src/kokoro_agent/chat_contract_check.py` 的版本/闭集/来源核验，沿 `uv run python scripts/generate_failure_models.py` 正规刷新 generated Failure 源摘要与 provenance，再用同命令 `--check` 和 `uv run kokoro-agent-contract-check` 核验。生成的 Failure 业务 tuple、proof2、usage2、其它 owner pins 和原独立生成链不得变化；不手填生成字节或摘要。HTTP8 → 完整7.4父原件的逆证明只用于测试，保旧机器约束与历史 hash，不在运行时双读/降级。行为、contract、安装分发及持久 replay 风险按技术设计既有测试路径核验，无新 endpoint、SQL、Redis 字段、依赖或配置。
+
+**配对/回滚界限。** 发布 artifact 与正常激活分开：BFF/App 先能严格读取上述完整闭集，再由 Root 成套准入 Agent8 新 Run；不修改正常源或已有 frozen recipe。新 code 已持久化后，停止新 producer/派发不等于旧 reader 已可回退，恢复期间须保能读取这些事件的固定消费者；不删除/改写历史事件来降版。Root 已复核设计门并授权本仓候选业务/机器实施；实际验证与冻结收据另交 Root，正常资源与跨仓配对仍须 Root 独立授权。
+
+## 2026-10-25 Personal MCP SSE runtime 消费（候选已实施，尚未正常激活）
+
+正式 producer 固定 Platform `8cfead647856ef54ec851a3bebe169a3ca14d212`／Runtime1.5。现 `ResolveMcpRuntimeConnection`／`AcquireMcpRuntimeCredential` 两 RPC、operation `mcp.resolve_runtime_connection`／`mcp.acquire_runtime_credential`、当前 E2 与 binding3.0.0 不变。新 resolution `sse=10` 与 credential `sse=5` 必须同 case；exact connector/connection/server/selector/declaration、resolution reference SHA、discovery/invocation purpose、grant/audit/原参数 bytes／approval presence／key、trusted Run/tenant/lease 与最小 expiry 均沿原检查。HTTP／managed STDIO不降级、不兼容错 case，SSE不伪装 HTTP；BFF Public26只运输ID，不授执行权。本仓只消费该已发行 wire，不新增 Agent API/Schema/依赖。
+
+通过现官方 SDK 的 typed `SSEConnection` 与具名 SSE-only factory执行，不新增浏览器事件流或第二 RPC/session 协议。广告 endpoint 原文及解析后的含 query URL均≤8,192 UTF-8 bytes；同 scheme/host/有效 port，无 userinfo/fragment/控制字符/反斜线/redirect/降级，当前 DNS 全集合资格／IP pin／TLS不由已完成 Prepare替代。临时query只在会话内存，GET流累计及单POST ACK各≤4,194,304 bytes；原30秒绝对调用与材料min-expiry覆盖读/EOF/退出，不分步重置。202 Accepted只ACK，有效结果仍取官方流上exact JSON-RPC id。
+
+压缩策略只作用新SSE：未配置accept-encoding时默认identity，已配置 Header原值保持、无覆盖或额外请求值限制；transport原始响应仅接受无Content-Encoding或单一identity，非identity明确失败并关闭，不自动解压或重试。identity表述体字节接受后才按硬限计数，不以压缩wire界代替解码体积界。POST可能已产生效果，压缩／超界／断流失败不证明未执行，原journal unknown/failed与原key恢复、不重派保持。
+
+局部SSE ContextVar＋实际输出handler/caplog端净化按锁定MCP模块`record.pathname`覆盖`mcp.*`及其root/client命名的shared/session/TaskGroup路径；不能只按logger名称。HTTPX/httpcore仅本factory request/read/close来源进入净化；保闭合安全phase与原level/source，剥query/header/原异常及traceback参数，不吞业务错误／日志。其它root/client来源、非SSE及其它并发HTTP记录不变；不调进程全局日志级别、不改RecordFactory或SDK源码、不另建通用日志框架。若有QueueHandler，须在生产task的enqueue handler前净化，不在listener线程依赖ContextVar；锁定SDK离线拓扑为root StreamHandler／相关logger传播且无自身handler，非正常进程探测。所有SDK child teardown完成才释放scope/filter引用，失败／取消／HITL均清材料与连接引用；原HTTP/STDIO生命周期不变。
+
+唯一固定来源仍本仓provenance/vendor Proto/runtime profile及原正规generator。起始Agent Runtime1.1 descriptor不同于producer的1.4父图，不能以1.5→1.4逆证冒完整旧1.1；新current-pin与旧历史父证明分别绑定、原两op/v3向量和独立operation24/service-auth/package pins保持。Root已通过设计门，候选已按正式对象正规生成；本段不声明正常Agent/SSE/同Run已可用，旧Run不重派。
+
+候选另承接锁定SDK会吞POST异常的边界：仅已观测本会话transport失败置latch，managed正常退出前核验；GET exact-id结果先到或后到均不把已拒绝的压缩／超界ACK冒成功。未观察完成的合法ACK、普通close、取消／HITL不置失败、不重派；官方SDK实际loopback与先后序负控证据由最终候选收据绑定。
+
+SSE SDK入场要求root已配置实际handler；缺失时静态MCP_SESSION_FAILED且零SDK/网络调用，不自行basicConfig或加handler。原worker入口先basicConfig再装配执行；HTTP入口不执行MCP。现handler与lastResort的自身filter引用按并发会话释放，运行期间其它组件整体重配logging不在本片支持范围；不以被level抑制的info/debug来发现懒创建sink。
+
+## 2026-10-25 原生摘要的对话流隔离
+
+框架标记 `metadata.lc_source=summarization` 的内部摘要仅在现 summary adapter 的调用 config 追加锁定 SDK 原生 `TAG_NOSTREAM`，不作为公开 assistant delta/completed；不按标题或正文过滤，普通主回答即使含相同标题仍正常流式发布。实际 provider stream、真实用量、摘要 capsule、原生 `_summarization_event`、seal/金融 ACK、失败与取消语义保持；没有新增 wire/Schema，也不改写既存 Chat 投影。
+
+## 2026-10-25 SDK send 安全cause诊断
+
+仅在既有model-call handler捕获真实SDK `APIConnectionError`／`APITimeoutError` 时写私有诊断：固定SDK类别、最多4层显式 `__cause__` 的白名单类别、complete/cycle/truncated与现call/attempt UUID；截断或循环的root为unknown，不按名称/文字归因。真实 RuntimeError、OS拒绝/重置/中止连接及SSL错误仅映射固定类别，不按文字或errno推断loop关闭/供应商故障。无异常text/repr、URL/header/body、traceback或凭据，无新事件/Schema/wire。日志失败不替换primary；原denial还原、secondary settlement、pending ACK／hold、single-dispatch、零自动重试和摘要语义保持。此诊断不证明供应商故障或当前可用性。
+
+## 2026-10-25 SDK 连接失败的安全分类
+
+仅真实 OpenAI SDK `APIConnectionError`／`APITimeoutError`（`isinstance`）归为既有 `model_unavailable`、`retryable=false`，优先于装配调用点提供的缺省码；同名普通异常或错误文字不参与归类。此为安全失败分类，不证明供应商 TCP/DNS/TLS 子因或可用性，不增加 wire／重试。原 API 主异常、secondary settlement 处理、pending financial ACK／hold、single-dispatch、历史终态和 preflight/start 顺序保持，不释放资金或重派模型。
+
+## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
+
+本节目标已在 Agent 候选唯一机器源 contract/openapi/v1/openapi.json 7.4.0 实施；BFF/App 尚未配对，正常服务仍运行7.3，不冒整链已发行。
+
+现POST /v1/runs的LaunchRequest新增selected_mcp_connection_ids：optional array<string>，省略/[]均表示没有额外的用户选中MCP；最多16项，唯一且保持调用者顺序，每项^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}$，JSON ASCII编码至多4096 bytes。类型、重复、超长、URL、空白、嵌套对象或secret字段错误均为原400 invalid_launch_request。不从trace或mcp_servers读取该字段，不引入新RPC或错误码。
+
+LaunchBody→RunRequest保持同一精确列表；空值由唯一Run序列化规则省略新增字段，使既存request_json/fence原字节可保持，非空必含且同Run变更拒绝。恢复/重试继承原选择，不重新读取账号开关；请求不接受credential、endpoint、tool list或policy。固定artifact及parent完整证明先交付给BFF，消费者不得先手写wire。
+
+## 2026-10-24 主链用量待核对的具名失败（实施中）
+
+沿既有失败/unknown资金策略，仅扩展安全failure码model_settlement_pending且retryable=false。只有匹配原admission/run/attempt/event/revision/digest的已记录pending_reconciliation ACK可产生此码；缺回执、错绑定、网络未知仍原dependency_unavailable，不能凭错误文字推断资金状态。旧通用失败历史不改写。原sealed证据、ACK、预占/结算、single-dispatch与后续调用停止保持；不发新模型或改费率来刷成功。HTTP7.3只追加该枚举，完整7.2父字节证明保全部旧API；BFF正式固定后再接App，不先正常激活半条链。
+
+## AGENT-1：供应商响应编号的内部观察（2026-10-23）
+
+HTTP7.2、usage2、BFF settle wire 不变。内部 PhysicalUsageObservation 与 SealModelCallObservation 增加可空 provider_response_id，限1–256个可见 ASCII 字符，来自同次已消费响应的 id；不接受 SDK 后合成编号。流式所有出现的 id 必须有效且一致，缺失保持未知。该编号不进入日志/公开事件/usage wire，不改变原 raw_usage_digest；只作 Agent 后续核查索引，不能用于签发权限或自报新用量。原 first-seal replay 同时比较编号，禁止替换或丢弃。
+
+## 2026-10-23 Platform 执行认证 consumer 配对（实施中）
+
+固定 Platform `4c3853b1062a9e22c9be6c059720a092805cb63f` 的 `contract/auth/agent-execution-service-auth-v1.json` 原件，
+仅替换机器认证为固定 caller/tenant/surface 服务凭据。既有业务 Proto、request digest、fresh execution proof 和 IAM 当前用户权限判断保持。
+私有文件 version=1，entries 每项严格 credential_id/caller/surfaces/tenant_id/secret，Agent 独占单用途且每 tenant 唯一；
+不接受旧 OAuth 格式、generation、client_id 或隐式默认 tenant。秘密只经受信连接的 Bearer 头，不进 Run、日志或文档。
+现 Platform provenance 追加独立 service_auth pin，不重写未变化的 Proto/operation 来源；owner 原件只读，checksum 由固定 Git blob 产生。
+没有新增公开 API、数据模型、服务或用户登录流程。此次只是 consumer 实施门，不是正常激活或完整验收收据。
+
+## AGENT-1：Worker恢复接线（2026-10-23，本地已验）
+
+原HTTP7.2／BFF1.3／proof2／usage2均不变；仅在现Worker装配原BFF pool和逐事件恢复。内部机器secret按可信tenant选择，部署snapshot不进入Run，不复用用户／System／模型密钥。恢复只调用recover／settle，原六事实及event/key保持，无首次reserve或proof；未配置时启动拒绝，无免费／旧协议fallback。可观察产品功能和新派发尚未因此开放。
+
+## AGENT-1：本地金融投递回执（2026-10-23，本地已验；worker装配待接）
+
+不新增HTTP／RPC／wire版本。既有BFF1.3 consumer原请求／原key及ACK使用不变；Agent存独立预算关联与完整本地canonical ACK／domain digest供崩溃恢复，不对外投影金额或更改sealed证据。历史reader同cursor复用保持HTTP7.2语义与原canonical bytes。requested_unknown恢复不改granted授权、不授旧fence执行权；miss只留待核对。
+
+## AGENT-1：固定 BFF internal1.3（2026-10-23，本地已验）
+
+固定5a303f2003fabeb50376c7f7e1f66f0d163adebb原始YAML及SHA4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39；现唯一receipt扩为create／recover／settle三操作，无新可编辑DTO。recover仅200原held创建ACK或精确404miss，settle仅200原sealed命令ACK／原错误，均禁proof／用户token；首次create仍201＋fresh proof。客户端严格核可信调用参数与ACK身份，不重算费用、不补0／夹预算／重发provider。三态及完整字符串限制由owner生成模型承接，不复制手写wire schema。
+
+## AGENT-1：精确历史证据读取（HTTP7.2，2026-10-22，本地已验）
+
+仍为GET /v1/model-call-attempts/{attempt_id}/usage-evidence/{event_id}，原专用Billing机器Bearer／受信tenant、无query/body／现大小与取消界限保持。HTTP7.2明确任一immutable sealed历史修订按原event返回，不限当前head；响应原bytes／artifact版本／revision／digest／observed_at不改写。请求row及独立实际head均须完整，坏head不因读历史绕过；其他tenant／attempt／missing／unsealed不暴露，不增加人类／服务caller身份。
+
+原7.1整件由仅撤销本语义description及version精确逆证明承接，既有7.1→7.0门继续；usage1只读历史／usage2当前生产与proof2原件不变，Billing须后继固定新HTTP发行。历史读取不代表新执行许可、当前成员资格或资金ACK，不新增恢复写旁路。
+
+## AGENT-1：本轮预算结算的实际归属 profile（2026-10-22）
+
+通用usage2继续接受原合法Opaque归属，不改变schema／vectors／artifact版本。本轮预算业务只允许
+原精确System模型，不开放actual fallback集合：用于该业务结算的verified.provider_ref／model_ref
+分别表示经具名认证上游证据确认映射的System provider／model目录ID，不是上游raw model名、
+显示别名或Billing商业引用。映射证据必须绑定同attempt、最终请求及冻结revision的执行目标；
+不以目录存在、复制planned或单独response.model自证。不能确认映射时保持actual unknown。
+
+Billing的局部收费profile只在这两个实际目录ID逐项等于原frozen planned.provider／model时继续，
+再沿原revision ID/digest→已冻结商业五元组／费率计算实际用量；其他命名空间、缺依据或超出
+此集合的真实归属保原证据和hold，进入pending，不套planned价、不另选现价。这一相等是必要
+条件，不替代原身份、授权、seal、usage/profile或预算校验。后继真正producer装配必须实现
+上述认证映射及错归属负控；当前尚未装配／启用，不能以本说明声称真实费用链已完成。
+
+## AGENT-1：唯一 BFF internal1.1 预算消费（2026-10-22）
+
+固定 consumer：BFF 0082b5cee4437367a608b5bd37732674a1622664，原 internal1.1 YAML SHA256
+695901b23f1f0322fd18ec2a11be27c5b6efcce07b04f57839498eab402d17c6，build-only 生成 strict Python 边界。
+只 POST /internal/v1/model-admissions：独立机器 Bearer、Idempotency-Key、x-billing-execution-proof；
+body 仅 run_id／attempt_id／request_ref／attempt_binding_digest／planned_digest／final_request_digest。
+用户身份由 BFF 原提交事实派生；不发送 tenant/payer body、浏览器 token 或旧 consumption header。
+201 必须完整闭集、原六事实、held、created_at=updated_at、合法 UUID／整预算／摘要／毫秒UTC；
+映射 admission_id 为包内 admission_ref，Agent 不读取或计算价格。错误码与 status/retryable 精确配对。
+unknown／invalid ACK 不证明未预占，不自动重试；恢复只沿原 request_ref/key/body。
+
+不变更 Agent 自有 HTTP、RunRequest、proof2 或 usage2；normal worker／finalhook 未接入。
+
+## AGENT-1：billing.credit.consume 的现 proof2 绑定（2026-10-22）
+
+不新增 HTTP、Redis wire 或 proof schema 版本。原 supplier 对具名 `billing.credit.consume`
+明确填入既有 execution_binding；三个原 Skill operation 和其余 operation 的现行为保持。
+输入仍是 operation＋request_binding_sha256，身份来自已绑定的 Run／lease，不接浏览器 token、
+payer 或模型自报身份。后继预算消费者须按 BFF 内部正式 Admission 契约计算摘要并调用本 supplier；
+本片不发布或假造 Agent 预算客户端、模型外发许可、capture ACK 或结算结果。
+
+## AGENT-1：当前调用准备事实读取（HTTP7.1，2026-10-22）
+
+`GET /v1/model-call-attempts/{attempt_id}/prepared`，专用 Billing bearer，tenant header；
+无查询、正文、Transfer-Encoding 或人类 identity/service 覆盖头，canonical 小写 UUID。
+成功沿现 owner envelope、no-store 和 request-id header，返回 original canonical RFC8785 UTF-8
+bytes 的无 padding base64url 与普通 SHA256：attempt binding、planned、当前 authorization。
+attempt binding 是 usage2 EvidenceIdentity 去掉 event_id 的精确字段集；planned 为 usage2
+PlannedBinding；authorization 随当前 status 为 not_requested/requested_unknown/granted。
+所有字节分别1..65536，数字序号／fence generation 沿 usage2 十进制字符串；无 Key、endpoint、
+完整消息或供应商商业归属。另返 binding_version=2.0.0、attempt_id、status、final request
+binding version/digest、prepared_at、observed_at、lease_expires_at，时间 UTC 毫秒。
+
+404 不存在／不可见；409 model_call_prepared_unavailable 表示当前 lease／状态不适合新准入，
+不是未派发证明；500 model_call_prepared_invariant_failed 不降为缺失；依赖503保持。
+只新增此 operation 和两个 schema，旧 HTTP7 完整表示不改；当前版本7.1由正式生成器刷新摘要。
+用途、首笔资金准入与历史恢复边界见 TECHNICAL_DESIGN 首节；不沿旧 R252 创建 bound artifact。
+
+## AGENT-1：预算授权与结算的最新裁决（2026-10-22）
+
+用户已确认预算预占→真实用量一次整数结算，取代旧额外供应商成本上界保证前置。本片不修改Agent HTTP7/proof2/usage2、schema、client或鉴权；R252旧capacity-bound新artifact/reader不再是资金链前置。后继在现可信attempt／final digest／exact model route上接正式Billing授权及严格回执；预算和price由Billing管理，不允许前端/Agent自报actual金额。unknown或超预算保留原资金与证据、停止同Run新派发；只有明确未派发可释放，取消/超时不是零用量证明。运行仍缺正式Billing consumer，未由本文放行。
+
+## MC-02：受控领取契约（2026-10-20，实施门）
+
+唯一 System 消费在既有 resolve 外加入 `POST /v1/system/model-catalog/credentials/read`，固定 System6 正式 source/artifact/provenance，拒旧/新混用。领取是无幂等写入的只读 POST，服务身份仍 kokoro-agent，可信 tenant 与原始选择保持；精确版本只作一致性比较，不授予历史路由读取权。仅接受200、no-store及严格字段/Key字符域，错误/超大/错误版本/错绑定/跳转均脱敏失败，不重试或返回给 Web/BFF。无 Agent public/Redis/usage 契约修改。
+
+固定消费为 System `550d65498822d8d2e629199482de4f6990b62708` /6.0.0；artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`，provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`，22来源与两操作receipt经Git原件及安装发行物检查。组件验证与正常未激活边界见CURRENT。
+
+## MC-02A：System5 固定依赖（2026-10-20）
+
+唯一消费操作仍为 `POST /v1/system/model-catalog/resolve`，固定 owner 提交 `b7fe78e25e3c569ae0e1cb9b42cddab02074ca07`、版本 5.0.0 与原始 artifact/provenance/20 来源摘要；不混用旧新 pin。System4→5 的该操作及递归 schema 已逐值核等，Agent HTTP7、proof2、usage2 和其它 owner 固定依赖保持原样。
+
+业务 feature_key 与稳定 label_key 仍经现 resolve 校验；展示别名不替换原 request_model，不充当 provider/凭据身份。receipt checker 只核本地精确收据，Git 原始来源核验属于组合交付证据，不将前者称后者。
+
 ## Raw通知不要求外部ACK（2026-10-19，实施门）
 
 当前HTTP7/Redis机器artifact与所有外部字段不变；BFF仍只读Agent durable Chat并写自身ledger，没有raw ACK endpoint。内部published通知不等待并不存在的外部receipt producer，移除宽限重发参数/配置及内部republish候选；Run/control admission receipt不是该通知回执。queued失败重试与精确Chat恢复不变。既有真实rejected和损坏历史保护继续，不把可丢通知称BFF已消费；不新增公开协议、自动模型/工具调用或扣费。
@@ -1743,3 +2004,8 @@ resource/provider/receipt policy；任一依赖失败都不得复用旧 allow/pr
 Exact anonymous `GET|HEAD /v1/execution-proof/jwks` returns the precomputed RFC 8785 JWK set as `application/jwk-set+json`; GET and HEAD share representation status/type/cache/length and HEAD writes no body. Query markers, transfer/expect framing, identity-header presence, and any content length other than one exact OWS-trimmed `0` are `400 execution_proof_jwks_invalid_request`. Other methods are `405 execution_proof_jwks_method_not_allowed` with `Allow: GET, HEAD`; missing/invalid ring is `503 execution_proof_jwks_unavailable`. All responses are `no-store`, without ETag, 304, redirect, bearer, tenant, or database dependency.
 
 Launch identity remains trusted `X-Kokoro-*` headers. It is not accepted from the launch body. The standalone A2c supplier adds no HTTP wire; IAM verifier, Platform proof wire, production composition, and real transport are not part of HTTP `1.1.0`.
+## 2026-10-25 模型网络有限期限（既定实施门）
+
+正式 OpenAI-compatible 路由显式传 SDK `request_timeout=httpx.Timeout(connect=5, read=120, write=30, pool=5)`，最终 HTTPX request extensions 必须保留四值。SDK whole-request `max_retries=0`；owned 异步 HTTPX transport 仅设置 native connect retries=1，最多重建一次未完成 TCP/TLS 的连接，不重放已经开始写入的 POST，也不因 read/write/protocol/HTTP status 重新发送。保持最终请求准入、凭据、证书验证、禁环境代理/重定向和同流 usage hook。
+
+每次现 model-call middleware 的 handler 区间共用一个绝对600秒期限，不含该scope之后的seal/drain。若 handler 包含原生摘要，外层期限包含这段工作及摘要自身seal，内层摘要期限不延长外层；外层尚无最终请求时不冒记主模型已派发，摘要独立 scope/capsule/usage 不合并。只有本期限自身到期才产生专属 typed `model_unavailable/retryable=false`；内层普通 TimeoutError、外部取消、失租和原 denial 保持原分类/优先。超时仍封存实际不完整 usage 为 unknown/pending，不补零、不释放为免费、不重新派发旧 failed attempt。无新 Schema、wire、配置项或依赖；正常激活与新Run验收由Root另控。

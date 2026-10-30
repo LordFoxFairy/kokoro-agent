@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.protocol import SkillProgressSink
 
 from support.fakes import read_unpaused_interaction
@@ -81,9 +82,15 @@ _CHAT_TENANT = request("scope").execution_identity.tenant_ref
 
 def _builder(
     agent: FakeAgent,
-) -> Callable[[RunRequest, LeaseFence, SkillProgressSink], Awaitable[AgentHandle]]:
+) -> Callable[
+    [RunRequest, LeaseFence, SkillProgressSink, ActionObservationSink],
+    Awaitable[AgentHandle],
+]:
     async def _build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(runnable=agent, tool_descriptions={})
 
@@ -636,7 +643,10 @@ async def test_resume_after_cancel_blocked_by_terminal() -> None:
 
 async def test_builder_failure_emits_run_failed_once() -> None:
     async def boom(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         raise ValueError("bad model")
 
@@ -1346,7 +1356,10 @@ async def test_drain_waits_for_cleanup_created_by_finishing_run() -> None:
     agent = FakeAgent(run=text_run("two-stage"), gates=[run_gate])
 
     async def builder(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=agent,
@@ -1392,7 +1405,10 @@ async def test_cleanup_timeout_retains_task_and_later_drain_succeeds() -> None:
     resource = Resource()
 
     async def builder(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=FakeAgent(run=text_run("done")),
@@ -1435,7 +1451,10 @@ async def test_cleanup_error_is_observed_and_makes_drain_fail(
     resource = Resource()
 
     async def builder(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=FakeAgent(run=text_run("done")),
@@ -1483,7 +1502,10 @@ async def test_repeated_run_cancellation_keeps_cleanup_owned() -> None:
     agent = FakeAgent(run=text_run("cancelled"), gates=[run_gate])
 
     async def builder(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=agent,
@@ -1704,7 +1726,10 @@ async def test_terminal_funnel_triggers_sandbox_teardown() -> None:
     store = FakeRunRepository()
 
     async def builder(
-        current: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+        current: RunRequest,
+        lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         await store.bind_sandbox_id(
             current.run_id,
@@ -1792,7 +1817,10 @@ async def test_terminal_publish_failure_still_runs_durable_sandbox_cleanup() -> 
     torn: list[tuple[str, str, str]] = []
 
     async def builder(
-        current: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+        current: RunRequest,
+        lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         await store.bind_sandbox_id(
             current.run_id,
@@ -2154,7 +2182,10 @@ async def test_failure_contract_initial_and_resume_preserve_typed_failure(
     calls = 0
 
     async def fail_build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         nonlocal calls
         calls += 1
@@ -2448,7 +2479,10 @@ async def test_every_worker_build_entry_reaches_the_same_profile_gate(
     calls: list[LeaseFence] = []
 
     async def rejected_build(
-        _request: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         calls.append(lease)
         raise StaticRecipeIncompatible(lease)
@@ -2511,7 +2545,10 @@ async def test_delayed_build_failure_uses_only_captured_execution_fence(
     finalized: list[str] = []
 
     async def build(
-        _request: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         captured.append(lease)
         entered.set()
@@ -2608,7 +2645,10 @@ async def test_r91_build_progress_write_error_is_not_assembly_failure(
     bus = FakeBus()
 
     async def build(
-        current: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+        current: RunRequest,
+        lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         # Exercise the real emitter/store failure through both existing build
         # catches, without adding an unsupported progress callback argument.
@@ -2701,7 +2741,10 @@ async def test_r93_all_build_entries_propagate_typed_progress_failure(
     store.chat_repository = RejectPhase()
 
     async def build(
-        req: RunRequest, lease: LeaseFence, progress: SkillProgressSink
+        req: RunRequest,
+        lease: LeaseFence,
+        progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         await progress(SkillPhase(phase="resolving"))
         raise AssertionError("no external build after unconfirmed phase")
@@ -2810,7 +2853,10 @@ async def test_r93_local_drained_recovery_probe_uses_fenced_progress_callback() 
     builds: list[LeaseFence] = []
 
     async def build(
-        req: RunRequest, fence: LeaseFence, progress: SkillProgressSink
+        req: RunRequest,
+        fence: LeaseFence,
+        progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         builds.append(fence)
         await progress(SkillPhase(phase="resolving"))
@@ -2870,7 +2916,10 @@ async def test_resume_replay_after_build_closes_untransferred_handle() -> None:
     )
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=FakeAgent(run=text_run("unused")),
@@ -2936,7 +2985,10 @@ async def test_resume_reader_failure_preserves_primary_and_closes_handle() -> No
     )
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=FakeAgent(run=text_run("unused")),
@@ -2995,7 +3047,10 @@ async def test_shutdown_cancellation_wins_while_failed_resume_cleanup_is_owned()
     )
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=FakeAgent(run=text_run("unused")),
@@ -3060,7 +3115,10 @@ async def test_drain_waits_for_post_build_resume_owner_until_handle_closes() -> 
     )
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=FakeAgent(run=text_run("unused")),
@@ -3129,7 +3187,10 @@ async def test_resume_spawn_transfers_handle_for_exactly_one_close() -> None:
     agent = FakeAgent(run=text_run("resumed"))
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=agent,
@@ -3205,7 +3266,10 @@ async def test_recovery_probe_closes_every_untransferred_handle() -> None:
     builds: list[LeaseFence] = []
 
     async def build(
-        _request: RunRequest, fence: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        fence: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         builds.append(fence)
         close_calls.append(0)

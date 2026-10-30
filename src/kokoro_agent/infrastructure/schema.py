@@ -447,6 +447,10 @@ async def _verify_model_evidence_schema(
         "latest_revision": "bigint",
         "latest_event_id": "uuid",
         "latest_evidence_digest": "text",
+        "financial_admission_ref": "uuid",
+        "provider_response_id": "text",
+        "summary_result_bytes": "bytea",
+        "summary_result_digest": "text",
         "created_at": "timestamp with time zone",
         "updated_at": "timestamp with time zone",
     }
@@ -461,6 +465,9 @@ async def _verify_model_evidence_schema(
         "predecessor_digest": "text",
         "evidence_bytes": "bytea",
         "evidence_digest": "text",
+        "financial_ack_bytes": "bytea",
+        "financial_ack_digest": "text",
+        "financial_acked_at": "timestamp with time zone",
         "execution_outcome": "text",
         "usage_state": "text",
         "totals_state": "text",
@@ -474,8 +481,18 @@ async def _verify_model_evidence_schema(
         "sealed_at",
         "latest_event_id",
         "latest_evidence_digest",
+        "financial_admission_ref",
+        "provider_response_id",
+        "summary_result_bytes",
+        "summary_result_digest",
     }
-    nullable_evidence = {"predecessor_event_id", "predecessor_digest"}
+    nullable_evidence = {
+        "predecessor_event_id",
+        "predecessor_digest",
+        "financial_ack_bytes",
+        "financial_ack_digest",
+        "financial_acked_at",
+    }
     expected_columns = {
         RUN_CLAIMS_TABLE: run_columns,
         MODEL_CALL_ATTEMPTS_TABLE: {
@@ -512,15 +529,23 @@ async def _verify_model_evidence_schema(
             "ck_model_attempt_latest",
             "ck_model_attempt_state",
             "ck_model_attempt_times",
+            "ck_model_attempt_financial",
+            "ck_model_attempt_response",
+            "ck_model_attempt_summary_result",
         },
         MODEL_USAGE_EVIDENCE_TABLE: {
             "ck_model_evidence_identity",
             "ck_model_evidence_revision",
             "ck_model_evidence_bytes",
             "ck_model_evidence_state",
+            "ck_model_evidence_financial_ack",
         },
     }
     canonical_checks = {
+        "ck_model_attempt_summary_result": "CHECK (summary_result_bytes IS NULL AND summary_result_digest IS NULL OR summary_result_bytes IS NOT NULL AND summary_result_digest IS NOT NULL AND octet_length(summary_result_bytes) >= 1 AND octet_length(summary_result_bytes) <= 4194304 AND summary_result_digest ~ '^[0-9a-f]{64}$'::text AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL AND latest_revision > 0)",
+        "ck_model_attempt_response": "CHECK (provider_response_id IS NULL OR provider_response_id ~ '^[!-~]+$'::text AND octet_length(provider_response_id) >= 1 AND octet_length(provider_response_id) <= 256 AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL)",
+        "ck_model_attempt_financial": "CHECK (financial_admission_ref IS NULL OR (authorization_state = ANY (ARRAY['requested_unknown'::text, 'granted'::text])))",
+        "ck_model_evidence_financial_ack": "CHECK (financial_ack_bytes IS NULL AND financial_ack_digest IS NULL AND financial_acked_at IS NULL OR financial_ack_bytes IS NOT NULL AND financial_ack_digest IS NOT NULL AND financial_acked_at IS NOT NULL AND octet_length(financial_ack_bytes) >= 1 AND octet_length(financial_ack_bytes) <= 16384 AND financial_ack_digest ~ '^[0-9a-f]{64}$'::text)",
         "ck_kokoro_agent_run_model_usage": "CHECK (model_attempt_count >= 0 AND "
         "model_dispatched_attempt_count >= 0 AND "
         "model_dispatched_attempt_count <= "
@@ -637,6 +662,20 @@ async def _verify_model_evidence_schema(
         ),
     }
     indexes = (
+        (
+            MODEL_CALL_ATTEMPTS_TABLE,
+            "uq_model_financial_admission",
+            True,
+            ["tenant_id", "financial_admission_ref"],
+            "financial_admission_ref IS NOT NULL",
+        ),
+        (
+            MODEL_USAGE_EVIDENCE_TABLE,
+            "ix_model_financial_pending",
+            False,
+            ["tenant_id", "attempt_id", "revision"],
+            "financial_ack_bytes IS NULL",
+        ),
         (
             MODEL_CALL_ATTEMPTS_TABLE,
             "uq_model_attempt_call_ordinal",

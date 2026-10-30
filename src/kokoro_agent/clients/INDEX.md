@@ -5,6 +5,8 @@ Model owner 的领域模型。
 
 ## 当前协议
 
+- `model_budget.py`：固定 BFF internal1.1 的单次预算 POST；独立 workload credential、fresh Run proof、strict ACK／有界 EOF 与 close，无用户 token、自动重试或 provider 执行。
+
 - `skills.py`：`PlatformSkillClient`按已冻结exact ref调用Run-bound Resolve/Approved，每次读取重新授权并校验完整包，无名称grant与bytes授权缓存。
 - `package_transport.py`：共享固定ObjectStore origin的有界原始GET，禁止cookie、redirect和自动重试；具体owner策略由包装客户端裁决。
 - `mcp_package_transport.py`：MCP短时精确大小/受控headers下载，独立于Skill授权，不接收内部凭据头。
@@ -21,7 +23,6 @@ Model owner 的领域模型。
 或 SDK 实现由部署通过 `WorkerClients` 注入。标准 CLI 不直读 owner 私库；本地内存实现仅是测试
 fixture。
 
-- `platform_credentials.py`：worker-only exact owner-file snapshot、tenant/generation 高水位与安全读取。
-- `platform_tokens.py`：IAM Basic/form token exchange、generation cache/singleflight/rotation/cancel 生命周期。
+- `platform_credentials.py`：worker-only version=1 服务凭据完整文件读取；固定 Agent/tenant_execution/tenant，每次派发前重读，不交换或缓存机器 OAuth token。
 - `platform_transport.py`：九个 exact generated Connect RPC、不可变 run sender、逐 call binding/proof/Bearer、deadline/error boundary。
   Skill typed reader与两项Runtime传输已接入；MCP当前resolver/worker已装配，正常组合与approval整链仍待验、Platform v4激活与安装产品链仍待验。

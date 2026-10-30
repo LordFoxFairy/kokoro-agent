@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import re
 
 from pydantic import JsonValue
 
@@ -13,6 +14,10 @@ from kokoro_agent.execution.platform_request_binding_values import (
     canonical_binding_bytes,
     project_nonempty_string,
     project_bounded_text,
+)
+from kokoro_agent.execution.custom_api_request_binding import project_custom_api_request
+from kokoro_agent.generated.kokoro.platform.v1 import (
+    custom_api_runtime_pb as custom_api_pb,
 )
 from kokoro_agent.generated.platform_request_projector import project_request
 from kokoro_agent.execution.mcp_runtime_request_binding import project_runtime_request
@@ -34,6 +39,16 @@ def project_request_binding(
 
     tenant = project_nonempty_string(tenant_ref, label="tenant_ref")
     if isinstance(
+        request,
+        (
+            custom_api_pb.DescribeCustomApiEnvironmentRequest,
+            custom_api_pb.AcquireCustomApiEnvironmentRequest,
+        ),
+    ):
+        if re.fullmatch(r"[\x21-\x7e]{1,255}", tenant) is None:
+            raise PlatformRequestBindingError("CustomAPI tenant invalid")
+        projected = project_custom_api_request(request)
+    elif isinstance(
         request,
         (
             runtime_pb.ResolveMcpRuntimeConnectionRequest,

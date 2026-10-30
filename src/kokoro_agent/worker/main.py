@@ -31,6 +31,16 @@ from kokoro_agent.execution.runtime_profile_sources import production_manifest
 from kokoro_agent.agents.native_profile import prepare_native_recipe
 from kokoro_agent.worker.dependencies import WorkerClients, WorkerDependencies
 from kokoro_agent.worker.platform import worker_platform_runtime
+from kokoro_agent.worker.model_financial import (
+    worker_model_billing,
+    ModelFinancialRecovery,
+    WorkerModelExecutionFactory,
+    active_model_financial_recovery,
+)
+from kokoro_agent.model.financial_reconciliation import ModelFinancialReconciler
+from kokoro_agent.infrastructure.postgres_model_financial_repository import (
+    PostgresModelFinancialRepository,
+)
 from kokoro_agent.domain.run.repository import SandboxBackendKind
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.sandbox import teardown_backend_for_run
@@ -53,6 +63,17 @@ from kokoro_agent.worker.supervisor import RunSupervisor
 from kokoro_agent.infrastructure.postgres_chat_repository import (
     PostgresChatRepositorySettings,
     make_chat_repository,
+)
+
+from kokoro_agent.execution.execution_proof_keys import (
+    WorkerExecutionProofConfig,
+    load_execution_proof_signer,
+)
+from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner
+from kokoro_agent.execution.execution_proof_supplier import ExecutionProofLeaseReadPort
+from kokoro_agent.infrastructure.postgres_execution_proof_lease import (
+    PostgresExecutionProofLeaseReader,
+    PostgresExecutionProofLeaseConfig,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -205,6 +226,32 @@ async def worker_storage_delivery(
         yield StorageDeliveryClient(run_repository, transport)
 
 
+def worker_execution_proofs(
+    config: AppConfig,
+) -> tuple[ExecutionProofSigner, ExecutionProofLeaseReadPort]:
+    if (
+        config.execution_proof_issuer is None
+        or config.execution_proof_private_key_file is None
+        or config.execution_proof_active_kid is None
+        or config.execution_proof_thumbprint is None
+    ):
+        raise ValueError("Worker execution proof configuration is required")
+    signer = load_execution_proof_signer(
+        WorkerExecutionProofConfig(
+            issuer=config.execution_proof_issuer,
+            private_key_file=config.execution_proof_private_key_file,
+            active_kid=config.execution_proof_active_kid,
+            active_jwk_thumbprint_sha256=config.execution_proof_thumbprint,
+        )
+    )
+    reader = PostgresExecutionProofLeaseReader(
+        PostgresExecutionProofLeaseConfig(
+            database_url=config.database_url, schema_name=config.database_schema
+        )
+    )
+    return signer, reader
+
+
 async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None:
     """Run one worker with deployment-selected public clients.
 
@@ -234,9 +281,16 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         config.custom_subagents_json, config.enabled_builtin_subagents
     )
     # 进程级共享 checkpointer + run 状态存储：PostgreSQL 跨 pod 共享，去重/租约/终态认领/崩溃恢复皆赖之。
+    signer, lease_reader = worker_execution_proofs(config)
     async with (
-        worker_platform_runtime(config) as platform,
+        worker_platform_runtime(
+            config, signer=signer, lease_reader=lease_reader
+        ) as platform,
         worker_model_resolver(config, owner_clients.model_resolver) as model_resolver,
+        worker_model_billing(
+            base_url=config.bff_base_url,
+            secret_snapshot=config.bff_model_admission_secrets,
+        ) as model_billing,
         make_checkpointer(config.checkpoint) as saver,
         make_checkpointer(config.checkpoint) as interaction_reader,
         make_run_repository(config.run_repository) as run_repository,
@@ -256,6 +310,15 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             config.run_repository.schema_name,
         )
         await model_call_repository.assert_current_producer_ready()
+        financial_repository = PostgresModelFinancialRepository(
+            config.run_repository.database_url, config.run_repository.schema_name
+        )
+        financial_reconciler = ModelFinancialReconciler(
+            repository=financial_repository, client=model_billing
+        )
+        financial_recovery = ModelFinancialRecovery(
+            financial_repository, financial_reconciler
+        )
         interaction_checkpointer = make_interaction_checkpointer(
             saver=saver, reader=interaction_reader, repository=run_repository
         )
@@ -270,6 +333,13 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             checkpointer=interaction_checkpointer,
             run_repository=run_repository,
             model_call_repository=model_call_repository,
+            model_execution=WorkerModelExecutionFactory(
+                repository=model_call_repository,
+                budget=model_billing,
+                financial=financial_reconciler,
+                signer=signer,
+                lease_reader=lease_reader,
+            ),
             memory_store=memory_store,
             delivery=delivery,
             model_resolver=model_resolver,
@@ -298,11 +368,12 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             "kokoro-agent worker consuming %s as %s", REQUESTS_STREAM, _consumer_name()
         )
         # SIGTERM 优雅停机：停止消费新请求，限时等活跃 run 收尾（超时交 TTL 租约重拾）。
-        await _serve_until_shutdown(
-            supervisor,
-            bus,
-            drain_timeout_s=config.drain_timeout_s,
-        )
+        async with active_model_financial_recovery(financial_recovery):
+            await _serve_until_shutdown(
+                supervisor,
+                bus,
+                drain_timeout_s=config.drain_timeout_s,
+            )
 
 
 def _exit_after_model_call_settlement_timeout(exit_code: int) -> Never:

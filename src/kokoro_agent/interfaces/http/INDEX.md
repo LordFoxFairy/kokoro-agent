@@ -12,3 +12,4 @@ HTTP process 不持有 private signing material，也不构造 signer。JWKS 是
 ## ControlReceipt 输出
 
 `ingress.py` 将内部入账回执投影为已发布 HTTP `ControlReceipt` 的字段白名单；首次、重放及入队失败均不输出 repository 的 `run_id`。执行作用域仍由路径、可信身份及命令摘要核验，内部持久化模型不变。
+- `run_display.py`：具名exact Run展示只读资源，原受信身份、无query/body、总5秒与1MiB输出界；不扫描events分页。

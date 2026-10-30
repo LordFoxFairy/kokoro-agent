@@ -24,15 +24,24 @@ from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as p
 from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as r
 from kokoro_agent.mcp.tools import make_mcp_tools
-from support.managed_mcp import ManagedMcpOwner
+from support.managed_mcp import ManagedMcpOwner, isolated_mcp_server_state
 from support.fakes import FakeRunRepository
 from support.tool_journal import journal_middleware as _mw, journal_request as _request
 
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture
-async def managed_owner() -> AsyncGenerator[ManagedMcpOwner, None]:
+@pytest.fixture(autouse=True)
+async def owned_provider_shutdown() -> AsyncGenerator[None]:
+    # Starts before managed_owner and ends after its original Server join.
+    async with isolated_mcp_server_state():
+        yield
+
+
+@pytest.fixture(params=["streamable_http", "sse"])
+async def managed_owner(
+    request: pytest.FixtureRequest,
+) -> AsyncGenerator[ManagedMcpOwner, None]:
     mcp = FastMCP("owned-managed", stateless_http=True)
 
     def echo(
@@ -47,7 +56,9 @@ async def managed_owner() -> AsyncGenerator[ManagedMcpOwner, None]:
     )
     app = uvicorn.Server(
         uvicorn.Config(
-            mcp.streamable_http_app(), log_level="error", timeout_graceful_shutdown=1
+            mcp.sse_app() if request.param == "sse" else mcp.streamable_http_app(),
+            log_level="error",
+            timeout_graceful_shutdown=1,
         )
     )
     with socket.socket() as sock:
@@ -64,7 +75,11 @@ async def managed_owner() -> AsyncGenerator[ManagedMcpOwner, None]:
 
             await asyncio.wait_for(ready(), 5)
             owner = ManagedMcpOwner(
-                endpoint=f"http://127.0.0.1:{port}/mcp", schemas={"echo": schema}
+                endpoint=f"http://127.0.0.1:{port}/sse"
+                if request.param == "sse"
+                else f"http://127.0.0.1:{port}/mcp",
+                schemas={"echo": schema},
+                transport="sse" if request.param == "sse" else "streamable_http",
             )
             yield owner
         finally:

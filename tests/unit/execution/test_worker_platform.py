@@ -15,5 +15,39 @@ def test_partial_platform_configuration_is_rejected() -> None:
 
 
 async def test_unconfigured_worker_has_no_platform_resources() -> None:
-    async with worker_platform_runtime(AppConfig.from_env({})) as runtime:
+    from unittest.mock import Mock
+    from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner
+    from kokoro_agent.execution.execution_proof_supplier import (
+        ExecutionProofLeaseReadPort,
+    )
+
+    async with worker_platform_runtime(
+        AppConfig.from_env({}),
+        signer=Mock(spec=ExecutionProofSigner),
+        lease_reader=Mock(spec=ExecutionProofLeaseReadPort),
+    ) as runtime:
         assert runtime is None
+
+
+def test_billing_signing_does_not_require_platform_service_credentials() -> None:
+    config = AppConfig.from_env(
+        {
+            "KOKORO_AGENT_EXECUTION_PROOF_ISSUER": "urn:unit:agent",
+            "KOKORO_AGENT_EXECUTION_PROOF_PRIVATE_KEY_FILE": "/tmp/unit-key.pem",
+            "KOKORO_AGENT_EXECUTION_PROOF_WORKER_ACTIVE_KID": "unit-key",
+            "KOKORO_AGENT_EXECUTION_PROOF_WORKER_ACTIVE_JWK_THUMBPRINT_SHA256": "a"
+            * 43,
+        }
+    )
+    assert config.platform_base_url is config.platform_service_credentials_file is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["KOKORO_AGENT_IAM_BASE_URL", "KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE"],
+)
+def test_retired_platform_oauth_configuration_is_not_silently_ignored(
+    name: str,
+) -> None:
+    with pytest.raises(ValueError, match="retired Platform OAuth"):
+        AppConfig.from_env({name: "retired-value"})

@@ -310,6 +310,38 @@ class PostgresChatRepository:
                 rows = await fetch_all(cur)
         return tuple(chat_event_from_row(row) for row in rows)
 
+    async def first_tool_activity(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        activity_id: str,
+    ) -> ChatEventRecord | None:
+        """Run-PK range only; caller bounds connect/query/decoding together."""
+        _validate_scope(tenant_id, namespace, session_id)
+        if not run_id or not activity_id:
+            raise ValueError("tool activity scope is required")
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                await execute_sql(
+                    cur,
+                    f"""
+                    SELECT chat_event_id, tenant_id, namespace, session_id, run_id,
+                           source_index, chat_message_id, event_type, payload_json,
+                           created_at, seq
+                    FROM {qualified(self._schema, CHAT_EVENTS_TABLE)}
+                    WHERE tenant_id = %s AND namespace = %s AND session_id = %s
+                      AND run_id = %s AND event_type = 'activity'
+                      AND payload_json::jsonb ->> 'activity' = 'tool'
+                      AND payload_json::jsonb ->> 'activity_id' = %s
+                    ORDER BY source_index ASC LIMIT 1
+                """,
+                    (tenant_id, namespace, session_id, run_id, activity_id),
+                )
+                row = await fetch_one(cur)
+        return None if row is None else chat_event_from_row(row)
+
     async def history(
         self,
         tenant_id: str,
@@ -357,6 +389,45 @@ class PostgresChatRepository:
                 row = await fetch_one(cur)
         value = row["source_index"] if row is not None else None
         return 0 if value is None else int(value) + 1
+
+    async def completed_message_exists(
+        self,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        chat_message_id: str,
+    ) -> bool:
+        async with connect_pg(self._database_url) as conn:
+            async with conn.cursor() as cur:
+                return await self.completed_message_exists_on_cursor(
+                    cur,
+                    tenant_id,
+                    namespace,
+                    session_id,
+                    run_id,
+                    chat_message_id,
+                )
+
+    async def completed_message_exists_on_cursor(
+        self,
+        cur: object,
+        tenant_id: str,
+        namespace: str,
+        session_id: str,
+        run_id: str,
+        chat_message_id: str,
+    ) -> bool:
+        await execute_sql(
+            cur,
+            """SELECT 1 FROM {} WHERE tenant_id=%s AND namespace=%s
+            AND session_id=%s AND run_id=%s AND chat_message_id=%s
+            AND role='assistant' AND status='completed'""".format(
+                qualified(self._schema, CHAT_MESSAGES_TABLE)
+            ),
+            (tenant_id, namespace, session_id, run_id, chat_message_id),
+        )
+        return await fetch_one(cur) is not None
 
     async def watermark(self, tenant_id: str, namespace: str, session_id: str) -> int:
         _validate_scope(tenant_id, namespace, session_id)

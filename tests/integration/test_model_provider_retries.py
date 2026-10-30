@@ -382,13 +382,6 @@ async def _model(
         ),
         anthropic_base_url=base_url,
         model_allow_loopback_http=True,
-        model_credentials=(
-            ModelCredential(
-                provider_id="22222222-2222-4222-8222-222222222222",
-                secret_handle_ref="sandbox-litellm-key",
-                api_key=SecretStr("sandbox-litellm-key"),
-            ),
-        ),
     )
     provider: Literal["openai", "anthropic", "litellm"]
     if case.protocol == "anthropic":
@@ -412,7 +405,15 @@ async def _model(
                     request_id="r216-sdk-route",
                 )
             assert owner.request_count == 1
-        clients = ModelHttpMechanismClients(settings, route)
+        clients = ModelHttpMechanismClients(
+            settings,
+            route,
+            ModelCredential(
+                provider_id=route.provider_id,
+                secret_handle_ref=route.connection.secret_handle_ref,
+                api_key=SecretStr("sandbox-litellm-key"),
+            ),
+        )
         peer.model_clients.append(clients)
         return make_chat_model(
             settings,
@@ -1083,6 +1084,8 @@ async def test_r225_public_owned_client_requires_strict_single_completion(
                     headers={
                         "Content-Type": "application/json",
                         "Accept": "application/json",
+                        "Authorization": "Bearer "
+                        + clients.credential.get_secret_value(),
                     },
                 )
             else:
@@ -1092,6 +1095,8 @@ async def test_r225_public_owned_client_requires_strict_single_completion(
                     headers={
                         "Content-Type": "application/json",
                         "Accept": "application/json",
+                        "Authorization": "Bearer "
+                        + clients.credential.get_secret_value(),
                     },
                 )
             return response.status_code
@@ -1456,7 +1461,18 @@ async def test_r231_capture_unknown_does_not_replace_sdk_response(
             capture.mark_sdk_consumption_complete()
         assert output == "ok"
         result = capture.snapshot()
-        assert result.status == ("complete" if fault == "duplicate" else "unresolved")
+        assert result.status == (
+            "complete" if fault in {"duplicate", "missing-final"} else "unresolved"
+        )
+        if fault == "missing-final":
+            from kokoro_agent.model.usage_producer import normalize_observed_usage
+
+            normalized = normalize_observed_usage(result)
+            assert (
+                normalized.state == "unresolved"
+                and normalized.reason == "missing_usage"
+            )
+            assert all(count.value is None for count in result.counts.values())
         if fault != "duplicate":
             assert result.projection_digest is None
         assert peer.request_count == 1
@@ -2018,7 +2034,9 @@ async def test_r246_production_owned_clients_without_scope_never_send(
     async with _peer("openai", "stream" if streaming else "ok") as peer:
         await _model(_PROVIDER_CASES[2], peer, monkeypatch)
         mechanism = peer.model_clients[0]
-        production = ModelHttpClients(mechanism.settings, mechanism.route)
+        production = ModelHttpClients(
+            mechanism.settings, mechanism.route, mechanism.model_credential
+        )
         peer.model_clients.append(production)
         model = make_chat_model(
             production.settings,
@@ -2082,7 +2100,7 @@ async def test_r246_sdk_structured_helpers_keep_exact_header_profile(
                 }
             )
         sdk = openai.AsyncOpenAI(
-            api_key="synthetic-r246",
+            api_key=clients.credential.get_secret_value(),
             base_url=peer.base_url,
             http_client=clients.async_client,
             max_retries=0,
@@ -2139,7 +2157,9 @@ async def test_r246_production_rejects_unmaterialized_stream_without_consuming(
     async with _peer("openai", "ok") as peer:
         await _model(_PROVIDER_CASES[2], peer, monkeypatch)
         mechanism = peer.model_clients[0]
-        clients = ModelHttpClients(mechanism.settings, mechanism.route)
+        clients = ModelHttpClients(
+            mechanism.settings, mechanism.route, mechanism.model_credential
+        )
         peer.model_clients.append(clients)
         with pytest.raises(ModelCallInputInvalid, match="must be materialized"):
             await clients.async_client.post(clients.endpoint, content=body())

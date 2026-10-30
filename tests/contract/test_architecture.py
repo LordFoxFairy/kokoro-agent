@@ -117,10 +117,12 @@ def test_runtime_does_not_import_platform_artifact_checker() -> None:
         "contract_check.py",
         "platform_binding_contract.py",
         "mcp_runtime_contract.py",
+        "custom_api_runtime_contract.py",
     }
     forbidden = {
         "kokoro_agent.platform_binding_contract",
         "kokoro_agent.mcp_runtime_contract",
+        "kokoro_agent.custom_api_runtime_contract",
     }
     for path in _py_files():
         if _rel(path) in allowed:
@@ -140,7 +142,11 @@ def test_platform_artifact_literal_scanner_has_a_negative_fixture() -> None:
 def test_runtime_does_not_read_vendored_platform_artifacts_by_literal_path() -> None:
     """Only the build-time checker/generator may read the vendored artifact tree."""
 
-    allowed = {"platform_binding_contract.py", "mcp_runtime_contract.py"}
+    allowed = {
+        "platform_binding_contract.py",
+        "mcp_runtime_contract.py",
+        "custom_api_runtime_contract.py",
+    }
     for path in _py_files():
         if _rel(path) in allowed:
             continue
@@ -158,9 +164,19 @@ def test_deepagents_construction_has_one_ga_adapter() -> None:
         imports = _imports(path)
         if "deepagents" not in imports:
             continue
-        assert _rel(path) in allowed, (
-            f"{_rel(path)} calls/imports create_deep_agent outside agent_factory.py"
-        )
+        if _rel(path) == "swarm.py":
+            # Swarm consumes the public projection transformer, not a second
+            # DeepAgents constructor. Any added package import remains denied.
+            assert _from_imported_names(path, "deepagents") == {"SubagentTransformer"}
+            assert not any(
+                isinstance(node, ast.Import)
+                and any(alias.name == "deepagents" for alias in node.names)
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            )
+        else:
+            assert _rel(path) in allowed, (
+                f"{_rel(path)} calls/imports create_deep_agent outside agent_factory.py"
+            )
 
 
 def test_deepagents_first_tree_has_no_parallel_runtime_directories() -> None:
@@ -426,7 +442,6 @@ def test_execution_proof_supplier_is_standalone_without_dead_composition() -> No
 
     composition_paths = (
         _SRC / "agent_factory.py",
-        _SRC / "worker" / "main.py",
         _SRC / "worker" / "supervisor.py",
         _SRC / "interfaces" / "http" / "main.py",
         *_SRC.joinpath("clients").glob("*.py"),
@@ -437,6 +452,11 @@ def test_execution_proof_supplier_is_standalone_without_dead_composition() -> No
         source = path.read_text(encoding="utf-8")
         assert "execution_proof_supplier" not in source
         assert "ExecutionProofSupplier" not in source
+
+    # The composition root shares one signer/lease reader, but never constructs a supplier.
+    assert _from_imported_names(
+        _SRC / "worker/main.py", "kokoro_agent.execution.execution_proof_supplier"
+    ) == {"ExecutionProofLeaseReadPort"}
 
 
 def test_run_skill_lifecycle_reuses_only_public_native_loader_and_prompt() -> None:

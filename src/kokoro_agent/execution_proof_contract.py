@@ -41,6 +41,10 @@ OWNER_SOURCE_FILES = (
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py",
     "src/kokoro_agent/usage_history_contract.py",
+    "contract/bff/internal-v1/openapi.yaml",
+    "src/kokoro_agent/bff_admission_contract.py",
+    "src/kokoro_agent/clients/bff_admission_generated.py",
+    "scripts/generate_bff_admission_models.py",
 )
 HEADER_FIELDS = {"typ", "alg", "kid"}
 TAMPER_FIELDS = set(
@@ -93,7 +97,7 @@ def validate_http_provenance(root: Path, provenance: dict[str, object]) -> None:
     record = _http_contract_object(
         provenance.get("http_contract"), source="HTTP provenance"
     )
-    if record.get("version") != "7.0.0" or record.get("path") != OPENAPI_RELATIVE:
+    if record.get("version") != "8.10.0" or record.get("path") != OPENAPI_RELATIVE:
         raise ValueError("HTTP direct provenance identity is invalid")
     expected = hashlib.sha256((root / OPENAPI_RELATIVE).read_bytes()).hexdigest()
     if record.get("sha256") != expected:

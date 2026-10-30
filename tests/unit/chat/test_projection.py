@@ -544,3 +544,39 @@ def test_r94_todo_row_decoder_does_not_admit_unknown_or_alias_events(
     }
     with pytest.raises(TypeError, match="event_type.*unsupported value"):
         chat_event_from_row(row)
+
+
+@pytest.mark.parametrize(
+    "name", ["", "e\u0301", "x\u0000", "x\u0085", "x\u200b", "x\ud800", "x" * 121]
+)
+def test_display_detail_rejects_invalid_unicode_without_normalizing(name: str) -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    with pytest.raises(ValueError):
+        ToolDisplayDetail(kind="file", name=name)
+
+
+def test_display_detail_exact_unicode_scalar_and_utf8_boundary() -> None:
+    from kokoro_agent.domain.chat.projection import ToolDisplayDetail
+
+    name = "😀" * 120
+    assert len(name.encode()) == 480
+    assert ToolDisplayDetail(kind="file", name=name).name == name
+
+
+@pytest.mark.parametrize(
+    "missing", ["activity", "activity_id", "segment_id", "status", "display_code"]
+)
+def test_history_tool_activity_requires_all_canonical_base_keys(missing: str) -> None:
+    from kokoro_agent.domain.chat.projection import read_tool_activity
+
+    payload = {
+        "activity": "tool",
+        "activity_id": "act_" + "a" * 64,
+        "segment_id": "seg_" + "b" * 64,
+        "status": "running",
+        "display_code": "tool.execution",
+    }
+    del payload[missing]
+    with pytest.raises(ValueError):
+        read_tool_activity(json.dumps(payload))

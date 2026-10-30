@@ -14,16 +14,27 @@
     "src/kokoro_agent/protocol/run_failure_generated.py",
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py",
-    "src/kokoro_agent/usage_history_contract.py"
+    "src/kokoro_agent/usage_history_contract.py",
+    "contract/bff/internal-v1/openapi.yaml",
+    "src/kokoro_agent/bff_admission_contract.py",
+    "src/kokoro_agent/clients/bff_admission_generated.py",
+    "scripts/generate_bff_admission_models.py"
   ],
-  "combined_sha256": "18e688d450ca351acc2f6706f87a70d668aad0ca9c0b2ffdc022bb106bab17a6",
+  "combined_sha256": "e55b2f35ec91e1a49db603d2a0efa758a7c5e2ef26c862a2928d1806cd372a8c",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
-      "sha256": "48a638be93289b58f082335d2a455fc84301792cc76635c7ae201c507b369b35",
+      "sha256": "85b620c232325a7fb5260d1891bd94223bb8ebca6f5c6430e525d7b8634c2acc",
       "source": "contract/openapi/v1/openapi.json",
-      "source_sha256": "ed0f5fc400f3307a4c50213a39859f2d5aacf8b4eecd11c1e50f53032d0fffd3",
+      "source_sha256": "af76b63e7aeccec434bae30f41c554416dbd1ebf77871b94e67a5043221dbf6e",
       "generator": "scripts/generate_failure_models.py"
+    },
+    {
+      "path": "src/kokoro_agent/clients/bff_admission_generated.py",
+      "sha256": "d9b444dd3078aaffad0cf4ca5c7c783ce558837a781b3a7119e3b080a05c1a6b",
+      "source": "contract/bff/internal-v1/openapi.yaml",
+      "source_sha256": "4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39",
+      "generator": "scripts/generate_bff_admission_models.py"
     }
   ],
   "source_revision": "same Git commit as the listed files",
@@ -31,23 +42,25 @@
     {
       "owner": "kokoro-system",
       "contract": "contract/openapi/system.openapi.json",
-      "version": "4.0.0",
-      "source_commit": "7f479f654c535077874d9cf63d1b25437e9420b6",
-      "sha256": "c7cda9d09db266cd26dc1b80dfe9bb95c3c9f6a91bdbd6c5d7de4f85295d1dc6",
+      "version": "6.0.0",
+      "source_commit": "550d65498822d8d2e629199482de4f6990b62708",
+      "sha256": "10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061",
       "provenance": {
         "path": "contract/provenance.json",
-        "sha256": "37e338939ebecc4a61cf7aff4d14c2e28b5bc34381e66324a2009988e793d2d0"
+        "sha256": "ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5"
       },
       "source_sha256": {
-        "scripts/generate-system-openapi.ts": "6cbbbfa18ac42511048dc8543605da6dd2087d40fc094212ee51d1cbf43d1dae",
-        "scripts/system-openapi-operations.ts": "fb46bea2ec53a09c0f397d2f38aafc77a1c6e7eaef904b11667d56fda919d9f3",
+        "scripts/generate-system-openapi.ts": "dd1d925831891df3df30cb1944a9448f193abdbb93098455208c2fc5c650768e",
+        "scripts/system-openapi-operations.ts": "04e622203936aa7e240aa089bd37d220dff67be9a8d460cb1d59cf50cd1a29c6",
+        "src/access/access.guard.ts": "4e985d1a2aafe6d4d78742cd7d8a7e3c876263c0cb49bccdea0775e7f8c2e225",
         "src/http/protocol.schema.ts": "72dbe6ee57d842b855b337d1f1603a7ddbb8c3a4bb6c4f7bf3fe62821c8160c0",
         "src/modules/model-catalog/schemas/connection.schema.ts": "7d9efcaeb0d4d8725b50e2e2da95d37f9c64094ecbe99143aba3076df615ab03",
+        "src/modules/model-catalog/schemas/credential.schema.ts": "19ae4496c1a12c04c1529d8d2f9269971eaa347cc19879cc7e79e9dbaa2bd929",
         "src/modules/model-catalog/schemas/definition.schema.ts": "e2063b9ae62b8e5c4ca7cccce09dd4874f818831fc8966de2cf6d015a99bef64",
-        "src/modules/model-catalog/schemas/label.schema.ts": "96116b4d390e203be056f73e32a30ea93e40dc0c60966ce60579cdb949f31a6a",
-        "src/modules/model-catalog/schemas/provider.schema.ts": "ad07f69888f9cac1a263af81b70648381e19bbbd6f771c107eaa09b429099373",
-        "src/modules/model-catalog/schemas/resolve.schema.ts": "9d0786377b08c1f1e55c62f5821b85f4a6dc76a52a9ef70fea05e0243231e8b8",
-        "src/modules/model-catalog/schemas/revision.schema.ts": "ad96204bc69d4310a0a44d67539921edc57076e9724a160170cb9abdf7ccae5a",
+        "src/modules/model-catalog/schemas/label.schema.ts": "021859b2c762f234419ce9ca1f7d31983a13df13776470e1faa7d2b66c1c64fa",
+        "src/modules/model-catalog/schemas/provider.schema.ts": "76f1b7b47a158805eb252409d6362fe4bf90b8ace58a1913de63b6dd49be38db",
+        "src/modules/model-catalog/schemas/resolve.schema.ts": "f75d2f22e04fb6af6c40adb5ac678e9349e036d2db159f779f520e4bb701aa34",
+        "src/modules/model-catalog/schemas/revision.schema.ts": "1c8dff196ff037e0565bc67d9abf7984a946829a8fa22e437617e16c326d2f94",
         "src/modules/products/products.public.ts": "ccea3298f5ca5549d7882ce056e8bbb3445d23a9e1703958bd4b0a220882983e",
         "src/modules/products/schemas/application.schema.ts": "087d997360add9b9bbb2e244c1b1f9864fc6cf4ba93a7c9e8c14767288ca6a57",
         "src/modules/products/schemas/config.schema.ts": "92324f19fd4e39fdf2cef0a4a28f9e43f8b70c09fd5290e8153035a5a2aa2060",
@@ -61,7 +74,20 @@
         "src/modules/workspaces/schemas/workspace.schema.ts": "a52e63e9fc798eb25b2003830ad4fcebb7ce9edf0a06b90a5f3b72ad752bc16d"
       },
       "operations": [
-        "POST /v1/system/model-catalog/resolve"
+        "POST /v1/system/model-catalog/resolve",
+        "POST /v1/system/model-catalog/credentials/read"
+      ]
+    },
+    {
+      "owner": "kokoro-bff",
+      "contract": "contract/openapi/internal/v1/openapi.yaml",
+      "version": "1.3.0",
+      "source_commit": "5a303f2003fabeb50376c7f7e1f66f0d163adebb",
+      "sha256": "4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39",
+      "operations": [
+        "POST /internal/v1/model-admissions",
+        "POST /internal/v1/model-admissions/recover",
+        "POST /internal/v1/model-admissions/{admission_id}/settle"
       ]
     }
   ],
@@ -77,8 +103,8 @@
     }
   },
   "http_contract": {
-    "version": "7.0.0",
+    "version": "8.10.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "ed0f5fc400f3307a4c50213a39859f2d5aacf8b4eecd11c1e50f53032d0fffd3"
+    "sha256": "af76b63e7aeccec434bae30f41c554416dbd1ebf77871b94e67a5043221dbf6e"
   }
 }

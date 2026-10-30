@@ -10,6 +10,7 @@ import subprocess
 import sys
 from typing import Never
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.protocol import (
@@ -53,7 +54,10 @@ async def _fatal_chain(write_fd: int, *, illegal_fatal_return: bool) -> None:
             return held_custom()
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(
             runnable=FakeAgent(run=HeldRun()),
@@ -183,7 +187,10 @@ async def _sigterm_chain(write_fd: int) -> None:
     run = CooperativeRun()
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         return AgentHandle(runnable=FakeAgent(run=run), tool_descriptions={})
 

@@ -165,8 +165,12 @@ def test_current_lease_observation_rejects_invalid_time_shape(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("project_ref", [None, "project-1"])
+@pytest.mark.parametrize(
+    "operation", ["skill.resolve_visible_skill", "billing.credit.consume"]
+)
 async def test_issue_reads_then_clocks_then_nonces_then_signs_exact_snapshot(
     project_ref: str | None,
+    operation: str,
 ) -> None:
     events: list[str] = []
     leased = _leased_run(project_ref=project_ref)
@@ -207,7 +211,7 @@ async def test_issue_reads_then_clocks_then_nonces_then_signs_exact_snapshot(
     object.__setattr__(leased.request, "session_id", "MUTATED")
     object.__setattr__(leased.lease, "owner", "MUTATED")
 
-    assert await supplier.issue("skill.resolve_visible_skill", BINDING) == "PROOF"
+    assert await supplier.issue(operation, BINDING) == "PROOF"
     assert events == ["read", "clock", "nonce", "sign"]
     assert reader.calls == [("run-1", LeaseFence(owner="owner-1", generation=7))]
     issued = signer.calls[0]
@@ -728,3 +732,100 @@ async def test_non_skill_proof_keeps_existing_long_assertion_domain() -> None:
     supplier, _, signer, _ = _supplier(leased_run=_leased_run(assertion="x" * 256))
     assert await supplier.issue("mcp.list_connectors", BINDING) == "PROOF"
     assert signer.calls[0].execution_binding is None
+
+
+@pytest.mark.parametrize(
+    "operation", ["custom_api.describe_environment", "custom_api.acquire_environment"]
+)
+async def test_custom_api_proof_requires_frozen_selection_before_lease_read(
+    operation: str,
+) -> None:
+    supplier, reader, signer, _ = _supplier()
+    with pytest.raises(ExecutionProofUnavailableError):
+        await supplier.issue(operation, BINDING)
+    assert not reader.calls and not signer.calls
+
+
+@pytest.mark.parametrize(
+    "operation", ["custom_api.describe_environment", "custom_api.acquire_environment"]
+)
+async def test_custom_api_proof_keeps_lease_gate_without_skill_execution_binding(
+    operation: str,
+) -> None:
+
+    leased = _leased_run()
+    request = RunRequest.model_validate(
+        {
+            **leased.request.model_dump(mode="python"),
+            "selected_custom_api_profiles": [
+                {"profile_id": "p", "expected_state_version": 1}
+            ],
+        }
+    )
+    leased = LeasedRun(request=request, lease=leased.lease)
+    supplier, reader, signer, _ = _supplier(
+        leased_run=leased, observations=[_observation(), None]
+    )
+    # A caller's subsequent forged mutation cannot alter the immutable supplier snapshot.
+    object.__setattr__(request, "selected_custom_api_profiles", ())
+    assert await supplier.issue(operation, BINDING) == "PROOF"
+    assert signer.calls[0].execution_binding is None
+    assert len(reader.calls) == 1
+    with pytest.raises(ExecutionProofUnavailableError):
+        await supplier.issue(operation, BINDING)
+    assert len(signer.calls) == 1
+
+
+def test_supplier_revalidates_forged_custom_api_selection() -> None:
+    from kokoro_agent.protocol.control import CustomApiProfileSelection
+
+    leased = _leased_run()
+    object.__setattr__(
+        leased.request,
+        "selected_custom_api_profiles",
+        (
+            CustomApiProfileSelection.model_construct(
+                profile_id="p", expected_state_version=0
+            ),
+        ),
+    )
+    with pytest.raises(ExecutionProofUnavailableError):
+        _supplier(leased_run=leased)
+
+
+async def test_custom_api_selection_does_not_change_skill_selection_digest() -> None:
+    leased = _leased_run()
+    request = RunRequest.model_validate(
+        {
+            **leased.request.model_dump(mode="python"),
+            "selected_custom_api_profiles": [
+                {"profile_id": "p", "expected_state_version": 1}
+            ],
+        }
+    )
+    supplier, _, signer, _ = _supplier(
+        leased_run=LeasedRun(request=request, lease=leased.lease)
+    )
+    assert await supplier.issue("skill.discover_visible_skills", BINDING) == "PROOF"
+    assert signer.calls[0].execution_binding is not None
+    assert (
+        signer.calls[0].execution_binding.selection_digest
+        == "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    )
+
+
+async def test_adding_selection_after_snapshot_does_not_grant_custom_api_proof() -> (
+    None
+):
+    from kokoro_agent.protocol.control import CustomApiProfileSelection
+
+    leased = _leased_run()
+    supplier, reader, signer, _ = _supplier(leased_run=leased)
+    object.__setattr__(
+        leased.request,
+        "selected_custom_api_profiles",
+        (CustomApiProfileSelection(profile_id="p", expected_state_version=1),),
+    )
+    with pytest.raises(ExecutionProofUnavailableError):
+        await supplier.issue("custom_api.acquire_environment", BINDING)
+    assert not reader.calls and not signer.calls

@@ -26,6 +26,7 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   预算/递归错误保持专用 code，普通错误由调用点显式 assembly default 或 internal fallback 收口。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影
   （messages/tool_calls/subagents/custom）并发抽干 → queue 合流 → 单点发布。
+  正文 completed 取同一 SDK text projection 的 await 终值，避免 assembled 工具块擦除流式阶段正文；不以 delta 拼接覆盖权威修订。
 - `approvals.py`：HITL 权威唯一实现。`awaiting_payloads`（review/input/approval 三分支）、
   `approval_frame`/`review_frame`/`input_frame`/`PendingFrame`（nested=子代理内暂停合成帧）、
   `align_decisions`/`align_review_decisions`/`align_input_decisions`（缺/多/重复/越界 fail-loud）、

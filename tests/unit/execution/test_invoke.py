@@ -10,6 +10,7 @@ from support.fakes import settled_state_callback
 from support.fakes import terminal_emitter
 
 import asyncio
+import httpx
 import pytest
 import ast
 import json
@@ -21,18 +22,20 @@ from uuid import uuid4
 
 from langchain_core.callbacks import BaseCallbackHandler, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langgraph.types import Interrupt
 from langgraph.checkpoint.memory import InMemorySaver
+from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel as PydanticBaseModel
 
 from support.fakes import (
     FakeAgent,
     FakeBus,
     FakeModel,
+    FakeTextProjection,
     FakeRunStream,
     FakeState,
     FakeSubagentRun,
@@ -65,10 +68,18 @@ from kokoro_agent.protocol import (
 )
 from support.deepagents import create_test_deep_agent
 from support.local_fake import LocalFakeChatModel
-from kokoro_agent.execution.events import RunEmitter, clip_result, tool_returned_payload
+from kokoro_agent.execution.events import (
+    RunEmitter,
+    clip_result,
+    tool_returned_payload,
+    subagent_tool_returned_payload,
+)
 from kokoro_agent.execution.run_agent import invoke_once
-from kokoro_agent.execution.failures import run_failed_payload
-from kokoro_agent.model.call_models import ModelCallAuthorizationUnavailable
+from kokoro_agent.execution.failures import failure_code, run_failed_payload
+from kokoro_agent.model.call_models import (
+    ModelCallAuthorizationUnavailable,
+    ModelCallSettlementPending,
+)
 from kokoro_agent.protocol.streams import run_events_stream
 from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.streams.redis import RedisStream
@@ -78,10 +89,93 @@ def _runtime_custom(_name: str) -> SubagentSource:
     return "runtime-custom"
 
 
-def test_missing_model_authorization_uses_existing_safe_failure_tuple() -> None:
+@pytest.mark.parametrize(
+    "detail", ["consumer absent", "model-call financial result requires reconciliation"]
+)
+def test_missing_model_authorization_uses_existing_safe_failure_tuple(
+    detail: str,
+) -> None:
     assert run_failed_payload(
-        ModelCallAuthorizationUnavailable("consumer absent")
+        ModelCallAuthorizationUnavailable(detail)
     ) == RunFailedPayload(code="dependency_unavailable", retryable=False)
+
+
+def test_confirmed_pending_ack_is_nonretryable_even_with_a_default_failure_code() -> (
+    None
+):
+    pending = ModelCallSettlementPending("private diagnostic must never be rendered")
+    assert run_failed_payload(pending, code="internal_error") == RunFailedPayload(
+        code="model_settlement_pending", retryable=False
+    )
+
+
+def test_only_owned_handler_deadline_is_nonretryable_model_unavailable() -> None:
+    from kokoro_agent.model.call_models import ModelCallDeadlineExceeded
+
+    error = ModelCallDeadlineExceeded()
+    assert failure_code(error) == "model_unavailable"
+    defaults: tuple[Literal["assembly_failed", "internal_error"], ...] = (
+        "assembly_failed",
+        "internal_error",
+    )
+    for default in defaults:
+        assert run_failed_payload(error, code=default) == RunFailedPayload(
+            code="model_unavailable", retryable=False
+        )
+    ordinary = TimeoutError("unrelated operation")
+    assert failure_code(ordinary) == "internal_error"
+
+
+@pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
+def test_sdk_transport_failure_is_nonretryable_model_unavailable(
+    error_type: type[APIConnectionError],
+) -> None:
+    error = error_type(request=httpx.Request("POST", "https://model.invalid/"))
+    assert failure_code(error) == "model_unavailable"
+    assert run_failed_payload(error) == RunFailedPayload(
+        code="model_unavailable", retryable=False
+    )
+
+
+@pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
+@pytest.mark.parametrize("default_code", ["assembly_failed", "internal_error"])
+def test_sdk_transport_classification_takes_precedence_over_assembly_default(
+    error_type: type[APIConnectionError],
+    default_code: Literal["assembly_failed", "internal_error"],
+) -> None:
+    error = error_type(request=httpx.Request("POST", "https://model.invalid/"))
+    assert run_failed_payload(error, code=default_code) == RunFailedPayload(
+        code="model_unavailable", retryable=False
+    )
+
+
+@pytest.mark.parametrize("error_name", ["APIConnectionError", "APITimeoutError"])
+def test_same_named_ordinary_exception_is_not_an_sdk_transport_failure(
+    error_name: str,
+) -> None:
+    error_type = type(error_name, (Exception,), {})
+    error = error_type("Connection error.")
+    assert failure_code(error) == "internal_error"
+    assert run_failed_payload(error) == RunFailedPayload(
+        code="internal_error", retryable=False
+    )
+    assert run_failed_payload(error, code="assembly_failed") == RunFailedPayload(
+        code="assembly_failed", retryable=False
+    )
+
+
+@pytest.mark.parametrize("error_type", [ValueError, asyncio.CancelledError])
+def test_unknown_and_cancelled_classifications_keep_existing_defaults(
+    error_type: type[BaseException],
+) -> None:
+    error = error_type("private diagnostic")
+    assert failure_code(error) == "internal_error"
+    assert run_failed_payload(error) == RunFailedPayload(
+        code="internal_error", retryable=False
+    )
+    assert run_failed_payload(error, code="assembly_failed") == RunFailedPayload(
+        code="assembly_failed", retryable=False
+    )
 
 
 async def _always_claim() -> bool:
@@ -775,6 +869,144 @@ async def test_native_v3_draft_tool_then_empty_final_segment_order() -> None:
     assert [
         event.payload.content for event in find_events(events, MessageCompleted)
     ] == ["draft", ""]
+
+
+@pytest.mark.parametrize("with_tools", [False, True])
+@pytest.mark.parametrize("empty_final", [False, True])
+async def test_native_public_stage_text_and_tools_keep_their_replay_boundaries(
+    with_tools: bool,
+    empty_final: bool,
+) -> None:
+    """Real native graph, deterministic model; not a live-provider compliance test."""
+    from kokoro_agent.prompts import GENERAL_PROMPT
+
+    stages = ["先读取项目清单。", "清单已返回，再核对文件。"] if with_tools else []
+    replies = [
+        AIMessage(
+            content=text,
+            id=f"stage-{index}",
+            tool_calls=[
+                {
+                    "name": "noop",
+                    "args": {},
+                    "id": f"call-{index}",
+                    "type": "tool_call",
+                }
+            ],
+        )
+        for index, text in enumerate(stages)
+    ]
+    final = "" if empty_final else "这是实际最终回答。"
+    replies.append(AIMessage(content=final, id="stage-final"))
+    agent = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(replies),
+        tools=[
+            StructuredTool(
+                name="noop",
+                description="no-op",
+                args_schema=_NoopArgs,
+                func=lambda: "ok",
+            )
+        ],
+        system_prompt=GENERAL_PROMPT,
+        subagents=[],
+        checkpointer=InMemorySaver(),
+        permissions=[],
+        interrupt_on={},
+    )
+    bus, chat = FakeBus(), FakeChatRepository()
+    run_id = "public-stage-order"
+    emitter = await RunEmitter.attach(
+        bus,
+        run_id,
+        tenant_id="tenant",
+        namespace="tenant:subject",
+        session_id="session-stage",
+        chat_repository=chat,
+    )
+    assert (
+        await invoke_once(
+            emitter,
+            agent,
+            "stage-thread",
+            {"messages": [HumanMessage(content="go")]},
+            initial=True,
+            approval_tool_names=frozenset(),
+            source_for=_runtime_custom,
+            finalize_terminal=terminal_emitter(
+                emitter, _always_claim, usage_recorder()[0]
+            ),
+            record_usage=usage_recorder()[0],
+            on_native_settled=settled_state_callback(agent, "stage-thread"),
+        )
+        is True
+    )
+    events = bus.run_events(run_id)
+    assert [
+        event.kind
+        for event in events
+        if event.kind in {"message.completed", "tool.invoked", "tool.returned"}
+    ] == [
+        *(
+            kind
+            for _ in stages
+            for kind in ("message.completed", "tool.invoked", "tool.returned")
+        ),
+        "message.completed",
+    ]
+    assert [
+        event.payload.content for event in find_events(events, MessageCompleted)
+    ] == [*stages, final]
+    assert [event.payload.tool_id for event in find_events(events, ToolInvoked)] == [
+        f"call-{index}" for index in range(len(stages))
+    ]
+    replay = await chat.replay("tenant", "tenant:subject", "session-stage")
+    visible = [
+        event
+        for event in replay
+        if event.event_type in {"assistant.completed", "activity"}
+    ]
+    assert [event.event_type for event in visible] == [
+        *(
+            kind
+            for _ in stages
+            for kind in ("assistant.completed", "activity", "activity")
+        ),
+        "assistant.completed",
+    ]
+    assert [
+        json.loads(event.payload_json)["content"]
+        for event in visible
+        if event.event_type == "assistant.completed"
+    ] == [*stages, final]
+    completed = find_event(events, RunCompleted)
+    final_message = find_events(events, MessageCompleted)[-1]
+    assert (
+        completed.payload.model_dump().get("final_segment_id")
+        == final_message.payload.segment_id
+    )
+    terminal = next(event for event in replay if event.event_type == "run.completed")
+    assert (
+        json.loads(terminal.payload_json).get("final_message_id")
+        == visible[-1].chat_message_id
+    )
+    assert (
+        json.loads(terminal.payload_json)["final_message_id"]
+        != final_message.payload.segment_id
+    )
+    actions = [
+        json.loads(event.payload_json)
+        for event in visible
+        if event.event_type == "activity"
+    ]
+    assert [action["status"] for action in actions] == [
+        status for _ in stages for status in ("running", "completed")
+    ]
+    assert len({action["activity_id"] for action in actions}) == len(stages)
+    assert [
+        message.content
+        for message in await chat.history("tenant", "tenant:subject", "session-stage")
+    ] == [*stages, final]
 
 
 class _LoopingModel(LocalFakeChatModel):
@@ -1511,14 +1743,22 @@ async def test_projection_cleanup_does_not_repeat_cancel_owned_coroutines(
         output_message: AIMessage | None = None
 
         @property
-        def text(self) -> AsyncIterator[Never]:
-            return held("text")
+        def text(self) -> FakeTextProjection:
+            return FakeTextProjection(held("text"), "")
 
         @property
         def reasoning(self) -> AsyncIterator[Never]:
             return held("reasoning")
 
     class HeldRun:
+        @property
+        def extensions(self) -> dict[str, object]:
+            return {}
+
+        @property
+        def subgraphs(self):
+            return FakeRunStream().subgraphs
+
         @property
         def messages(self) -> AsyncIterator[ModelStream]:
             async def items() -> AsyncIterator[ModelStream]:
@@ -1540,6 +1780,9 @@ async def test_projection_cleanup_does_not_repeat_cancel_owned_coroutines(
 
         async def interrupted(self) -> bool:
             return False
+
+        async def output(self) -> dict[str, object] | None:
+            return None
 
         async def __aenter__(self) -> HeldRun:
             return self
@@ -1742,16 +1985,27 @@ async def test_r94_native_projection_failure_joins_started_leaf_consumers(
             return self.model.output_message
 
         @property
-        def text(self) -> AsyncIterable[str]:
-            return held_projection(self.model.text, "text")
+        def text(self) -> FakeTextProjection:
+            return FakeTextProjection(held_projection(self.model.text, "text"), "")
 
         @property
         def reasoning(self) -> AsyncIterable[str]:
             return held_projection(self.model.reasoning, "reasoning")
 
     class InstrumentedRun:
+        @property
+        def extensions(self):
+            return native.extensions
+
+        @property
+        def subgraphs(self):
+            return native.subgraphs
+
         async def interrupted(self) -> bool:
             return await native.interrupted()
+
+        async def output(self) -> dict[str, object] | None:
+            return await native.output()
 
         async def __aenter__(self) -> InstrumentedRun:
             await native.__aenter__()
@@ -1843,3 +2097,42 @@ async def test_r94_native_projection_failure_joins_started_leaf_consumers(
                 if not leaf.done():
                     leaf.cancel()
             await asyncio.gather(task, *leaf_tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "output,expected_error",
+    [
+        (
+            ToolMessage(
+                content="handled diagnostic", tool_call_id="t1", status="error"
+            ),
+            True,
+        ),
+        (
+            ToolMessage(
+                content="error: ordinary successful text",
+                tool_call_id="t1",
+                status="success",
+            ),
+            False,
+        ),
+        ({"status": "error", "is_error": True}, False),
+        ("error: ordinary text", False),
+    ],
+)
+def test_only_typed_tool_result_status_marks_handled_failure(
+    output: object, expected_error: bool
+) -> None:
+    tc = _tool_call_info(output)
+    main = tool_returned_payload(tc)
+    inner = subagent_tool_returned_payload(tc, subagent_id="peer")
+    assert main is not None and main.is_error is expected_error
+    assert inner.is_error is expected_error
+
+
+def test_interrupt_is_not_a_return_even_with_an_error_tool_message() -> None:
+    tc = _StubToolCall(
+        output=ToolMessage(content="paused", tool_call_id="t1", status="error"),
+        error="Interrupt(paused)",
+    )
+    assert tool_returned_payload(tc) is None

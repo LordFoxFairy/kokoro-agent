@@ -106,7 +106,7 @@ def http73_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "15f9ad240e4f282fbae238157b025dfde2aea75e1e0f684135290455515d80c0"
+        != "c096eab9f2aa392215351a106a670692d5f58f945980a5e028b3a83d17509731"
     ):
         raise ValueError("complete HTTP 7.3 parent differs")
     return raw

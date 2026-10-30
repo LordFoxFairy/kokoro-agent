@@ -42,7 +42,7 @@ def failure_code(error: BaseException) -> RunErrorCode:
     if isinstance(error, StaticRecipeIncompatible):
         return "contract_incompatible"
     if isinstance(error, CustomApiConfigurationError):
-        return "custom_api_configuration_invalid"
+        return "assembly_failed"
     if isinstance(error, CustomApiDependencyError):
         return "dependency_unavailable"
     if isinstance(error, ModelCallInputInvalid):
@@ -72,9 +72,7 @@ def run_failed_payload(
     if isinstance(error, StaticRecipeIncompatible | ModelCallInputInvalid):
         return RunFailedPayload(code="contract_incompatible", retryable=False)
     if isinstance(error, CustomApiConfigurationError):
-        return RunFailedPayload(
-            code="custom_api_configuration_invalid", retryable=False
-        )
+        return RunFailedPayload(code="assembly_failed", retryable=False)
     if isinstance(error, CustomApiDependencyError):
         return RunFailedPayload(code="dependency_unavailable", retryable=False)
     if isinstance(error, ModelCallSettlementPending):

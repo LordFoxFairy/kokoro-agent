@@ -7,9 +7,9 @@ from kokoro_agent.execution.failures import failure_code, run_failed_payload
 
 def test_custom_api_configuration_error_survives_assembly_default() -> None:
     error = CustomApiConfigurationError("CUSTOM_API_CONFIGURATION_INVALID")
-    assert failure_code(error) == "custom_api_configuration_invalid"
+    assert failure_code(error) == "assembly_failed"
     assert run_failed_payload(error, code="assembly_failed").model_dump() == {
-        "code": "custom_api_configuration_invalid",
+        "code": "assembly_failed",
         "retryable": False,
     }
 

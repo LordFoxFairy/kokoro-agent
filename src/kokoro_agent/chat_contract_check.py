@@ -384,7 +384,7 @@ def http82_basename_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "4b347495d2f56224c8a51212e2599e7eac00bdf27565a48416b72430963238ac"
+        != "d16786d4b8214ba8ba22950c9b4ab9b297f0a2982724a89720bc268d2445cb71"
     ):
         raise ValueError("complete first HTTP 8.2 parent differs")
     return raw
@@ -421,7 +421,7 @@ def http81_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "8f72c6e78f584fbc484141f0051b7f010c09e10d03f3fbeaa38d616ce7b0e643"
+        != "1642829ccf5364692051e836938ef33b36cffeca25f2b7766ad95cd44a1542c9"
     ):
         raise ValueError("complete HTTP 8.1 parent differs")
     return raw
@@ -462,7 +462,7 @@ def http80_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "ad2aa6dd03e6032a2bd345191cb12ec289403f6f42cd4ab51816ef7399262adf"
+        != "93103b5f1df90ad4524e7fc08274211ed2f0805760d70923931e9449a59e37ff"
     ):
         raise ValueError("complete HTTP 8.0 parent differs")
     return raw
@@ -501,7 +501,7 @@ def http74_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "c4e012f809607a0bb841b08531a138f6837fbaaef6489084e8dc61f946bdc937"
+        != "7637757f2f8b1fc1556e62c6566db5de5eb2ae883cf6e24e918b53081cc664ad"
     ):
         raise ValueError("complete HTTP 7.4 parent differs")
     return raw
@@ -523,9 +523,13 @@ def http72_parent_bytes(document: dict[str, object]) -> bytes:
     props = _object(failure.get("properties"), source="properties")
     code = _object(props.get("code"), source="code")
     codes = TypeAdapter(list[str]).validate_python(code.get("enum"), strict=True)
-    if not codes or codes.count("model_settlement_pending") != 1:
+    if (
+        not codes
+        or codes[-1] != "model_settlement_pending"
+        or codes.count("model_settlement_pending") != 1
+    ):
         raise ValueError("pending settlement failure extension is not exact")
-    code["enum"] = [value for value in codes if value != "model_settlement_pending"]
+    code["enum"] = codes[:-1]
     props["code"] = code
     failure["properties"] = props
     schemas["Failure"] = failure
@@ -535,7 +539,7 @@ def http72_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "52863e2efd0ee6f03dc28387612c8a590d029d570339689aba02e0089ab823ba"
+        != "4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db"
     ):
         raise ValueError("complete HTTP 7.2 parent differs")
     return raw
@@ -1336,7 +1340,7 @@ def http89_custom_api_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "abf1382719c2eb7714d6dde2db1a38c39e443fdd303642053947bd8ff75a8de6"
+        != "875545c23cf4cd055adfb4aedf6ea3c994eab6be10a25f1f68db248ffecb32c9"
     ):
         raise ValueError("complete HTTP8.9 CustomAPI selection parent differs")
     return raw
@@ -1368,7 +1372,7 @@ def http88_final_display_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "d6b6312d20e525692b49b881eb120992271d5a05ef9a9fa099eb0e61489a088b"
+        != "fd8b2857ecbc9577bd98ca73234e4d81c53d4fe189ba86badcf35c774b9a6830"
     ):
         raise ValueError("complete HTTP8.8 private final proof parent differs")
     return raw
@@ -1407,7 +1411,7 @@ def http87_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "11f53d141648bfff4a8fe3613504900351b0b77fd93600e23b6565006490b7af"
+        != "74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc"
     ):
         raise ValueError("complete HTTP8.7 final answer parent differs")
     return raw
@@ -1447,7 +1451,7 @@ def http86_action_title_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "761e306ba918b9866d69b72d2b332534036d90900c64d78ca616789b7d6cff67"
+        != "de73c229a962e37afbf3f69aba160a8b6b9a56cd2603952a3d3d97f5a610b64b"
     ):
         raise ValueError("complete HTTP8.6 action title parent differs")
     return raw
@@ -1496,7 +1500,7 @@ def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "60a2b6d586746fd133dfee67c578f7e9ed1b6226543aa397e3fee16638dc4f88"
+        != "b000f24e88bf5e4f20718ae7f6b29c94ef96b2c6fe42f73ef7231695f438e897"
     ):
         raise ValueError("complete HTTP8.5 tool description parent differs")
     return raw
@@ -1537,7 +1541,7 @@ def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "34fa7db83e3b1e20b1fe4a7c777e90f3994fa2bd4d874cb181082c48201e7d29"
+        != "239219e5a80427a74f8d89363c5a7a4fe2753f99c6b469b02bab7fba9ba44f52"
     ):
         raise ValueError("complete HTTP8.4 private details parent differs")
     return raw
@@ -1582,7 +1586,7 @@ def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "5bb3d7ebd1c9b1b1f531fba7baa01e5c2903ec447748fe66a250caf83920be74"
+        != "be642c2313fbaf447d4e37bda2a7920f867c3a06d39f7e0e82efaf212e7080d6"
     ):
         raise ValueError("complete HTTP8.3 tool facts parent differs")
     return raw
@@ -1665,7 +1669,7 @@ def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
     if (
         hashlib.sha256(raw).hexdigest()
-        != "f473eb5ed2e868cdbea6789bdccea39c1390b751a8af29862e9db511abb88d9a"
+        != "8a0b9973661205b8e29020934c39e5c7ab629b4c42db4e79c845a410d96efa2a"
     ):
         raise ValueError("complete HTTP8.2 display parent differs")
     return raw

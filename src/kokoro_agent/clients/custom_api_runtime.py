@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from pydantic import SecretStr
 
-from kokoro_agent.clients.platform_transport import PlatformRequest
+from kokoro_agent.clients.platform_transport import PlatformCallError, PlatformRequest
 from kokoro_agent.execution.custom_api_request_binding import (
     CustomApiRequest,
     custom_api_identity,
@@ -27,6 +27,14 @@ from kokoro_agent.generated.kokoro.platform.v1 import custom_api_runtime_pb as p
 
 class CustomApiClientError(RuntimeError):
     """Only stable non-sensitive codes cross this boundary."""
+
+
+class CustomApiConfigurationError(CustomApiClientError):
+    """The selected profile is no longer usable for this run."""
+
+
+class CustomApiDependencyError(CustomApiClientError):
+    """The capability owner could not be reached for this run."""
 
 
 class CustomApiSender(Protocol):
@@ -176,6 +184,20 @@ class PlatformCustomApiClient:
                     return response
         except asyncio.CancelledError:
             cancelled = True
+        except PlatformCallError as error:
+            if error.code in {
+                "PLATFORM_FAILED_PRECONDITION",
+                "PLATFORM_NOT_FOUND",
+            }:
+                raise CustomApiConfigurationError(
+                    "CUSTOM_API_CONFIGURATION_INVALID"
+                ) from None
+            if error.code in {
+                "PLATFORM_UNAVAILABLE",
+                "PLATFORM_DEADLINE_EXCEEDED",
+            }:
+                raise CustomApiDependencyError("CUSTOM_API_OWNER_UNAVAILABLE") from None
+            raise CustomApiClientError("CUSTOM_API_OWNER_UNAVAILABLE") from None
         except Exception:
             pass
         finally:

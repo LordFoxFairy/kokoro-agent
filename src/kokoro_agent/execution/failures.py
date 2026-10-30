@@ -7,6 +7,10 @@ from openai import APIConnectionError, APITimeoutError
 
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.clients.system import ModelResolutionError
+from kokoro_agent.clients.custom_api_runtime import (
+    CustomApiConfigurationError,
+    CustomApiDependencyError,
+)
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
     ModelCallDeadlineExceeded,
@@ -37,6 +41,10 @@ def failure_code(error: BaseException) -> RunErrorCode:
     """Classify typed execution failures without rendering exception diagnostics."""
     if isinstance(error, StaticRecipeIncompatible):
         return "contract_incompatible"
+    if isinstance(error, CustomApiConfigurationError):
+        return "custom_api_configuration_invalid"
+    if isinstance(error, CustomApiDependencyError):
+        return "dependency_unavailable"
     if isinstance(error, ModelCallInputInvalid):
         return "contract_incompatible"
     if isinstance(error, ModelCallSettlementPending):
@@ -63,6 +71,12 @@ def run_failed_payload(
     # retain their verified classification on both initial build and resume.
     if isinstance(error, StaticRecipeIncompatible | ModelCallInputInvalid):
         return RunFailedPayload(code="contract_incompatible", retryable=False)
+    if isinstance(error, CustomApiConfigurationError):
+        return RunFailedPayload(
+            code="custom_api_configuration_invalid", retryable=False
+        )
+    if isinstance(error, CustomApiDependencyError):
+        return RunFailedPayload(code="dependency_unavailable", retryable=False)
     if isinstance(error, ModelCallSettlementPending):
         return RunFailedPayload(code="model_settlement_pending", retryable=False)
     if isinstance(error, ModelCallAuthorizationUnavailable):

@@ -10,11 +10,13 @@ import pytest
 
 from kokoro_agent.clients.custom_api_runtime import (
     CustomApiClientError,
+    CustomApiConfigurationError,
+    CustomApiDependencyError,
     CustomApiEnvironmentProvider,
     CustomApiProfileRef,
     PlatformCustomApiClient,
 )
-from kokoro_agent.clients.platform_transport import PlatformRequest
+from kokoro_agent.clients.platform_transport import PlatformCallError, PlatformRequest
 from kokoro_agent.execution.platform_request_binding import project_request_binding
 from kokoro_agent.generated.kokoro.platform.v1 import custom_api_runtime_pb as pb
 
@@ -96,6 +98,34 @@ async def test_describe_is_secret_free_and_each_acquire_is_fresh() -> None:
     ]
     assert len({r.invocation_id for r in custom_requests}) == 3
     assert "ephemeral-secret" not in repr((api, provider, first, descriptions))
+
+
+@pytest.mark.parametrize(
+    ("code", "error_type"),
+    [
+        ("PLATFORM_FAILED_PRECONDITION", CustomApiConfigurationError),
+        ("PLATFORM_NOT_FOUND", CustomApiConfigurationError),
+        ("PLATFORM_UNAVAILABLE", CustomApiDependencyError),
+        ("PLATFORM_DEADLINE_EXCEEDED", CustomApiDependencyError),
+    ],
+)
+async def test_structured_owner_error_is_classified_without_message_matching(
+    code: str, error_type: type[CustomApiClientError]
+) -> None:
+    class FailingSender(Sender):
+        async def send(
+            self, request: PlatformRequest, *, timeout_s: float = 10
+        ) -> object:
+            raise PlatformCallError(code)
+
+    with pytest.raises(error_type) as raised:
+        await client(FailingSender()).describe(
+            REFS, deadline_monotonic=time.monotonic() + 5
+        )
+    assert str(raised.value) in {
+        "CUSTOM_API_CONFIGURATION_INVALID",
+        "CUSTOM_API_OWNER_UNAVAILABLE",
+    }
 
 
 @pytest.mark.parametrize(

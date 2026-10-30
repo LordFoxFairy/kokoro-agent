@@ -1148,7 +1148,8 @@
               "model_unavailable",
               "dependency_unavailable",
               "model_access_denied",
-              "model_settlement_pending"
+              "model_settlement_pending",
+              "custom_api_configuration_invalid"
             ]
           },
           "retryable": {

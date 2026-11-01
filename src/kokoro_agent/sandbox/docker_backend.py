@@ -32,7 +32,7 @@ from deepagents.backends.protocol import (
     LsResult,
     GlobResult,
 )
-from kokoro_agent.sandbox.file_egress import FileEgress, local_reader, FILE_UNAVAILABLE
+from kokoro_agent.sandbox.file_egress import FileEgress, LocalFileTools, local_reader
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.docker")
@@ -166,6 +166,11 @@ class DockerShellBackend(LocalShellBackend):
             if self._environment is not None
             else None
         )
+        self._local_file_tools = (
+            LocalFileTools(self._file_egress, root, max_output_bytes)
+            if self._file_egress is not None
+            else None
+        )
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         if self._file_egress is not None:
@@ -192,19 +197,36 @@ class DockerShellBackend(LocalShellBackend):
     def grep(
         self, pattern: str, path: str | None = None, glob: str | None = None
     ) -> GrepResult:
-        if self._file_egress is not None:
-            return GrepResult(error=FILE_UNAVAILABLE)
+        if self._local_file_tools is not None:
+            return self._local_file_tools.grep(pattern, path, glob)
         return super().grep(pattern, path, glob)
 
+    async def agrep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        if self._local_file_tools is not None:
+            return await self._local_file_tools.agrep(pattern, path, glob)
+        return await super().agrep(pattern, path, glob)
+
     def ls(self, path: str) -> LsResult:
-        if self._file_egress is not None:
-            return LsResult(error=FILE_UNAVAILABLE)
+        if self._local_file_tools is not None:
+            return self._local_file_tools.ls(path)
         return super().ls(path)
 
+    async def als(self, path: str) -> LsResult:
+        if self._local_file_tools is not None:
+            return await self._local_file_tools.als(path)
+        return await super().als(path)
+
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
-        if self._file_egress is not None:
-            return GlobResult(error=FILE_UNAVAILABLE)
+        if self._local_file_tools is not None:
+            return self._local_file_tools.glob(pattern, path)
         return super().glob(pattern, path)
+
+    async def aglob(self, pattern: str, path: str = "/") -> GlobResult:
+        if self._local_file_tools is not None:
+            return await self._local_file_tools.aglob(pattern, path)
+        return await super().aglob(pattern, path)
 
     @property
     def sandbox_id(self) -> str:

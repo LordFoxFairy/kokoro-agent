@@ -55,7 +55,7 @@ Redis `127.0.0.1:56380` 的 logical DB `9`；运行入口不负责创建重复�
 
 ## Custom API 文件出口
 
-- `sandbox/file_egress.py`：每次 fresh Acquire、完整有界原字节检查、分页/二进制展示与归档同快照；不保存秘密缓存。
-- `sandbox/docker_backend.py` / `e2b_backend.py`：受保护 read/download 接线；选 API 时 grep/ls/glob 暂拒绝，普通 backend 保持原行为。
+- `sandbox/file_egress.py`：每次 fresh Acquire、完整有界原字节检查、分页/二进制展示与归档同快照；Docker元数据发现/有限glob/literal grep共用同guard，不保存秘密缓存。
+- `sandbox/docker_backend.py` / `e2b_backend.py`：受保护 read/download 接线；Docker安全grep/ls/glob已接线候选，E2B目录类仍OPEN并拒绝，普通backend保持原行为。
 - `sandbox/archive.py`：受保护归档只提交已检查的 bytes，持有取消线程并停止后续上传；Storage Artifact 仍由原 deliver client 发布。
 - `tests/support/file_egress.py`、`tests/unit/sandbox/test_file_egress.py`、`tests/unit/tools/test_deliver.py`：边界、SDK 替身与发布联动回归。

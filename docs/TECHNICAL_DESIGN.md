@@ -1,3 +1,11 @@
+## 2026-11-01 B-02 Docker 安全文件发现（已裁决实施）
+
+在现 FileEgress 同一个 fresh Acquire/guard 内补 Docker ls/glob/grep；不调用 shell/SDK 未受检文件工具，不新增依赖、协议或数据。根目录 fd、逐层 nofollow、regular file 枚举；名称检查早于匹配/投影。每次最多1024遍历项、128普通文件、32KiB原相对路径UTF-8字节，深度最多64；grep沿原8MiB每文件/16MiB批次完整bytes检查。结果UTF-8 JSON字节最多min(既有max_output_bytes,100000)，包括空壳；任何失败不给成功前缀。超时/取消沿既有guard与owned worker，逐项检查取消，普通provider=None不变。
+
+固定DeepAgents0.6.7没有公开纯snapshot glob helper；私有helper及transitive wcmatch均不作为新依赖。用标准库fnmatchcase逐组件匹配，支持*、?、[]与完整组件**；*.txt只当前层，**/*.txt包含根/子层；不支持brace/extglob，非法模式稳定失败。grep为literal非regex，空pattern拒绝；完整原bytes先inspect后strict UTF-8解码，无效UTF-8或NUL文件跳过且不生成base64搜索结果。行按LF分隔，CRLF的CR保留，1-based行号。ls只当前目录，glob仅文件，输出路径为虚拟根路径；缺失路径返回空列表，异常/权限/特殊文件/链接稳定失败。
+
+E2B目录仍OPEN：公开files.list无响应预算；commands.run硬编码bash -l -c，用户login profile可先输出，不能假称固定脚本有界。后续研究公开ProcessClient.start直接exec与PID/kill/流归属，本片不改E2B源码、不缩减完整B-02目标。验证先RED常规工具恢复，再名称页外/非匹配名、非匹配行秘密、路径/容量/结果/取消/授权风险；真实Docker与独审由Root复验。
+
 ## 2026-11-01 B-02 Custom API 文件内容出口（实施设计）
 
 沿已批准的隔离执行边界补齐原值文件内容保护。Run 的冻结 profile/version 是唯一配置引用；每次文件出口 fresh Acquire，沿当前 proof/lease/owner/version 门禁，取值失败即拒绝。Profile 更新递增 stateVersion，因此旧 Run 在轮换后不能用新值冒充旧值检查；不保存原值、哈希或文件认证缓存。

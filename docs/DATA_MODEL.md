@@ -1,3 +1,7 @@
+## 2026-11-01 B-02 Docker 文件发现无持久化增量
+
+Docker ls/glob/grep的有界名称/metadata、完整受检bytes、literal匹配和结果预算只属一次fresh Acquire/guard局部生命周期；不建目录缓存、索引、搜索服务、checkpoint或文件认证状态。原路径、敏感bytes及原始异常不持久化；同Run可变文件始终按本次快照检查。无表、列、Schema、wire或lock改动；E2B目录边界仍OPEN。
+
 ## 2026-11-01 B-02 文件内容出口无持久化变更
 
 无新表、列、索引、迁移、历史回填或缓存。Run 继续仅持有既有 safe profile_id/expected_state_version；每次 Acquire 的 SecretStr、完整 bytes 和匹配结果只属该次局部生命周期，不入 prompt/dispatch/checkpoint/journal/日志。Profile 更新递增版本，旧冻结引用在轮换/撤权后失败关闭；不保存旧秘密或其哈希，也不重写历史文件/产物。

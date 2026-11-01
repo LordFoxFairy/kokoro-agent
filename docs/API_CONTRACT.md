@@ -1,3 +1,7 @@
+## 2026-11-01 B-02 Docker 受保护文件发现内部约束
+
+沿DeepAgents0.6.7原LsResult(entries)/GlobResult(matches)/GrepResult(matches[path,line,text])，无HTTP/Redis变更。Docker选API后每次fresh Acquire；ls当前层、glob仅文件；路径虚拟根/，grep literal、LF行号1-based、空pattern拒绝。glob支持逐组件*、?、[]、**（*.txt当前层；**/*.txt根及子层），不支持brace/extglob。所有遍历原名先检查，grep完整bytes先查再筛行；二进制/非UTF-8先检查后跳过。最多1024项/128文件/32KiB原路径字节/64层、8MiB单文件/16MiB总bytes、min(max_output_bytes,100000)结果JSON字节，失败只给稳定error且无entries/matches前缀。sync/async保持原接口与owned取消。E2B目录未闭环继续稳定拒绝；普通无provider保持SDK行为。
+
 ## 2026-11-01 B-02 文件内容出口内部约束
 
 不增加或修改 HTTP/Redis/Storage/Capability wire；沿原 BackendProtocol 的 ReadResult、GrepResult、FileDownloadResponse 返回。选中 Custom API 的 Run 每次读取/下载/归档先 fresh Acquire，按冻结 exact refs 检查完整原 bytes；命中、未知授权或超界返回稳定安全失败，不返回秘密或 SDK 异常。敏感文件拒绝，不静默改写产物。普通无 provider 行为保持。deliver 继续只消费现 backend.adownload_files；本切片未验运行/正常 UI 不写成产品成功。

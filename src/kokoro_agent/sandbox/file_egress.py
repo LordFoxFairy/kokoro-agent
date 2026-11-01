@@ -6,6 +6,8 @@ No credential cache, rewriting, encoded-content inspection or network policy.
 from __future__ import annotations
 
 import base64
+import fnmatch
+import json
 import mimetypes
 import os
 import stat
@@ -15,7 +17,16 @@ from collections.abc import Callable, Iterable
 from contextlib import ExitStack
 from pathlib import Path
 
-from deepagents.backends.protocol import FileData, FileDownloadResponse, ReadResult
+from deepagents.backends.protocol import (
+    FileData,
+    FileDownloadResponse,
+    FileInfo,
+    GlobResult,
+    GrepMatch,
+    GrepResult,
+    LsResult,
+    ReadResult,
+)
 from deepagents.backends.utils import check_empty_content
 
 from kokoro_agent.sandbox.execution_environment import (
@@ -239,3 +250,295 @@ class FileEgress:
                 inspect(b"")
 
         self.runner.guard(self.timeout, send, cancelled)
+
+
+# Discovery budgets apply before filtering, never to a successful prefix.
+MAX_DISCOVERY_ENTRIES = 1024
+MAX_DISCOVERY_NAME_BYTES = 32 * 1024
+MAX_DISCOVERY_DEPTH = 64
+MAX_DISCOVERY_RESULT_BYTES = 100_000
+Inspector = Callable[[bytes], None]
+ListingOperation = Callable[[Inspector, float, threading.Event], list[FileInfo]]
+SearchOperation = Callable[[Inspector, float, threading.Event], list[GrepMatch]]
+
+
+def _discovery_base(path: str) -> str:
+    base = "" if path in {"/", "."} else relative_path(path.removesuffix("/"))
+    if base and len(base.split("/")) > MAX_DISCOVERY_DEPTH:
+        raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+    return base
+
+
+def _glob_components(pattern: str) -> tuple[str, ...]:
+    parts = tuple(pattern.removeprefix("/").split("/"))
+    if (
+        len(pattern.encode()) > 4096
+        or len(parts) > MAX_DISCOVERY_DEPTH
+        or any(part in {"", ".", ".."} for part in parts)
+        or any("**" in part and part != "**" for part in parts)
+        or any(character in pattern for character in "\\\x00{}()")
+    ):
+        raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+    return parts
+
+
+def _matches_glob(path: str, pattern: tuple[str, ...]) -> bool:
+    # A small component automaton keeps ** matching finite without filesystem I/O.
+    def closure(states: set[int]) -> set[int]:
+        result = set(states)
+        for index in range(len(pattern)):
+            if index in result and pattern[index] == "**":
+                result.add(index + 1)
+        return result
+
+    states = closure({0})
+    for component in path.split("/"):
+        following: set[int] = set()
+        for index in states:
+            if index == len(pattern):
+                continue
+            if pattern[index] == "**":
+                following.add(index)
+            elif fnmatch.fnmatchcase(component, pattern[index]):
+                following.add(index + 1)
+        states = closure(following)
+    return len(pattern) in states
+
+
+def _entry_relative(path: str, base: str) -> str:
+    if path == "/" + base:
+        return path.rsplit("/", 1)[-1]
+    return path.removeprefix("/" + base + "/" if base else "/")
+
+
+class LocalFileTools:
+    """Protected Docker discovery over dirfd metadata and whole-byte snapshots."""
+
+    def __init__(self, egress: FileEgress, root: Path, max_output_bytes: int) -> None:
+        self.egress = egress
+        self.root = root
+        self.result_limit = min(max_output_bytes, MAX_DISCOVERY_RESULT_BYTES)
+
+    def _entries(
+        self, path: str, recursive: bool, inspect: Inspector
+    ) -> list[FileInfo]:
+        inspect(path.encode())
+        base = _discovery_base(path)
+        flags = os.O_RDONLY | os.O_NOFOLLOW
+        entries: list[FileInfo] = []
+        visited = files = name_bytes = 0
+
+        def record(relative: str, info: os.stat_result) -> None:
+            nonlocal visited, files, name_bytes
+            inspect(relative.encode())
+            relative_path(relative)
+            visited += 1
+            name_bytes += len(relative.encode())
+            is_directory = stat.S_ISDIR(info.st_mode)
+            if not is_directory and not stat.S_ISREG(info.st_mode):
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            files += not is_directory
+            if (
+                visited > MAX_DISCOVERY_ENTRIES
+                or files > MAX_BATCH_FILES
+                or name_bytes > MAX_DISCOVERY_NAME_BYTES
+                or len(relative.split("/")) > MAX_DISCOVERY_DEPTH
+            ):
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            entries.append(
+                {"path": "/" + relative, "is_dir": is_directory, "size": info.st_size}
+            )
+
+        def walk(descriptor: int, prefix: str, depth: int) -> None:
+            inspect(b"")
+            if depth > MAX_DISCOVERY_DEPTH:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            with os.scandir(descriptor) as children:
+                for child in children:
+                    inspect(child.name.encode())
+                    relative = prefix + child.name
+                    info = child.stat(follow_symlinks=False)
+                    record(relative, info)
+                    if recursive and stat.S_ISDIR(info.st_mode):
+                        child_fd = os.open(
+                            child.name, flags | os.O_DIRECTORY, dir_fd=descriptor
+                        )
+                        try:
+                            walk(child_fd, relative + "/", depth + 1)
+                        finally:
+                            os.close(child_fd)
+
+        with ExitStack() as stack:
+            descriptor = os.open(self.root, flags | os.O_DIRECTORY)
+            stack.callback(os.close, descriptor)
+            try:
+                for part in base.split("/") if base else ():
+                    descriptor = os.open(part, flags | os.O_NONBLOCK, dir_fd=descriptor)
+                    stack.callback(os.close, descriptor)
+                info = os.fstat(descriptor)
+            except FileNotFoundError:
+                return []
+            if stat.S_ISDIR(info.st_mode):
+                walk(descriptor, base + "/" if base else "", 0)
+            elif stat.S_ISREG(info.st_mode):
+                record(base, info)
+            else:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        return sorted(entries, key=lambda item: item["path"])
+
+    def _bounded(self, item: FileInfo | GrepMatch, used: int) -> int:
+        size = len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode())
+        used += size + (1 if used > 2 else 0)
+        if used > self.result_limit:
+            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        return used
+
+    def _listing(self, path: str, pattern: str | None) -> ListingOperation:
+        def operation(
+            inspect: Inspector, deadline: float, cancelled: threading.Event
+        ) -> list[FileInfo]:
+            del deadline, cancelled  # inspect owns both checks on every step.
+            if pattern is not None:
+                inspect(pattern.encode())
+            components = _glob_components(pattern) if pattern is not None else None
+            entries = self._entries(path, components is not None, inspect)
+            base = _discovery_base(path)
+            result: list[FileInfo] = []
+            used = 2
+            if used > self.result_limit:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            for entry in entries:
+                inspect(b"")
+                if components is not None and (
+                    entry.get("is_dir")
+                    or not _matches_glob(
+                        _entry_relative(entry["path"], base), components
+                    )
+                ):
+                    continue
+                used = self._bounded(entry, used)
+                result.append(entry)
+            return result
+
+        return operation
+
+    def _search(
+        self, pattern: str, path: str | None, glob: str | None
+    ) -> SearchOperation:
+        def operation(
+            inspect: Inspector, deadline: float, cancelled: threading.Event
+        ) -> list[GrepMatch]:
+            inspect(pattern.encode())
+            if not pattern or len(pattern.encode()) > 4096:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            if glob is not None:
+                inspect(glob.encode())
+            components = _glob_components(glob) if glob is not None else None
+            base_path = path if path is not None else "/"
+            entries = self._entries(base_path, True, inspect)
+            base = _discovery_base(base_path)
+            paths = [
+                entry["path"]
+                for entry in entries
+                if not entry.get("is_dir")
+                and (
+                    components is None
+                    or _matches_glob(_entry_relative(entry["path"], base), components)
+                )
+            ]
+            snapshots = (
+                self.egress.operation(paths)(inspect, deadline, cancelled)
+                if paths
+                else []
+            )
+            result: list[GrepMatch] = []
+            used = 2
+            if used > self.result_limit:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            for snapshot in snapshots:
+                inspect(b"")
+                raw = snapshot.content
+                if raw is None:
+                    raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeError:
+                    continue
+                if "\x00" in text:
+                    continue
+                for line_number, line in enumerate(text.split("\n"), 1):
+                    inspect(b"")
+                    if pattern not in line:
+                        continue
+                    match: GrepMatch = {
+                        "path": snapshot.path,
+                        "line": line_number,
+                        "text": line,
+                    }
+                    used = self._bounded(match, used)
+                    result.append(match)
+            return result
+
+        return operation
+
+    def ls(self, path: str) -> LsResult:
+        try:
+            return LsResult(
+                entries=self.egress.runner.guard(
+                    self.egress.timeout, self._listing(path, None)
+                )
+            )
+        except ExecutionBoundaryError:
+            return LsResult(error=FILE_UNAVAILABLE)
+
+    async def als(self, path: str) -> LsResult:
+        try:
+            return LsResult(
+                entries=await self.egress.runner.aguard(
+                    self.egress.timeout, self._listing(path, None)
+                )
+            )
+        except ExecutionBoundaryError:
+            return LsResult(error=FILE_UNAVAILABLE)
+
+    def glob(self, pattern: str, path: str) -> GlobResult:
+        try:
+            return GlobResult(
+                matches=self.egress.runner.guard(
+                    self.egress.timeout, self._listing(path, pattern)
+                )
+            )
+        except ExecutionBoundaryError:
+            return GlobResult(error=FILE_UNAVAILABLE)
+
+    async def aglob(self, pattern: str, path: str) -> GlobResult:
+        try:
+            return GlobResult(
+                matches=await self.egress.runner.aguard(
+                    self.egress.timeout, self._listing(path, pattern)
+                )
+            )
+        except ExecutionBoundaryError:
+            return GlobResult(error=FILE_UNAVAILABLE)
+
+    def grep(self, pattern: str, path: str | None, glob: str | None) -> GrepResult:
+        try:
+            return GrepResult(
+                matches=self.egress.runner.guard(
+                    self.egress.timeout, self._search(pattern, path, glob)
+                )
+            )
+        except ExecutionBoundaryError:
+            return GrepResult(error=FILE_UNAVAILABLE)
+
+    async def agrep(
+        self, pattern: str, path: str | None, glob: str | None
+    ) -> GrepResult:
+        try:
+            return GrepResult(
+                matches=await self.egress.runner.aguard(
+                    self.egress.timeout, self._search(pattern, path, glob)
+                )
+            )
+        except ExecutionBoundaryError:
+            return GrepResult(error=FILE_UNAVAILABLE)

@@ -1,3 +1,15 @@
+## 2026-11-01 B-02 Docker 文件发现恢复（已独审候选，未正常激活）
+
+基线2139674，由本片唯一writer恢复Docker受保护ls/glob/grep，E2B源码不改。所有工具在同一次fresh Acquire/guard内检查遍历原名；grep对候选文件先取得完整受检bytes，再literal匹配；结果失败无成功前缀。1024项/128普通文件/32KiB相对原名/64层，8MiB单文件/16MiB批次及min(max_output_bytes,100000)结果JSON预算。支持根、目录尾斜杠与单文件grep；有限glob语义、二进制跳过、空pattern拒绝见本日设计/API首节。普通provider=None仍委派原SDK。
+
+先跑两条风险RED：常规安全ls与grep因旧稳定拒绝失败（2 failed/19 deselected）；实现后最终focused122通过/15原资源marker未选（11.26秒）。命令使用固定独立Python3.12，pytest -q指定test_file_egress、test_execution_environment、test_workspace_archive、test_deliver、test_runtime_profile_sources及原Docker测试文件；未启动真实资源，不能将marker未选写成真实Docker成功。最终显式解释器Pyright 0错，受影响3文件Ruff/check/format通过；35条file_egress覆盖包括非匹配原名、页外/二进制秘密、路径/symlink/FIFO、容量/结果/深度、撤权、迟到、取消owned reader及普通SDK负控。阶段Pyright曾发现测试lambda参数未知，改为带Reader类型的工厂后通过；格式首次待整理，最终已通过。
+
+Root 停写后独立只读审查无确定 P0–P2，重跑同六文件 122 通过/15 原资源 marker 未选（10.70 秒）。真实 Docker 从本 Run 容器写入的文件验收 ls/glob/literal grep、页外/二进制秘密拒绝、非匹配原名检查、撤权拒绝与恢复，合计 13 次 fresh Acquire；干净文件原字节、资源限制、后继不继承环境均通过（2.201 秒），自有容器已回收。授权服务仍为明确替身，不称真实 IAM 或正常产品 E2E；首次 Root 定向命令写错三个测试路径导致未收集，原失败保留后按实际路径重跑，未改断言。
+
+同一停写生产输入的完整默认 3378 通过/934 原资源 marker 未选（397.73 秒），完整 Ruff 与393文件格式检查、显式 Python3.12 Pyright、wheel/sdist 打包均通过；三份本片源码/测试 SHA 与 writer 冻结值复核无漂移。此前2139674的冷启动失败保留，不将各次结果拼接冒全绿，也不把未运行资源当成功。正常运行源与依赖保持。
+
+E2B目录能力仍OPEN：公开SDK list无响应预算，commands.run固定login shell不可声称可信脚本有界；后续继续直接exec/PID清理适配，B-02整体尚未关闭。
+
 ## 2026-11-01 B-02 Custom API 文件出口（已独审候选，未激活正常源）
 
 按 Root 有效计划 B-02-FILE-EGRESS，Docker/E2B 的受保护 read/download 每次 fresh Acquire，再检查完整原始 bytes 后分页、解码或 base64；命中原值、撤权/版本拒绝、路径/预算/依赖异常均拒绝返回，不改写文件。Docker 从根目录 fd 逐层 O_NOFOLLOW，拒绝穿越、符号链接、非 regular 与超限；E2B 沿 SDK 公开限时 download_url 与 HTTPX async transport，以整体 asyncio timeout 覆盖握手/分片、容量检查并 close。单文件 8 MiB、批次 128 文件/16 MiB；归档枚举另限 1024 个目录项。无持久秘密/hash/cache、无 DB/HTTP/Run wire 改动。

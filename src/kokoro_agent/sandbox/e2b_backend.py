@@ -1,27 +1,40 @@
 """e2b 云沙箱 backend（ADR-009 Phase 1b）：BaseSandbox 4 抽象映射 + run 级生命周期编排。
 
-结构就位、真栈验证待 key：SDK 调用面按 e2b 2.30 真实签名；生命周期语义（resume 重连
-而非新建）由注入 fake 验证；任何 SDK 行为偏差以 key 到位后的真栈为准修正。
+SDK 调用面按 e2b 2.30 真实签名；受保护文件沿公开 download_url 与 HTTPX async
+绝对传输期限。生命周期语义（resume 重连而非新建）由注入 fake 验证；真实云箱仍待 key。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated, Literal, Protocol
+import math
+import threading
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Annotated, Literal, Protocol, runtime_checkable
 
 from deepagents.backends.protocol import (
     ExecuteResponse,
     FileDownloadResponse,
     FileUploadResponse,
+    ReadResult,
+    GrepResult,
+    LsResult,
+    GlobResult,
 )
 from deepagents.backends.sandbox import BaseSandbox
 from e2b import CommandExitException, Sandbox, SandboxException
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+import httpx
 from kokoro_agent.sandbox.execution_environment import (
     ExecutionEnvironmentProvider,
     ExecutionEnvironmentRunner,
+    ExecutionBoundaryError,
 )
+from kokoro_agent.sandbox.file_egress import FileEgress, FILE_UNAVAILABLE, relative_path
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.e2b")
 
@@ -58,6 +71,74 @@ class SandboxFiles(Protocol):
     def read(self, path: str, format: Literal["bytes"]) -> object: ...
 
 
+@runtime_checkable
+class DownloadSandbox(Protocol):
+    def download_url(
+        self,
+        path: str,
+        user: str | None = None,
+        use_signature_expiration: int | None = None,
+    ) -> str: ...
+
+
+def _download_sandbox(value: object) -> DownloadSandbox:
+    if not isinstance(value, DownloadSandbox):
+        raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+    return value
+
+
+_FILE_IO: ContextVar[bool] = ContextVar("e2b_file_io", default=False)
+_LOG_LOCK = threading.RLock()
+_LOG_LEASES: dict[logging.Handler, int] = {}
+
+
+class _SafeFileRecords(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _FILE_IO.get() and (
+            record.name == "httpx" or record.name.startswith("httpcore.")
+        ):
+            record.msg = "E2B_FILE transport"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+            record.__dict__.pop("message", None)
+        return True
+
+
+_FILE_FILTER = _SafeFileRecords()
+
+
+@contextmanager
+def _file_io_logs() -> Generator[None, None, None]:
+    # Sanitize producer handlers before enqueue; only this call's context changes.
+    handlers = set(logging.getLogger().handlers)
+    for item in list(logging.Logger.manager.loggerDict.values()):
+        if isinstance(item, logging.Logger):
+            handlers.update(item.handlers)
+    if logging.lastResort is not None:
+        handlers.add(logging.lastResort)
+    with _LOG_LOCK:
+        for handler in handlers:
+            count = _LOG_LEASES.get(handler, 0)
+            if count == 0:
+                handler.addFilter(_FILE_FILTER)
+            _LOG_LEASES[handler] = count + 1
+    token = _FILE_IO.set(True)
+    try:
+        yield
+    finally:
+        _FILE_IO.reset(token)
+        with _LOG_LOCK:
+            for handler in handlers:
+                count = _LOG_LEASES[handler] - 1
+                if count:
+                    _LOG_LEASES[handler] = count
+                else:
+                    del _LOG_LEASES[handler]
+                    handler.removeFilter(_FILE_FILTER)
+
+
 class SandboxClient(Protocol):
     @property
     def sandbox_id(self) -> str: ...
@@ -81,7 +162,7 @@ class E2BSettings(BaseModel):
 
 
 class E2BSandboxBackend(BaseSandbox):
-    """execute 经 commands.run（非零退出码是结果不是异常）；文件面走 files API。"""
+    """execute 经 commands.run；普通文件走 SDK，受保护读取沿公开限时 URL。"""
 
     def __init__(
         self,
@@ -101,6 +182,117 @@ class E2BSandboxBackend(BaseSandbox):
             if environment_provider is not None
             else None
         )
+        self._file_egress = (
+            FileEgress(self._environment, self._read_snapshot, 120)
+            if self._environment is not None
+            else None
+        )
+
+    def _read_snapshot(self, path: str, maximum: int, deadline: float) -> bytes:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        # SDK 2.30 performs only local signing here, no connect/get_info/HTTP.
+        # Keep the URL local, and join asyncio.run's executor on this owned thread.
+        with _file_io_logs():
+            url = _download_sandbox(self._sandbox).download_url(
+                f"{_WORKDIR}/{relative_path(path)}",
+                use_signature_expiration=max(1, math.ceil(remaining)),
+            )
+            return asyncio.run(self._download_snapshot(url, maximum, deadline))
+
+    async def _download_snapshot(
+        self, url: str, maximum: int, deadline: float
+    ) -> bytes:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        request = httpx.Request(
+            "GET",
+            url,
+            headers={"accept-encoding": "identity"},
+            extensions={
+                "timeout": {
+                    "connect": remaining,
+                    "read": remaining,
+                    "write": remaining,
+                    "pool": remaining,
+                }
+            },
+        )
+        if (
+            request.url.scheme not in {"http", "https"}
+            or not request.url.host
+            or request.url.userinfo
+            or request.url.fragment
+        ):
+            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        async with asyncio.timeout(remaining):
+            async with httpx.AsyncHTTPTransport(
+                trust_env=False,
+                retries=0,
+                limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+            ) as transport:
+                response = await transport.handle_async_request(request)
+                try:
+                    if (
+                        response.status_code != 200
+                        or response.headers.get("content-encoding", "identity")
+                        != "identity"
+                    ):
+                        raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+                    size = response.headers.get("content-length")
+                    if size is not None and (
+                        not size.isascii()
+                        or not size.isdecimal()
+                        or len(size) > 20
+                        or int(size) > maximum
+                    ):
+                        raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+                    content = bytearray()
+                    async for chunk in response.aiter_raw():
+                        if len(content) + len(chunk) > maximum:
+                            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+                        content.extend(chunk)
+                    if size is not None and len(content) != int(size):
+                        raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+                    return bytes(content)
+                finally:
+                    await response.aclose()
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if self._file_egress is not None:
+            return self._file_egress.read(file_path, offset, limit)
+        return super().read(file_path, offset, limit)
+
+    async def aread(
+        self, file_path: str, offset: int = 0, limit: int = 2000
+    ) -> ReadResult:
+        if self._file_egress is not None:
+            return await self._file_egress.aread(file_path, offset, limit)
+        return await super().aread(file_path, offset, limit)
+
+    def grep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        if self._file_egress is not None:
+            return GrepResult(error=FILE_UNAVAILABLE)
+        return super().grep(pattern, path, glob)
+
+    def ls(self, path: str) -> LsResult:
+        if self._file_egress is not None:
+            return LsResult(error=FILE_UNAVAILABLE)
+        return super().ls(path)
+
+    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        if self._file_egress is not None:
+            return GlobResult(error=FILE_UNAVAILABLE)
+        return super().glob(pattern, path)
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        if self._file_egress is not None:
+            return await self._file_egress.adownload(paths)
+        return await super().adownload_files(paths)
 
     @property
     def id(self) -> str:
@@ -179,6 +371,8 @@ class E2BSandboxBackend(BaseSandbox):
         return responses
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        if self._file_egress is not None:
+            return self._file_egress.download(paths)
         responses: list[FileDownloadResponse] = []
         for path in paths:
             try:

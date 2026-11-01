@@ -87,11 +87,11 @@ execution/mcp_runtime_request_binding.py execution/custom_api_request_binding.py
     ("local_shell", "sandbox/archive.py"),
     (
         "docker",
-        "sandbox/docker_backend.py sandbox/archive.py sandbox/execution_environment.py",
+        "sandbox/docker_backend.py sandbox/archive.py sandbox/execution_environment.py sandbox/file_egress.py",
     ),
     (
         "e2b",
-        "sandbox/e2b_backend.py sandbox/archive.py sandbox/execution_environment.py",
+        "sandbox/e2b_backend.py sandbox/archive.py sandbox/execution_environment.py sandbox/file_egress.py",
     ),
     ("custom", "sandbox/custom_backend.py"),
     ("swarm", "swarm.py"),

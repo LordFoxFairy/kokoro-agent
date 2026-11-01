@@ -1,3 +1,15 @@
+## 2026-11-01 B-02 Custom API 文件内容出口（实施设计）
+
+沿已批准的隔离执行边界补齐原值文件内容保护。Run 的冻结 profile/version 是唯一配置引用；每次文件出口 fresh Acquire，沿当前 proof/lease/owner/version 门禁，取值失败即拒绝。Profile 更新递增 stateVersion，因此旧 Run 在轮换后不能用新值冒充旧值检查；不保存原值、哈希或文件认证缓存。
+
+在现 sandbox package 内实现有界原字节检查：一次 operation 内取得不可变完整 bytes，先匹配全部当前 env 原值的 UTF-8 字节，再从相同 bytes 生成 SDK ReadResult、下载/交付或归档。检查早于分页、base64、裁剪；命中拒绝且不修改原文件，不重新打开已检查路径。Docker 以 root 目录 fd、逐层 nofollow、regular file 与 max+1 读取拒绝越界/symlink/非普通文件；E2B 沿 SDK 公开限时 download_url（锁定 SDK2.30 生成签名无同步网络 I/O），由已有 HTTPX async transport 读取；整体 asyncio timeout 覆盖握手与分片，不用固定逐片 idle 冒充绝对期限。禁重定向与环境代理，签名 URL 仅本次调用内存且不入日志/错误/返回；response/transport 必须 close。owned worker 内 event loop/executor 清退仍须等待，不能 detach 未回收的 DNS/线程；DNS executor 等平台清退若超期限必须另报，不能冒称绝对清退上界。超界、权限/授权未知、超时均稳定错误，不回原始 SDK 异常/路径/内容。
+
+复用 ExecutionEnvironmentRunner 的 fresh Acquire/同步 owner-loop 桥及 owned thread 生命周期；共享总体 deadline，取消后等待真实线程退出、丢弃结果、停止后继 sink。归档上传检查过的相同 bytes，不再按可变 path 二次读取；单批有文件数/字节预算，已有安全上传不假称可撤回。普通 provider=None 保留原行为。deliver 通过既有 adownload_files 继承保护，公开 HTTP/Run/Storage 契约不变。
+
+职责选择：优先扩展现 execution_environment.py 的凭据生命周期；若文件快照/SDK转换超出其单一执行职责，新增现 sandbox 下内聚 file_egress.py，由 Docker/E2B 共用，不建新顶层 package、服务、协议或通用DLP。淘汰仅在 deliver 扫描（遗漏 read/archive）和检查后调用 super.read（TOCTOU/分页及编码绕过）。数据用不可变 bytes/窄 dataclass/Callable，配置继续构造注入；无 SQL、缓存、Schema 或持久化新增。首次切片重点内容 read/download/archive；grep 与 ls/glob 的路径/内容同样须经受保护快照或明确拒绝，未实现不关闭 B-02 全项。不承诺编码/网络外传防护。
+
+验收先用非真实密钥 marker 复现旧文件读取/下载泄漏，再验证安全文件逐字保留、秘密在页外/二进制/Unicode、轮换/撤权/迟到/取消/并发、路径逃逸/symlink/预算、归档同 bytes 与敏感日志负控。冻结 lock 下 DeepAgents0.6.7 的独立 Python3.12 环境；Ruff/format/Pyright/contract/default pytest/build 与真实 Docker 分开记录，E2B 真实凭据未验不称通过。
+
 ## 2026-10-29 隔离脚本执行详情
 
 沿既有本人 RunDisplay 只读接口补齐 execute 预览，不新增事件、表或消费者契约。冻结配方中的所有 peer 均为 Docker/E2B 且无 execute approval/review/pause 改写，才允许 execute；StateBackend 文件白名单维持原行为，混合或未知后端不推断权限。原始 typed call/result、同 Run opaque activity ID、终态和持久 journal 的 name/status/result 必须完全一致；仅 command 公共参数及已记录输出进入既有脱敏预览（2048/4096 UTF-8字节），不读取当前凭据、环境或文件。无 MCP/Skill journal 需求时只预算和读取 execute journal，避免无关工具挤占文件详情预算。既有 RR只读、5秒期限、8MiB预算及版本/主体边界保持。

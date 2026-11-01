@@ -24,7 +24,15 @@ from kokoro_agent.sandbox.execution_environment import (
     ExecutionEnvironmentProvider,
     ExecutionEnvironmentRunner,
 )
-from deepagents.backends.protocol import ExecuteResponse
+from deepagents.backends.protocol import (
+    ExecuteResponse,
+    FileDownloadResponse,
+    ReadResult,
+    GrepResult,
+    LsResult,
+    GlobResult,
+)
+from kokoro_agent.sandbox.file_egress import FileEgress, local_reader, FILE_UNAVAILABLE
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.docker")
@@ -153,6 +161,50 @@ class DockerShellBackend(LocalShellBackend):
             if environment_provider is not None
             else None
         )
+        self._file_egress = (
+            FileEgress(self._environment, local_reader(root), timeout)
+            if self._environment is not None
+            else None
+        )
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if self._file_egress is not None:
+            return self._file_egress.read(file_path, offset, limit)
+        return super().read(file_path, offset, limit)
+
+    async def aread(
+        self, file_path: str, offset: int = 0, limit: int = 2000
+    ) -> ReadResult:
+        if self._file_egress is not None:
+            return await self._file_egress.aread(file_path, offset, limit)
+        return await super().aread(file_path, offset, limit)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        if self._file_egress is not None:
+            return self._file_egress.download(paths)
+        return super().download_files(paths)
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        if self._file_egress is not None:
+            return await self._file_egress.adownload(paths)
+        return await super().adownload_files(paths)
+
+    def grep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        if self._file_egress is not None:
+            return GrepResult(error=FILE_UNAVAILABLE)
+        return super().grep(pattern, path, glob)
+
+    def ls(self, path: str) -> LsResult:
+        if self._file_egress is not None:
+            return LsResult(error=FILE_UNAVAILABLE)
+        return super().ls(path)
+
+    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        if self._file_egress is not None:
+            return GlobResult(error=FILE_UNAVAILABLE)
+        return super().glob(pattern, path)
 
     @property
     def sandbox_id(self) -> str:

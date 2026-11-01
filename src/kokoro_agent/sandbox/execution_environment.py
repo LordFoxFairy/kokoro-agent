@@ -14,7 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from deepagents.backends.protocol import ExecuteResponse
 from pydantic import SecretStr
@@ -135,8 +135,19 @@ class _Environment:
             text = text.replace(value, "[REDACTED]")
         return text
 
+    def inspect(self, data: bytes) -> None:
+        if any(
+            secret.get_secret_value().encode() in data for _, secret in self.entries
+        ):
+            raise ExecutionBoundaryError("sandbox_file_denied")
+
 
 Operation = Callable[[dict[str, str], int], ExecuteResponse]
+T = TypeVar("T")
+
+
+class ExecutionBoundaryError(RuntimeError):
+    """Stable, non-sensitive failure at a protected file exit."""
 
 
 def _failure(code: str) -> ExecuteResponse:
@@ -164,6 +175,87 @@ class ExecutionEnvironmentRunner:
             return _Environment.checked(
                 await self._provider.acquire(deadline_monotonic=deadline)
             )
+
+    def _guarded(
+        self,
+        environment: _Environment,
+        deadline: float,
+        cancelled: threading.Event,
+        operation: Callable[[Callable[[bytes], None], float, threading.Event], T],
+    ) -> T:
+        def inspect(data: bytes) -> None:
+            if cancelled.is_set() or time.monotonic() >= deadline:
+                raise ExecutionBoundaryError("sandbox_file_unavailable")
+            environment.inspect(data)
+
+        try:
+            inspect(b"")
+            result = operation(inspect, deadline, cancelled)
+            inspect(b"")
+            return result
+        except ExecutionBoundaryError:
+            raise
+        except Exception:
+            raise ExecutionBoundaryError("sandbox_file_unavailable") from None
+
+    async def aguard(
+        self,
+        timeout: int,
+        operation: Callable[[Callable[[bytes], None], float, threading.Event], T],
+    ) -> T:
+        deadline = time.monotonic() + timeout
+        cancelled = threading.Event()
+        try:
+            environment = await self._acquire(deadline)
+        except asyncio.CancelledError:
+            raise asyncio.CancelledError from None
+        except Exception:
+            raise ExecutionBoundaryError("sandbox_file_unavailable") from None
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                self._guarded, environment, deadline, cancelled, operation
+            )
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled.set()
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not task.cancelled():
+                task.exception()
+            raise asyncio.CancelledError from None
+
+    def guard(
+        self,
+        timeout: int,
+        operation: Callable[[Callable[[bytes], None], float, threading.Event], T],
+        cancelled: threading.Event | None = None,
+    ) -> T:
+        loop = self._owner_loop
+        if loop is None or not loop.is_running():
+            raise ExecutionBoundaryError("sandbox_file_unavailable")
+        try:
+            if asyncio.get_running_loop() is loop:
+                raise ExecutionBoundaryError("sandbox_file_unavailable")
+        except RuntimeError as error:
+            if isinstance(error, ExecutionBoundaryError):
+                raise
+        deadline = time.monotonic() + timeout
+        future = asyncio.run_coroutine_threadsafe(self._acquire(deadline), loop)
+        try:
+            environment = future.result(timeout=max(0, deadline - time.monotonic()))
+        except Exception:
+            future.cancel()
+            raise ExecutionBoundaryError("sandbox_file_unavailable") from None
+        return self._guarded(
+            environment, deadline, cancelled or threading.Event(), operation
+        )
 
     def _perform(
         self,

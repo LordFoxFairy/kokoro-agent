@@ -1,3 +1,9 @@
+## 2026-11-01 B-02 文件内容出口无持久化变更
+
+无新表、列、索引、迁移、历史回填或缓存。Run 继续仅持有既有 safe profile_id/expected_state_version；每次 Acquire 的 SecretStr、完整 bytes 和匹配结果只属该次局部生命周期，不入 prompt/dispatch/checkpoint/journal/日志。Profile 更新递增版本，旧冻结引用在轮换/撤权后失败关闭；不保存旧秘密或其哈希，也不重写历史文件/产物。
+
+E2B 下载签名 URL 也仅为本次调用的内存材料，沿 SDK 公开 download_url 生成；不缓存、不写文件、不纳入业务返回或日志，沿整体 async timeout 和 owned thread 回收。
+
 ## 2026-10-28 最终答复身份与原终态原子保存（设计门，候选）
 
 Agent 不新增表、列、索引或 checkpoint 状态。最终答复绑定随既有 terminal outbox 的 payload_json、同事务安全 Chat terminal payload_json 保存；公开引用使用原 ChatMessage 身份。首次写入前核 tenant/namespace/session/Run、assistant role 与 completed status；已有 Chat 主键及 Run 范围约束复用，禁止跨 owner SQL。

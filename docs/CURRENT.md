@@ -1,3 +1,20 @@
+## 2026-11-01 B-02 Custom API 文件出口（已独审候选，未激活正常源）
+
+按 Root 有效计划 B-02-FILE-EGRESS，Docker/E2B 的受保护 read/download 每次 fresh Acquire，再检查完整原始 bytes 后分页、解码或 base64；命中原值、撤权/版本拒绝、路径/预算/依赖异常均拒绝返回，不改写文件。Docker 从根目录 fd 逐层 O_NOFOLLOW，拒绝穿越、符号链接、非 regular 与超限；E2B 沿 SDK 公开限时 download_url 与 HTTPX async transport，以整体 asyncio timeout 覆盖握手/分片、容量检查并 close。单文件 8 MiB、批次 128 文件/16 MiB；归档枚举另限 1024 个目录项。无持久秘密/hash/cache、无 DB/HTTP/Run wire 改动。
+
+受保护归档将同一已检查 bytes 交给 S3 put_object，不二次打开原 path；取消仍持有真实线程，已开始的安全上传允许结束，随后不再启动下一 sink。普通 provider=None 维持原行为。选 API 时 grep/ls/glob 暂稳定拒绝，不能绕回 SDK 原生 execute；这三个工具的可用性尚未闭环。有限原值检查不声称防编码/任意网络外泄或整个批次的事务原子性。固定旧 safe refs 的 Run 在原版本轮换后必须由 owner 拒绝，不能靠缓存旧值恢复。
+
+独立 Python 3.12 / DeepAgents 0.6.7 环境下：初始两条文件泄漏 RED 保留；最终 focused 108 PASS、6 按原资源 marker 未选（6.02 秒），包括原 execution_environment/archive/E2B、deliver 与 recipe resource manifest 回归；显式解释器 Pyright 0 错、9 文件 Ruff/format、contract checker 通过。实际归档 adapter→S3 替身证明同快照/原值拒绝/日志无敏感/取消无后继上传；deliver 证明命中不 publish、干净二进制原字节 publish。E2B 仅 SDK 替身，不称真实云箱成功。
+
+证据：`/Users/newmacmini/测试结果/Kokoro-TaskB全链路-20261101/测试验收/B02-file-egress-*`。阶段曾出现普通 archive 取消语义回归，已保留原 provider=None 语义并在最终回归通过；初次 Pyright SDK overload/private helper 问题已改为独立 stream protocol 与 public MIME/UTF-8 处理。完整默认门、主控独审与本切片真实 Docker 仍由主控执行；未变更正常服务、外部凭据或资源，不以本地门禁冒称正常产品整链完成。
+
+
+独审 P2 修复：锁定 E2B2.30 的同步 FileStreamReader 只接受固定逐片 idle，原 1 秒总预算 RED 实际 1.706 秒退出。现受保护文件改沿 SDK 公开 download_url 本地签名，无同步网络获取；签名地址仅调用内存，HTTPX 直接 transport 单 GET（禁重定向、环境代理、cookie/retry）并以整体 async timeout 取消握手/next。生产 handler 按本次上下文在入队前净化 HTTPX/httpcore 记录，其他并发普通日志保持。SDK/本地真实 HTTP 验证慢响应头、握手后阻塞 next、持续慢片、302不跟随、连接关闭、取消后等待真实线程结束，以及 DEBUG/QueueHandler 不持有地址/响应头 canary。仅传输 adapter 的真实 HTTP，不称真实 E2B 云箱。
+
+P2 最终 focused 115 PASS、6 原 marker 未选（9.53 秒）；Pyright 0 错，Ruff/format/contract 通过，证据 `B02-e2b-deadline-*`。阶段并发日志正控曾因 httpx logger 原显式级别被抑制而失败，已显式启用该 logger 的 caplog DEBUG 后保留全部断言通过。重要边界：AnyIO DNS 最终使用 loop.getaddrinfo/default executor，系统 DNS 阻塞不能由 asyncio 强杀；asyncio.run 清退会等待 executor，可能超过传输期限。回归用受控阻塞 executor 证明超时后仍持有线程、释放前不返回/不 detach，故不宣称 DNS/平台清退也有绝对 1 秒上界。主控继续最终独审/默认门。
+
+Root 最终独审确认原 P2 已修、无新增确定 P0–P2。真实 Docker 以明确授权替身验证 fresh 撤权/恢复、完整文件/二进制原值拦截、干净原字节、stdout 脱敏、同 Run 资源限制及无环境继承，结束后自有容器不存在；这是实际容器，不是正常 IAM/真实 E2B。停写后481份非Markdown输入无漂移，完整默认3359通过/3项HTTP配置启动3秒超时/934资源marker未选；失败原文件3项单独复跑通过，未扩大时限。sdist/wheel打包通过；前次默认3354/1冷启动超时及被会话中断的未完成复跑保留，不将各次结果拼成全套绿。正常配对、grep/ls/glob及完整B-02继续开放。
+
 ## 2026-10-29 Custom API Run/factory 隔离接线（候选，正常未启用）
 
 HTTP8.10 固定安全 profile ID/version，省略/空选择维持旧 Run 序列化；Worker 将精确冻结集合传给当前 lease 的 Platform client，Describe/Acquire 在 proof/credential/I/O 前拒绝集合或版本不匹配。Factory 在模型前读取一次说明/env 名；每次 execute 才 acquire，说明和值不进入 static recipe。普通 chat 保持 state，选 API 才派生已配置 Docker/E2B；build 与 cleanup 使用同一派生后端、同 Run 独立 workspace。归档包装和清理保留 provider/原 event loop/显式 Docker context，无 host fallback。

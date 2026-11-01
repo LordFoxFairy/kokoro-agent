@@ -1,3 +1,9 @@
+## 2026-11-01 B-02 文件内容出口内部约束
+
+不增加或修改 HTTP/Redis/Storage/Capability wire；沿原 BackendProtocol 的 ReadResult、GrepResult、FileDownloadResponse 返回。选中 Custom API 的 Run 每次读取/下载/归档先 fresh Acquire，按冻结 exact refs 检查完整原 bytes；命中、未知授权或超界返回稳定安全失败，不返回秘密或 SDK 异常。敏感文件拒绝，不静默改写产物。普通无 provider 行为保持。deliver 继续只消费现 backend.adownload_files；本切片未验运行/正常 UI 不写成产品成功。
+
+E2B 受保护读取仅调用 SDK 公开 download_url 生成限时地址，沿现 HTTPX async transport 在整体 asyncio timeout 内读取；地址不进入任何 wire、错误或日志，禁重定向/环境代理，取消等待 owned 线程与流关闭。无新 API/owner/依赖。
+
 ## HTTP8.10 CustomAPI Run 精确选择（候选，运行装配另验）
 
 唯一增量是现有 `LaunchRequest` 的 optional `selected_custom_api_profiles`：有序数组最多32项，每项仅 `profile_id`（1–191位ASCII opaque ID，`[A-Za-z0-9][A-Za-z0-9._:-]*`）和 `expected_state_version`（严格整数1–2147483647）。同profile ID即使版本不同亦拒绝；拒绝null、未知字段、名称、说明、环境变量或密钥。省略/`[]`均不向旧 `RunRequest` JSON写新字段，保留原dispatch fence及输入摘要；非空选择写入原request JSON、参与原fence并随原Redis envelope/恢复重放，顺序或版本漂移按原同Run冲突处理。无新表/列/事件/路由。

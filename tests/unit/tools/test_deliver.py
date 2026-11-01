@@ -5,9 +5,12 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 from pathlib import Path
 
 import pytest
+
+from support.file_egress import Environment
 
 from deepagents.backends.local_shell import LocalShellBackend
 
@@ -18,6 +21,7 @@ from kokoro_agent.clients.storage import (
     StorageClientError,
 )
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
+from kokoro_agent.sandbox.docker_backend import DockerShellBackend
 from kokoro_agent.tools.deliver import DeliverResult, make_deliver_tool
 
 _NS = "local:s1"
@@ -173,6 +177,35 @@ async def test_deliver_missing_file_returns_error(tmp_path: Path) -> None:
     out = await _tool(tmp_path, client).ainvoke({"path": "/nope.txt", "title": "X"})
     assert "无法读取" in out
     assert client.requests == []
+
+
+async def test_custom_api_deliver_denies_literal_secret_before_publish(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"binary\x00" + "private-原值-marker".encode())
+    client = FakeDeliveryClient()
+    backend = DockerShellBackend(
+        root=tmp_path,
+        container_id="unused",
+        timeout=5,
+        max_output_bytes=1024,
+        environment_provider=Environment(),
+        environment_loop=asyncio.get_running_loop(),
+    )
+    tool = make_deliver_tool(
+        backend, client, namespace=_NS, run_id=_RUN, identity=_IDENTITY
+    )
+    denied = await tool.ainvoke({"path": "/report.pdf", "title": "Report"})
+    assert "无法读取" in denied
+    assert "private-原值-marker" not in denied
+    assert client.requests == []
+    source.write_bytes(b"binary\x00clean")
+    result = DeliverResult.model_validate_json(
+        await tool.ainvoke({"path": "/report.pdf", "title": "Report"})
+    )
+    assert result.status == "delivered"
+    assert client.requests[0].content == b"binary\x00clean"
 
 
 async def test_storage_client_failure_is_readable(tmp_path: Path) -> None:

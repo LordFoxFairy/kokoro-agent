@@ -174,6 +174,11 @@ async def test_profile_schema_catalog_drift_rejected(
             "DROP CONSTRAINT ck_model_evidence_revision",
         ),
         (
+            "kokoro_agent_model_usage_evidence",
+            "DROP CONSTRAINT ck_model_evidence_state, "
+            "ADD CONSTRAINT ck_model_evidence_state CHECK (TRUE)",
+        ),
+        (
             "kokoro_agent_model_call_attempt",
             "DROP CONSTRAINT uq_model_attempt_call_ordinal",
         ),

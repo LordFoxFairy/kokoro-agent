@@ -13,7 +13,7 @@ import codecs
 import math
 from threading import RLock, get_ident
 from types import MappingProxyType, TracebackType
-from typing import Literal, NoReturn, Self
+from typing import Literal, NoReturn, Self, TypeGuard
 import zlib
 
 import httpx
@@ -77,6 +77,10 @@ def _fail(reason: str) -> NoReturn:
 
 class _JsonObject(dict[str, object]):
     """A JSON object actually built by the duplicate-checking decoder hook."""
+
+
+def _object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
 
 
 def _object(pairs: list[tuple[str, object]]) -> _JsonObject:
@@ -269,8 +273,10 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
 
 
 class _Parser:
-    def __init__(self, streaming: bool) -> None:
+    def __init__(self, streaming: bool, *, litellm: bool = False) -> None:
         self.streaming = streaming
+        self._litellm = litellm
+        self._litellm_tail = False
         self.utf8 = codecs.getincrementaldecoder("utf-8")()
         self.scratch = bytearray()
         self.data: list[bytes] = []
@@ -339,7 +345,12 @@ class _Parser:
                 self._model_conflict = True
             if reported is not None:
                 self._seen_model = reported
-        if document.get("choices") != [] or document.get("usage") is None:
+        has_usage = document.get("usage") is not None
+        empty_tail = self._is_litellm_empty_tail(document) and has_usage
+        candidate_frame = has_usage and (document.get("choices") == [] or empty_tail)
+        if self._litellm_tail and not candidate_frame:
+            _fail("nonterminal_usage")
+        if not candidate_frame:
             return
         candidate = _projection(document)
         if (
@@ -348,6 +359,24 @@ class _Parser:
         ):
             _fail("conflicting_usage")
         self.projection = candidate
+        if empty_tail:
+            self._litellm_tail = True
+
+    def _is_litellm_empty_tail(self, document: _JsonObject) -> bool:
+        if not self._litellm or document.get("object") != "chat.completion.chunk":
+            return False
+        choices = document.get("choices")
+        if not _object_list(choices) or len(choices) != 1:
+            return False
+        choice: object = choices[0]
+        return (
+            isinstance(choice, _JsonObject)
+            and set(choice) <= {"index", "delta", "finish_reason"}
+            and type(choice.get("index")) is int
+            and choice.get("index") == 0
+            and choice.get("delta") == {}
+            and choice.get("finish_reason") is None
+        )
 
     def finish(self) -> PhysicalUsageObservation:
         if not self.streaming:
@@ -455,9 +484,14 @@ def _zlib_decode(raw: bytes, parser: _Parser, encoding: str) -> bool:
 
 
 def _observe(
-    raw: bytes, encoding: str, streaming: bool, body_ended: bool
+    raw: bytes,
+    encoding: str,
+    streaming: bool,
+    body_ended: bool,
+    *,
+    litellm: bool = False,
 ) -> PhysicalUsageObservation:
-    parser = _Parser(streaming)
+    parser = _Parser(streaming, litellm=litellm)
     try:
         if encoding == "zstd":
             proof = _zstd_first(raw, parser)
@@ -562,7 +596,11 @@ class _UsageCapture:
                 raw = bytes(self._buffer)
                 self._buffer.clear()
                 self._result = _observe(
-                    raw, self._encoding, self._streaming, self._ended
+                    raw,
+                    self._encoding,
+                    self._streaming,
+                    self._ended,
+                    litellm=self._route.connection.connection_type == "litellm",
                 )
             except _ObservationError as failure:
                 self._result = PhysicalUsageObservation(

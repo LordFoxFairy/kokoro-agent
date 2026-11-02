@@ -496,7 +496,7 @@ complete是正常scope退出、合法owner marker、唯一同route request/respo
 
 ### JSON/SSE终态与观察透明性
 
-JSON必须完整且合法，SSE候选必须为choices=[]的final usage事件并后续收到DONE；usage:null普通chunk不计数。完全相同的final语义投影重复只去重一次，冲突永久invalid；不相加final_cumulative。缺final/DONE、提前close、取消/断流、scope异常退出为unresolved，既有SDK异常原样传出。正常DONE是协议终点，不为socket EOF强行预读；scope正常结束才取冻结完成结果。详细边界与预算见TECHNICAL_DESIGN同节。
+JSON必须完整且合法，SSE候选通常必须为choices=[]的final usage事件并后续收到DONE。仅可信System连接的connection_type=litellm另接受object=chat.completion.chunk、choices恰为单个index=0与delta={}的无语义尾帧，choice只允许index/delta及缺失或null的finish_reason；其非null usage仍经原计数/冲突校验，必须在完整DONE前保持最后aggregate，后继非候选数据事件使观察unresolved。direct及其它连接不接受此兼容形状，不从空details补零，不改usage profile/schema/digest；usage:null普通chunk不计数。完全相同的final语义投影重复只去重一次，冲突永久invalid；不相加final_cumulative。缺final/DONE、提前close、取消/断流、scope异常退出为unresolved，既有SDK异常原样传出。正常DONE是协议终点，不为socket EOF强行预读；scope正常结束才取冻结完成结果。详细边界与预算见TECHNICAL_DESIGN同节。
 
 response hook的公开HTTPX raw tap仅将SDK已拉取bytes原样转发并复制到observer≤4MiB buffer；不在线decode，不用SDK stream作reader输入。scope正常末冻结同immutable compressed buffer再观察；输入超限停止复制/释放，SDK继续。无scope维持原行为；scope异常、取消、transport/close异常原样传播且观察unresolved，正常读取/backpressure/ownedclose不变，不预取SDK。
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import gzip
+from typing import Literal
 
 import httpx
 import pytest
@@ -17,7 +18,7 @@ from kokoro_agent.model.usage_observation import (
 from kokoro_agent.model.usage_producer import normalize_observed_usage
 
 
-def route() -> ResolvedModel:
+def route(connection_type: Literal["direct", "litellm"] = "direct") -> ResolvedModel:
     return ResolvedModel(
         model_id="model-a",
         provider_id="provider-a",
@@ -34,7 +35,7 @@ def route() -> ResolvedModel:
         max_output_tokens=16,
         connection=ModelConnection(
             protocol="openai_chat_completions",
-            connection_type="direct",
+            connection_type=connection_type,
             base_url="https://provider.test/v1",
             secret_handle_ref="test-handle",
         ),
@@ -51,6 +52,10 @@ def observe(
     truncate_encoding: bool = False,
     usage: object = Ellipsis,
     omit_usage: bool = False,
+    choices: object = Ellipsis,
+    event_object: object = "chat.completion.chunk",
+    trailing_documents: list[dict[str, object]] | None = None,
+    connection_type: Literal["direct", "litellm"] = "direct",
 ):
     data: list[dict[str, object]] = [
         {
@@ -61,6 +66,9 @@ def observe(
         for m in models
     ]
     for document in data:
+        if choices is not Ellipsis:
+            document["object"] = event_object
+            document["choices"] = choices
         if omit_usage:
             document.pop("usage")
         elif usage is not Ellipsis:
@@ -69,6 +77,7 @@ def observe(
         for document, response_id in zip(data, response_ids, strict=True):
             if response_id is not Ellipsis:
                 document["id"] = response_id
+    data.extend(trailing_documents or [])
     raw = (
         b"".join(b"data: " + json.dumps(d).encode() + b"\n\n" for d in data)
         + b"data: [DONE]\n\n"
@@ -81,7 +90,7 @@ def observe(
         raw = gzip.compress(raw)
     if truncate_encoding:
         raw = raw[:-4]
-    bound = route()
+    bound = route(connection_type)
 
     def claim(request: httpx.Request) -> None:
         claim_usage_request(request, bound)
@@ -111,6 +120,145 @@ def observe(
             )
             capture.mark_sdk_consumption_complete()
         return capture.snapshot()
+
+
+def empty_delta_choices() -> list[dict[str, object]]:
+    delta: dict[str, object] = {}
+    return [{"index": 0, "delta": delta}]
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_litellm_empty_delta_tail_preserves_actual_counts_without_cache_facts(
+    compressed: bool,
+) -> None:
+    # Actual local-qwen/LiteLLM SSE usage tail: not OpenAI's choices=[] frame.
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        choices=empty_delta_choices(),
+        compressed=compressed,
+        usage={"prompt_tokens": 153, "completion_tokens": 21, "total_tokens": 174},
+    )
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "normalized"
+    assert normalized.value.input_total.model_dump() == {
+        "state": "reported",
+        "count": "153",
+    }
+    assert normalized.value.output_total.model_dump() == {
+        "state": "reported",
+        "count": "21",
+    }
+    assert normalized.value.total.model_dump() == {"state": "reported", "count": "174"}
+    assert normalized.value.input_cache_read.state == "unreported"
+    assert normalized.value.output_reasoning.state == "unreported"
+    assert normalized.value.classification_state == "partial"
+    assert value.projection_digest is not None
+
+
+@pytest.mark.parametrize(
+    "choices",
+    [
+        [{"index": 0, "delta": {"content": "token"}}],
+        [{"index": 0, "delta": {"tool_calls": []}}],
+        [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        [{"index": 0, "delta": {}, "logprobs": None}],
+        [{"index": True, "delta": {}}],
+        [{"index": 1, "delta": {}}],
+        [{"index": 0, "delta": {}}, {"index": 1, "delta": {}}],
+    ],
+)
+def test_litellm_semantic_or_ambiguous_choice_is_not_final_usage(
+    choices: object,
+) -> None:
+    value = observe(
+        ["raw-a"], streaming=True, connection_type="litellm", choices=choices
+    )
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "unresolved" and normalized.reason == "missing_usage"
+
+
+def test_direct_empty_delta_usage_remains_unresolved() -> None:
+    value = observe(["raw-a"], streaming=True, choices=empty_delta_choices())
+    assert normalize_observed_usage(value).state == "unresolved"
+
+
+@pytest.mark.parametrize("event_object", [None, "chat.completion", 1])
+def test_litellm_empty_choice_in_wrong_event_is_not_usage(event_object: object) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        choices=empty_delta_choices(),
+        event_object=event_object,
+    )
+    assert normalize_observed_usage(value).state == "unresolved"
+
+
+def test_litellm_identical_tail_is_deduplicated_with_unchanged_projection() -> None:
+    choices = empty_delta_choices()
+    choices[0]["finish_reason"] = None
+    repeated = observe(
+        ["raw-a", "raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        choices=choices,
+    )
+    standard = observe(["raw-a"], streaming=True)
+    assert repeated.status == "complete"
+    assert repeated.counts["total_tokens"].value == 20
+    assert repeated.projection_digest == standard.projection_digest
+
+
+def test_litellm_usage_tail_followed_by_content_is_not_final() -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        choices=empty_delta_choices(),
+        trailing_documents=[
+            {
+                "model": "raw-a",
+                "choices": [{"index": 0, "delta": {"content": "late"}}],
+                "usage": None,
+            }
+        ],
+    )
+    assert value.status == "unresolved"
+
+
+def test_litellm_usage_tail_requires_done() -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        choices=empty_delta_choices(),
+        complete=False,
+    )
+    assert value.status == "unresolved" and value.reason == "missing_done"
+
+
+def test_litellm_usage_tail_conflict_is_not_summed() -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        choices=empty_delta_choices(),
+        trailing_documents=[
+            {
+                "model": "raw-a",
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {}}],
+                "usage": {
+                    "prompt_tokens": 17,
+                    "completion_tokens": 4,
+                    "total_tokens": 21,
+                },
+            }
+        ],
+    )
+    assert value.status == "unresolved" and value.reason == "conflicting_usage"
 
 
 @pytest.mark.parametrize("streaming", [False, True])

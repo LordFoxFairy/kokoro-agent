@@ -5,6 +5,7 @@ from __future__ import annotations
 from langgraph.errors import GraphRecursionError
 from openai import APIConnectionError, APITimeoutError
 
+from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.clients.custom_api_runtime import (
@@ -57,6 +58,8 @@ def failure_code(error: BaseException) -> RunErrorCode:
         return "model_unavailable"
     if isinstance(error, ModelResolutionError):
         return _MODEL_FAILURE_CODES.get(error.code, "internal_error")
+    if isinstance(error, PersonalContextWindowExceeded):
+        return "context_window_exceeded"
     if isinstance(error, TokenBudgetExceeded):
         return "token_budget_exceeded"
     if isinstance(error, GraphRecursionError):
@@ -69,6 +72,8 @@ def run_failed_payload(
 ) -> RunFailedPayload:
     # Assembly callers supply their ordinary-error default; typed owner failures
     # retain their verified classification on both initial build and resume.
+    if isinstance(error, PersonalContextWindowExceeded):
+        return RunFailedPayload(code="context_window_exceeded", retryable=False)
     if isinstance(error, StaticRecipeIncompatible | ModelCallInputInvalid):
         return RunFailedPayload(code="contract_incompatible", retryable=False)
     if isinstance(error, CustomApiConfigurationError):

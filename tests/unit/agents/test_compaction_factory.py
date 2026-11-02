@@ -1240,3 +1240,175 @@ async def test_summary_input_preparation_failure_is_latched_before_native_helper
         assert bodies == journal.commands == execution.authorized == []
     finally:
         await handle.aclose()
+
+
+def _personal_request(*, large: bool = False) -> RunRequest:
+    from kokoro_agent.protocol.control import PersonalContext
+
+    snapshot = PersonalContext.model_validate_json(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "owner": {"tenant_ref": "tenant", "user_ref": "actor"},
+                "profile": {
+                    "revision": 7,
+                    "nickname": "PERSONAL_NICKNAME",
+                    "occupation": "engineer",
+                    "about": "personal about",
+                    "instructions": "full instructions",
+                },
+                "knowledge": {
+                    "usage_revision": 3,
+                    "enabled": True,
+                    "items": [
+                        {
+                            "knowledge_id": f"00000000-0000-4000-8000-{i:012d}",
+                            "revision": 5,
+                            "name": f"knowledge {i}",
+                            "when_to_use": "relevant requests",
+                            "content": "PERSONAL_KNOWLEDGE "
+                            + ("x " * 990 if large else "exact content"),
+                        }
+                        for i in range(100 if large else 1)
+                    ],
+                },
+            }
+        )
+    )
+    return _request().model_copy(update={"personal_context": snapshot})
+
+
+async def test_personal_context_full_prompt_reaches_main_after_paid_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handle, request, journal, execution, bodies = await _handle(
+        monkeypatch,
+        resolver=_Resolver(context_window=20000),
+        run_request=_personal_request(),
+    )
+    try:
+        await _invoke(handle, request, huge=False, seed_words=4000)
+        assert handle.private_material
+        assert len(bodies) == len(journal.commands) == len(execution.authorized) == 2
+        assert "tools" not in bodies[0] and "tools" in bodies[1]
+        system = json.dumps(bodies[1]["messages"][0]["content"], ensure_ascii=False)
+        assert (
+            "PERSONAL_NICKNAME" in system
+            and "PERSONAL_KNOWLEDGE exact content" in system
+        )
+        assert '\\"revision\\":7' in system and '\\"revision\\":5' in system
+        assert all(o.status == "complete" for o in execution.observations)
+    finally:
+        await handle.aclose()
+
+
+async def test_uncompressible_personal_context_rejected_before_any_summary_or_finance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
+    from kokoro_agent.execution.failures import run_failed_payload
+
+    async def forbidden_authorize(*args: object, **kwargs: object) -> None:
+        raise AssertionError("uncompressible material must not acquire funds")
+
+    monkeypatch.setattr(_Execution, "authorize", forbidden_authorize)
+    with pytest.raises(PersonalContextWindowExceeded) as failure:
+        await _handle(
+            monkeypatch, resolver=_Resolver(), run_request=_personal_request(large=True)
+        )
+    assert run_failed_payload(failure.value).code == "context_window_exceeded"
+    assert not run_failed_payload(failure.value).retryable
+
+
+async def test_personal_context_static_peers_receive_exact_material(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original: Any = getattr(assembly.deepagents, "create_deep_agent")
+    captured: list[dict[str, Any]] = []
+
+    def capture(**kwargs: Any) -> Any:
+        captured.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(assembly.deepagents, "create_deep_agent", capture)
+    handle, _, _, _, _ = await _handle(
+        monkeypatch,
+        resolver=_Resolver(context_window=20000),
+        run_request=_personal_request(),
+    )
+    try:
+        assert captured and captured[0]["subagents"]
+        for peer in captured[0]["subagents"]:
+            assert "PERSONAL_NICKNAME" in peer["system_prompt"]
+            assert "PERSONAL_KNOWLEDGE exact content" in peer["system_prompt"]
+    finally:
+        await handle.aclose()
+
+
+async def test_personal_context_still_too_large_after_summary_keeps_only_summary_charge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
+
+    handle, request, journal, execution, bodies = await _handle(
+        monkeypatch,
+        resolver=_Resolver(context_window=20000),
+        run_request=_personal_request(),
+    )
+    try:
+        with pytest.raises(PersonalContextWindowExceeded):
+            await _invoke(handle, request, huge=True)
+        assert (
+            len(bodies)
+            == len(journal.commands)
+            == len(execution.authorized)
+            == len(execution.observations)
+            == 1
+        )
+        assert "tools" not in bodies[0]
+        assert execution.observations[0].status == "complete"
+    finally:
+        await handle.aclose()
+
+
+async def test_personal_context_counts_final_skill_system_after_all_prompt_middleware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.skills.middleware import RunSkillsMiddleware
+    from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
+
+    original: Any = getattr(RunSkillsMiddleware, "awrap_model_call")
+
+    async def extend(self: Any, incoming: ModelRequest, handler: Any) -> Any:
+        async def final(actual: ModelRequest) -> Any:
+            assert actual.system_message is not None
+            system = actual.system_message.model_copy(
+                update={
+                    "content": str(
+                        actual.system_message.model_dump(mode="json")["content"]
+                    )
+                    + " private skill text " * 10000
+                }
+            )
+            return await handler(actual.override(system_message=system))
+
+        return await original(self, incoming, final)
+
+    monkeypatch.setattr(RunSkillsMiddleware, "awrap_model_call", extend)
+    handle, request, journal, execution, bodies = await _handle(
+        monkeypatch,
+        resolver=_Resolver(context_window=20000),
+        run_request=_personal_request(),
+    )
+    try:
+        with pytest.raises(PersonalContextWindowExceeded):
+            await _invoke(handle, request, huge=False, seed_words=1)
+        assert (
+            bodies
+            == journal.commands
+            == execution.authorized
+            == execution.observations
+            == []
+        )
+    finally:
+        await handle.aclose()

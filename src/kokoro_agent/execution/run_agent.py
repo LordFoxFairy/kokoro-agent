@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import AbstractContextManager, nullcontext
+import langsmith
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, TypeGuard
 
+from langchain_core.globals import get_debug, get_verbose
+from langchain_core.tracers.context import tracing_v2_callback_var
+from kokoro_agent.model.call_models import ModelCallInputInvalid
 from langchain_core.callbacks import get_usage_metadata_callback
 from langchain_core.messages import AIMessage, UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
@@ -33,6 +38,10 @@ from kokoro_agent.model.call_scope import (
 )
 
 LOGGER = logging.getLogger(__name__)
+# Only the public SDK context-manager boundary has incomplete upstream annotations.
+_tracing_context: Callable[..., AbstractContextManager[None]] = getattr(
+    langsmith, "tracing_context"
+)
 
 
 async def invoke_once(
@@ -56,6 +65,7 @@ async def invoke_once(
         Awaitable[Literal["active", "waiting", "unknown"]],
     ],
     trace: RunnableConfig | None = None,
+    private_material: bool = False,
     recursion_limit: int = 100,
     model_call_settle_timeout_s: float = DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
 ) -> bool:
@@ -71,7 +81,14 @@ async def invoke_once(
         # run.started eligibility is explicit; the Run-locked outbox deduplicates retries.
         await emitter.emit(RunStartedPayload())
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
-    with get_usage_metadata_callback() as usage_cb:
+    with (
+        (
+            _tracing_context(enabled=False, parent=False)
+            if private_material
+            else nullcontext()
+        ),
+        get_usage_metadata_callback() as usage_cb,
+    ):
         scope = ModelCallScope(timeout_s=model_call_settle_timeout_s)
         native_error: Exception | None = None
         interrupted = False
@@ -79,6 +96,16 @@ async def invoke_once(
         with bind_model_call_scope(scope):
 
             async def drive_native() -> tuple[bool, str | None]:
+                # The locked SDK has no per-Run override for its global console flags.
+                # Refuse before graph callbacks can print private prompts; never mutate globals.
+                if private_material and (
+                    get_debug()
+                    or get_verbose()
+                    or tracing_v2_callback_var.get() is not None
+                ):
+                    raise ModelCallInputInvalid(
+                        "personal material content observer is enabled"
+                    )
                 run = await agent.astream_events(
                     payload,
                     version="v3",

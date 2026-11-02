@@ -190,6 +190,7 @@ async def _invoke(
     approval_tool_names: frozenset[str] = frozenset(),
     claim: Callable[[], Awaitable[bool]] = _always_claim,
     trace: RunnableConfig | None = None,
+    private_material: bool = False,
 ) -> bool:
     emitter = await RunEmitter.attach(bus, run_id)
     return await invoke_once(
@@ -203,6 +204,7 @@ async def _invoke(
         finalize_terminal=terminal_emitter(emitter, claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
         trace=trace,
+        private_material=private_material,
         on_native_settled=settled_state_callback(agent, "c1"),
     )
 
@@ -2136,3 +2138,121 @@ def test_interrupt_is_not_a_return_even_with_an_error_tool_message() -> None:
         error="Interrupt(paused)",
     )
     assert tool_returned_payload(tc) is None
+
+
+async def test_private_material_disables_global_tracing_only_inside_owned_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import langsmith
+    from contextlib import AbstractContextManager
+
+    tracing_context: Callable[..., AbstractContextManager[None]] = getattr(
+        langsmith, "tracing_context"
+    )
+    from langsmith.run_helpers import get_tracing_context
+    from langchain_core.callbacks import CallbackManager
+    from langchain_core.tracers.langchain import LangChainTracer
+
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    seen: list[bool] = []
+
+    class PrivateAgent(FakeAgent):
+        async def astream_events(self, *args: Any, **kwargs: Any) -> Any:
+            assert get_tracing_context()["enabled"] is False
+            manager = CallbackManager.configure()
+            seen.append(any(isinstance(h, LangChainTracer) for h in manager.handlers))
+            await asyncio.sleep(0)
+            assert get_tracing_context()["enabled"] is False
+            return await super().astream_events(*args, **kwargs)
+
+    with tracing_context(enabled=True):
+        bus = FakeBus()
+        task = asyncio.create_task(
+            _invoke(
+                bus,
+                PrivateAgent(run=text_run("ordinary answer")),
+                private_material=True,
+            )
+        )
+        assert get_tracing_context()["enabled"] is True
+        await task
+        assert get_tracing_context()["enabled"] is True
+    assert seen == [False]
+    assert bus.kinds("r1")[-1] == "run.completed"
+
+
+@pytest.mark.parametrize("setting", ["debug", "verbose"])
+async def test_private_material_refuses_unsafe_global_content_console(
+    setting: str,
+) -> None:
+    from langchain_core.globals import get_debug, get_verbose, set_debug, set_verbose
+
+    entered = False
+
+    class UnsafeAgent(FakeAgent):
+        async def astream_events(self, *args: Any, **kwargs: Any) -> Any:
+            nonlocal entered
+            entered = True
+            return await super().astream_events(*args, **kwargs)
+
+    old = get_debug() if setting == "debug" else get_verbose()
+    setter = set_debug if setting == "debug" else set_verbose
+    setter(True)
+    try:
+        bus = FakeBus()
+        assert await _invoke(
+            bus, UnsafeAgent(run=text_run("ordinary answer")), private_material=True
+        )
+        assert not entered
+        failure = bus.run_events("r1")[-1]
+        assert isinstance(failure, RunFailed)
+        assert failure.payload.code == "contract_incompatible"
+        assert failure.payload.retryable is False
+    finally:
+        setter(old)
+
+
+async def test_private_material_refuses_existing_explicit_tracer_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.tracers.context import (
+        tracing_v2_enabled,
+        tracing_v2_callback_var,
+    )
+    from langsmith import Client
+    import requests
+
+    def no_network(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("pure tracing test must never send HTTP")
+
+    monkeypatch.setattr(requests.Session, "request", no_network)
+    entered = False
+
+    class UnsafeAgent(FakeAgent):
+        async def astream_events(self, *args: Any, **kwargs: Any) -> Any:
+            nonlocal entered
+            entered = True
+            return await super().astream_events(*args, **kwargs)
+
+    client = Client(
+        api_url="http://127.0.0.1:1",
+        api_key="fixture-not-a-secret",
+        auto_batch_tracing=False,
+    )
+    try:
+        with tracing_v2_enabled(client=client) as existing:
+            bus = FakeBus()
+            assert await _invoke(
+                bus, UnsafeAgent(run=text_run("ordinary answer")), private_material=True
+            )
+            assert not entered
+            failure = bus.run_events("r1")[-1]
+            assert isinstance(failure, RunFailed)
+            assert (
+                failure.payload.code == "contract_incompatible"
+                and not failure.payload.retryable
+            )
+            assert tracing_v2_callback_var.get() is existing
+    finally:
+        client.close()

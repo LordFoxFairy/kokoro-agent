@@ -1,3 +1,11 @@
+## 2026-11-03 B08：个人材料首片（实施中，未发布）
+
+HTTP8.11 的 `personal_context` 是可选/null、schema_version=1 的私有 BFF 快照：owner{tenant_ref,user_ref} 必须匹配可信 human actor；profile 为 null 或 revision + nickname/occupation/about/instructions；knowledge 为 usage_revision/enabled/items，disabled 必须零 items，items 最多100、UUIDv4小写且不重复，每项携 revision/name/when_to_use/content。所有 revision 为安全整数，缺 usage 行表示0/false。字段上限与个人 owner 一致，不截断。POST /v1/runs 的 `x-kokoro-max-body-bytes=1048576` 公布既有上限，`context_window_exceeded` 是不可重试失败；旧8.10完整字节经有限逆验证不变。
+
+容量估算沿锁定 SDK 的公开 `count_tokens_approximately`；factory先检查显式system材料，最终窗口 middleware 位于 RunSkills 后，检查实际system/messages/tools并预留原route输出上限，在金融prepare前失败。历史summary成功但保留尾部仍超限时，仅保已发生summary用量，不发送后继主调用。显式个人材料超界在摘要前拒绝；SDK自动system后缀导致最终超界时可能已有合法摘要计费，但不发生后继主模型reserve/send。本片保原SDK摘要顺序，不替换HarnessProfile。个人材料关闭Langfuse callback及官方LangSmith per-Run tracing；全局debug/verbose无单Run关闭接口，因此含材料Run在构建/执行入口明确拒绝，进程配置不改。
+
+HTTP 8.11 增加可省略的 `personal_context`：BFF 冻结个人 profile、usage 与全部已启用知识精确版本；Agent 按可信 tenant/human actor 校验，省略保持旧请求字节与 fence。资料是用户材料，不授予工具或系统权限。主模型及现有静态 peer 显式装配，完整 system/messages/tools 在原历史压缩机会之后、模型金融准入之前按 System 窗口与原近似计数器检查，超限明确拒绝，不截断、不筛选；HTTP 1MiB 不变。含材料执行关闭内容 tracing（含 SDK 全局 tracing），原 usage、summary 计费、私有 Run 保留语义不变。动态入口、scheduler 与真实模型验收仍 OPEN；本片不新增知识或 memory owner。
+
 ## 2026-11-02 B-02 E2B 文件发现内部约束（未云验）
 
 不改任何公开wire/Schema。E2B有provider时ls/glob/grep六个sync/async入口沿同一fresh guard，正式Filesystem Stat/ListDir unary只读；全部原name/path先查后过滤，grep完整原bytes先查后解码/行匹配。单body256KiB/累计2MiB、原发现/内容/结果预算，失败仅稳定error无成功前缀；无provider委派原SDK。未知类型/链接拒绝，不以mode伪造POSIX类型；path-based竞态和execute远端取消缺口保留，不能以本地SDK替身冒云箱通过。

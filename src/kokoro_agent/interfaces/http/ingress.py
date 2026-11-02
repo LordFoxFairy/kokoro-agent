@@ -44,6 +44,7 @@ from kokoro_agent.protocol import (
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.protocol.control import (
     CustomApiProfileSelection,
+    PersonalContext,
     control_request_digest,
 )
 from kokoro_agent.domain.run.interactions import InteractionRunMissing
@@ -69,7 +70,7 @@ class IngressError(RuntimeError):
 
 
 class LaunchBody(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
 
     request_id: str
     run_id: str
@@ -81,6 +82,7 @@ class LaunchBody(BaseModel):
     content: str
     requested_model_label: str | None = None
     trace: dict[str, Any] | None = None
+    personal_context: PersonalContext | None = Field(default=None, repr=False)
     selected_mcp_connection_ids: list[str] = Field(default_factory=list)
     selected_custom_api_profiles: list[CustomApiProfileSelection] = Field(
         default_factory=lambda: list[CustomApiProfileSelection](), max_length=32
@@ -133,6 +135,7 @@ def _parse_launch(
             input=RunInput(message_id=launch.message_id, content=launch.content),
             requested_model_label=launch.requested_model_label,
             trace=launch.trace,
+            personal_context=launch.personal_context,
         )
     except (ValidationError, TypeError, ValueError) as error:
         raise IngressError(

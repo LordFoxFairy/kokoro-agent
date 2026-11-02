@@ -1,3 +1,5 @@
+B08 personal_context 首片实施说明见 API_CONTRACT / TECHNICAL_DESIGN / CURRENT；尚未发布或真实模型验收。
+
 # kokoro-agent 文档索引
 
 本目录只描述 Agent owner 的当前实现和运行边界。字段级协议事实以

@@ -380,6 +380,7 @@ class SupervisorExecutionMixin(SupervisorContext):
                     tool_display_sources=built.tool_display_sources,
                     source_for=self._source_for,
                     trace=trusted_trace,
+                    private_material=built.private_material,
                     on_native_settled=on_native_settled,
                     recursion_limit=self._recursion_limit,
                     model_call_settle_timeout_s=self._model_call_settle_timeout_s,

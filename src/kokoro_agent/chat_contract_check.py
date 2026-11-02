@@ -352,6 +352,11 @@ _TOOL_DETAIL_CONDITIONS: list[dict[str, object]] = [
 
 def http82_basename_parent_bytes(document: dict[str, object]) -> bytes:
     """Undo only file-name semantics, preserving the complete first HTTP8.2 graph."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     parent = copy.deepcopy(_display_parent(document))
     if _object(parent.get("info"), source="info").get("version") != "8.2.0":
         raise ValueError("file basename correction requires HTTP 8.2.0")
@@ -392,6 +397,11 @@ def http82_basename_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http81_parent_bytes(document: dict[str, object]) -> bytes:
     """Undo the one optional bounded detail, preserving every HTTP8.1 byte."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     parent = _object(
         json.loads(http82_basename_parent_bytes(document)),
         source="first HTTP8.2 parent",
@@ -429,6 +439,11 @@ def http81_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http80_parent_bytes(document: dict[str, object]) -> bytes:
     """Undo only the two file categories and prove the complete HTTP8 parent."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     parent = _object(json.loads(http81_parent_bytes(document)), source="HTTP8.1 parent")
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.1.0":
@@ -552,7 +567,30 @@ def failure_model_bytes(
     document: dict[str, object], *, source_sha256: str = ""
 ) -> bytes:
     """Compile only the approved two failure profiles; reject unsupported shapes."""
+    personal = _object(document.get("info"), source="info").get("version") == "8.11.0"
     document = _display_parent(document)
+    if personal:
+        document = copy.deepcopy(document)
+        schemas = _object(
+            _object(document.get("components"), source="components").get("schemas"),
+            source="schemas",
+        )
+        props = _object(
+            _object(schemas.get("Failure"), source="Failure").get("properties"),
+            source="failure properties",
+        )
+        code = _object(props.get("code"), source="failure code")
+        code["enum"] = [
+            *TypeAdapter(list[str]).validate_python(code.get("enum")),
+            "context_window_exceeded",
+        ]
+        props["code"] = code
+        failure = _object(schemas.get("Failure"), source="Failure")
+        failure["properties"] = props
+        schemas["Failure"] = failure
+        components = _object(document.get("components"), source="components")
+        components["schemas"] = schemas
+        document["components"] = components
     if document.get("openapi") != "3.1.0":
         raise ValueError("failure profiles require OpenAPI 3.1.0")
     if _object(document.get("info"), source="info").get("version") != "8.2.0":
@@ -686,7 +724,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.10.0",
+        "version": "8.11.0",
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -764,7 +802,7 @@ def validate_decoded_chat_payload(
     profiles = (
         _CURRENT_DECODED_PROFILES
         if _object(document.get("info"), source="info").get("version")
-        in {"8.8.0", "8.9.0", "8.10.0"}
+        in {"8.8.0", "8.9.0", "8.10.0", "8.11.0"}
         else _DECODED_PROFILES
     )
     if event_type not in profiles:
@@ -1319,8 +1357,215 @@ _CUSTOM_API_SELECTION = {
 }
 
 
+_PERSONAL_CONTEXT_SCHEMA: dict[str, object] = {
+    "oneOf": [
+        {"type": "null"},
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["schema_version", "owner", "profile", "knowledge"],
+            "properties": {
+                "schema_version": {"type": "integer", "const": 1},
+                "owner": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["tenant_ref", "user_ref"],
+                    "properties": {
+                        "tenant_ref": {"type": "string", "minLength": 1},
+                        "user_ref": {"type": "string", "minLength": 1},
+                    },
+                },
+                "profile": {
+                    "oneOf": [
+                        {"type": "null"},
+                        {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": [
+                                "revision",
+                                "nickname",
+                                "occupation",
+                                "about",
+                                "instructions",
+                            ],
+                            "properties": {
+                                "revision": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 9007199254740991,
+                                },
+                                "nickname": {
+                                    "type": "string",
+                                    "maxLength": 128,
+                                    "pattern": "^[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                                },
+                                "occupation": {
+                                    "type": "string",
+                                    "maxLength": 256,
+                                    "pattern": "^[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                                },
+                                "about": {
+                                    "type": "string",
+                                    "maxLength": 2000,
+                                    "pattern": "^[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                                },
+                                "instructions": {
+                                    "type": "string",
+                                    "maxLength": 8000,
+                                    "pattern": "^[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                                },
+                            },
+                        },
+                    ]
+                },
+                "knowledge": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["usage_revision", "enabled", "items"],
+                    "properties": {
+                        "usage_revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991,
+                        },
+                        "enabled": {"type": "boolean"},
+                        "items": {
+                            "type": "array",
+                            "maxItems": 100,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": [
+                                    "knowledge_id",
+                                    "revision",
+                                    "name",
+                                    "when_to_use",
+                                    "content",
+                                ],
+                                "properties": {
+                                    "knowledge_id": {
+                                        "type": "string",
+                                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?![\\s\\S])",
+                                    },
+                                    "revision": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 9007199254740991,
+                                    },
+                                    "name": {
+                                        "type": "string",
+                                        "maxLength": 500,
+                                        "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                                        "minLength": 1,
+                                    },
+                                    "when_to_use": {
+                                        "type": "string",
+                                        "maxLength": 500,
+                                        "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                                        "minLength": 1,
+                                    },
+                                    "content": {
+                                        "type": "string",
+                                        "maxLength": 2000,
+                                        "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                                        "minLength": 1,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    "allOf": [
+                        {
+                            "if": {"properties": {"enabled": {"const": False}}},
+                            "then": {"properties": {"items": {"maxItems": 0}}},
+                        },
+                        {
+                            "if": {"properties": {"enabled": {"const": True}}},
+                            "then": {"properties": {"usage_revision": {"minimum": 1}}},
+                        },
+                    ],
+                },
+            },
+        },
+    ],
+    "description": "Private BFF-owned personal snapshot bound to the trusted human actor and tenant. Omitted/null preserves pre-8.11 request bytes; knowledge items have unique knowledge_id values. Not public display or tool authority.",
+}
+
+
+def http810_personal_context_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the exact private material delta and prove all issued 8.10 bytes."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.11.0":
+        raise ValueError("personal context requires HTTP 8.11.0")
+    schemas = _object(
+        _object(parent.get("components"), source="components").get("schemas"),
+        source="schemas",
+    )
+    props = _object(
+        _object(schemas.get("LaunchRequest"), source="LaunchRequest").get("properties"),
+        source="launch properties",
+    )
+    actual = props.pop("personal_context", None)
+    if json.dumps(actual, sort_keys=True) != json.dumps(
+        _PERSONAL_CONTEXT_SCHEMA, sort_keys=True
+    ):
+        raise ValueError("personal context schema differs")
+    codes = TypeAdapter(list[str]).validate_python(
+        _object(
+            _object(
+                _object(schemas.get("Failure"), source="Failure").get("properties"),
+                source="failure properties",
+            ).get("code"),
+            source="failure code",
+        ).get("enum"),
+        strict=True,
+    )
+    if (
+        not codes
+        or codes[-1] != "context_window_exceeded"
+        or codes.count("context_window_exceeded") != 1
+    ):
+        raise ValueError("personal context capacity failure differs")
+    failure = _object(schemas.get("Failure"), source="Failure")
+    failure_props = _object(failure.get("properties"), source="failure properties")
+    code = _object(failure_props.get("code"), source="failure code")
+    code["enum"] = codes[:-1]
+    failure_props["code"] = code
+    failure["properties"] = failure_props
+    schemas["Failure"] = failure
+    launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
+    launch["properties"] = props
+    schemas["LaunchRequest"] = launch
+    components = _object(parent.get("components"), source="components")
+    components["schemas"] = schemas
+    parent["components"] = components
+    paths = _object(parent.get("paths"), source="paths")
+    launch_path = _object(paths.get("/v1/runs"), source="launch path")
+    operation = _object(launch_path.get("post"), source="launch operation")
+    if operation.pop("x-kokoro-max-body-bytes", None) != 1048576:
+        raise ValueError("personal context launch body limit differs")
+    launch_path["post"] = operation
+    paths["/v1/runs"] = launch_path
+    parent["paths"] = paths
+    info["version"] = "8.10.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "af76b63e7aeccec434bae30f41c554416dbd1ebf77871b94e67a5043221dbf6e"
+    ):
+        raise ValueError("complete HTTP8.10 personal context parent differs")
+    return raw
+
+
 def http89_custom_api_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only safe profile selection and prove the complete issued HTTP8.9."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != "8.10.0":
@@ -1348,6 +1593,11 @@ def http89_custom_api_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http88_final_display_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the private final proof and verify every issued HTTP8.8 byte."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") == "8.10.0":
         document = _object(
             json.loads(http89_custom_api_parent_bytes(document)),
@@ -1380,6 +1630,11 @@ def http88_final_display_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http87_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the successful final-answer identity; prove issued HTTP8.7."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") in {
         "8.9.0",
         "8.10.0",
@@ -1419,6 +1674,11 @@ def http87_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http86_action_title_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact per-call intent field; prove all issued HTTP8.6 bytes."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") in {
         "8.8.0",
         "8.9.0",
@@ -1459,6 +1719,11 @@ def http86_action_title_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the bounded capability description; prove issued HTTP8.5."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") in {
         "8.7.0",
         "8.8.0",
@@ -1508,6 +1773,11 @@ def http85_tool_description_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only private details and prove every byte of the issued HTTP8.4."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") in {
         "8.6.0",
         "8.7.0",
@@ -1549,6 +1819,11 @@ def http84_activity_details_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact historical MCP display delta; prove all HTTP8.3 bytes."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") in {
         "8.5.0",
         "8.6.0",
@@ -1594,6 +1869,11 @@ def http83_tool_facts_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the issued display nodes, then prove every HTTP8.2 byte."""
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") in {
         "8.4.0",
         "8.5.0",
@@ -1676,6 +1956,11 @@ def http82_display_parent_bytes(document: dict[str, object]) -> bytes:
 
 
 def _display_parent(document: dict[str, object]) -> dict[str, object]:
+    if _object(document.get("info"), source="info").get("version") == "8.11.0":
+        document = _object(
+            json.loads(http810_personal_context_parent_bytes(document)),
+            source="HTTP8.10 personal context parent",
+        )
     if _object(document.get("info"), source="info").get("version") in {
         "8.3.0",
         "8.4.0",

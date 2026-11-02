@@ -631,3 +631,67 @@ async def test_resume_required_identity_and_unique_items_fail_before_admission(
     assert (failure.value.status, failure.value.code) == (400, "invalid_run_control")
     assert repository.control_commands == {}
     assert len(bus.published) == published
+
+
+def _personal_snapshot() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "owner": {"tenant_ref": "tenant", "user_ref": "actor"},
+        "profile": None,
+        "knowledge": {"usage_revision": 0, "enabled": False, "items": []},
+    }
+
+
+async def test_personal_snapshot_is_frozen_in_dispatch_and_drift_rejected() -> None:
+    bus = FakeBus()
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    body["personal_context"] = _personal_snapshot()
+    first = await ingress.launch(body, execution_identity=identity())
+    assert not first.replayed
+    assert bus.published[0][1]["personal_context"] == _personal_snapshot()
+    assert (await ingress.launch(body, execution_identity=identity())).replayed
+    changed = _personal_snapshot()
+    changed["knowledge"] = {"usage_revision": 1, "enabled": False, "items": []}
+    body["personal_context"] = changed
+    with pytest.raises(IngressError) as denied:
+        await ingress.launch(body, execution_identity=identity())
+    assert denied.value.status == 409
+    assert len(repository.dispatches) == 1
+
+
+async def test_personal_snapshot_other_actor_rejected_before_dispatch() -> None:
+    bus = FakeBus()
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    snapshot = _personal_snapshot()
+    snapshot["owner"] = {"tenant_ref": "tenant", "user_ref": "other"}
+    body["personal_context"] = snapshot
+    with pytest.raises(IngressError) as denied:
+        await ingress.launch(body, execution_identity=identity())
+    assert denied.value.status == 400
+    assert bus.published == []
+    assert repository.dispatches == {}
+
+
+async def test_none_snapshot_keeps_exact_legacy_fence() -> None:
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=FakeBus(),
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    assert not (await ingress.launch(body, execution_identity=identity())).replayed
+    body["personal_context"] = None
+    assert (await ingress.launch(body, execution_identity=identity())).replayed

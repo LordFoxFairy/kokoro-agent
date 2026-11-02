@@ -28,6 +28,15 @@ from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.backends.state import StateBackend
 
+from langchain_core.globals import get_debug, get_verbose
+from langchain_core.tracers.context import tracing_v2_callback_var
+from kokoro_agent.model.call_models import ModelCallInputInvalid
+from langchain_core.messages import SystemMessage
+from kokoro_agent.model.personal_context import (
+    PersonalContextWindowMiddleware,
+    append_personal_context,
+    validate_personal_context_window,
+)
 from kokoro_agent.agents.subagents import build_subagent_bundle
 from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.action_display import ActionDisplayMiddleware
@@ -101,6 +110,7 @@ class AgentHandle:
 
     runnable: AgentRunnable
     tool_descriptions: Mapping[str, str]
+    private_material: bool = False
     resources: tuple[ArchivingWritesMixin, ...] = ()
     model_clients: tuple[ModelHttpClients, ...] = ()
     tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = ()
@@ -217,6 +227,10 @@ async def build_deep_agent(
     action_observer: ActionObservationSink = lambda _observation: None,
     name: str | None = None,
 ) -> AgentHandle:
+    if request.personal_context is not None and (
+        get_debug() or get_verbose() or tracing_v2_callback_var.get() is not None
+    ):
+        raise ModelCallInputInvalid("personal material content observer is enabled")
     if plan.agent is not agent:
         raise ValueError("prepared peer does not match build declaration")
     validate_native_registry()
@@ -338,6 +352,11 @@ async def build_deep_agent(
                 *chains.subagent[:offset],
                 model_guard((*plan.peer_path, name)),
                 *chains.subagent[offset:],
+                *(
+                    (PersonalContextWindowMiddleware(route),)
+                    if request.personal_context is not None
+                    else ()
+                ),
             )
 
         chat_model = make_chat_model(dependencies.model, model, model_clients=clients)
@@ -357,6 +376,9 @@ async def build_deep_agent(
 
         subagent_bundle = build_subagent_bundle(toolset, plan.subagents, subagent_chain)
         for subagent in subagent_bundle.subagents:
+            subagent["system_prompt"] = append_personal_context(
+                subagent["system_prompt"], request.personal_context
+            )
             subagent["model"] = bind_summary((*plan.peer_path, subagent["name"]))
         base_main_chain = chains.main(
             ToolPolicyMiddleware(
@@ -386,10 +408,28 @@ async def build_deep_agent(
         # official-constructor boundary; the returned value is validated below.
         native_constructor: Any = getattr(deepagents, "create_deep_agent")
         validate_native_registry()
+        system_prompt = append_personal_context(
+            agent.prompt + capabilities.custom_api_prompt, request.personal_context
+        )
+        if request.personal_context is not None:
+            # System material cannot be compacted. Reject it before even a summary can acquire funds.
+            validate_personal_context_window(
+                [SystemMessage(content=system_prompt)],
+                tools=toolset.tools,
+                context_window=route.context_window,
+                max_output_tokens=route.max_output_tokens,
+            )
+            for subagent in subagent_bundle.subagents:
+                validate_personal_context_window(
+                    [SystemMessage(content=subagent["system_prompt"])],
+                    tools=(),
+                    context_window=route.context_window,
+                    max_output_tokens=route.max_output_tokens,
+                )
         candidate: object = native_constructor(
             model=bind_summary(plan.peer_path),
             tools=toolset.tools,
-            system_prompt=agent.prompt + capabilities.custom_api_prompt,
+            system_prompt=system_prompt,
             skills=None,
             subagents=subagent_bundle.subagents,
             checkpointer=dependencies.checkpointer,
@@ -419,6 +459,11 @@ async def build_deep_agent(
                         for skill in resolved_skills
                     ),
                 ),
+                *(
+                    (PersonalContextWindowMiddleware(route),)
+                    if request.personal_context is not None
+                    else ()
+                ),
             ),
             backend=native_backend,
             # 长期记忆：后端随 checkpoint 对齐，工具侧按租户 namespace 前缀隔离。
@@ -428,6 +473,7 @@ async def build_deep_agent(
         validate_native_registry()
         return AgentHandle(
             runnable=require_agent_runnable(candidate),
+            private_material=request.personal_context is not None,
             tool_descriptions=toolset.descriptions,
             tool_display_codes=toolset.mounted_display_codes(candidate),
             tool_display_sources=toolset.mounted_display_sources(candidate),
@@ -679,6 +725,7 @@ class AgentFactory:
             }
         return AgentHandle(
             runnable=native,
+            private_material=request.personal_context is not None,
             tool_descriptions=descriptions,
             tool_display_codes=tuple(sorted(common_codes.items())),
             tool_display_sources=tuple(

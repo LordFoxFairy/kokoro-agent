@@ -21,6 +21,7 @@ from pydantic import (
     StringConstraints,
     TypeAdapter,
     field_validator,
+    model_validator,
 )
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
@@ -64,6 +65,114 @@ class RunInput(StrictModel):
     content: NonEmptyStr
 
 
+_PersonalRevision = Annotated[int, Field(ge=1, le=9007199254740991)]
+
+
+class PersonalMaterialModel(StrictModel):
+    model_config = ConfigDict(
+        strict=True,
+        extra="forbid",
+        frozen=True,
+        hide_input_in_errors=True,
+        revalidate_instances="always",
+    )
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _scalar_text(cls, value: object) -> object:
+        if isinstance(value, str) and (
+            "\x00" in value or any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+        ):
+            raise ValueError("invalid personal material text")
+        return value
+
+
+class PersonalContextOwner(PersonalMaterialModel):
+    tenant_ref: NonEmptyStr
+    user_ref: NonEmptyStr
+
+
+class PersonalProfile(PersonalMaterialModel):
+    revision: _PersonalRevision
+    nickname: Annotated[str, StringConstraints(max_length=128)]
+    occupation: Annotated[str, StringConstraints(max_length=256)]
+    about: Annotated[str, StringConstraints(max_length=2000)]
+    instructions: Annotated[str, StringConstraints(max_length=8000)]
+
+
+class PersonalKnowledgeItem(PersonalMaterialModel):
+    knowledge_id: Annotated[
+        str,
+        StringConstraints(
+            pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        ),
+    ]
+    revision: _PersonalRevision
+    name: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    when_to_use: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    content: Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+
+    @field_validator("knowledge_id")
+    @classmethod
+    def _id(cls, value: str) -> str:
+        if (
+            re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                value,
+            )
+            is None
+        ):
+            raise ValueError("invalid personal knowledge id")
+        return value
+
+    @field_validator("name", "when_to_use", "content")
+    @classmethod
+    def _nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("personal knowledge text must not be blank")
+        return value
+
+
+_PERSONAL_KNOWLEDGE_ITEMS: TypeAdapter[
+    list[PersonalKnowledgeItem] | tuple[PersonalKnowledgeItem, ...]
+] = TypeAdapter(list[PersonalKnowledgeItem] | tuple[PersonalKnowledgeItem, ...])
+
+
+class PersonalKnowledge(PersonalMaterialModel):
+    usage_revision: Annotated[int, Field(ge=0, le=9007199254740991)]
+    enabled: bool
+    items: tuple[PersonalKnowledgeItem, ...] = Field(max_length=100)
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def _items(cls, value: object) -> tuple[PersonalKnowledgeItem, ...]:
+        return tuple(_PERSONAL_KNOWLEDGE_ITEMS.validate_python(value, strict=True))
+
+    @model_validator(mode="after")
+    def _state(self) -> PersonalKnowledge:
+        if (not self.enabled and self.items) or (
+            self.enabled and self.usage_revision == 0
+        ):
+            raise ValueError("invalid personal knowledge usage snapshot")
+        if len({item.knowledge_id for item in self.items}) != len(self.items):
+            raise ValueError("duplicate personal knowledge item")
+        return self
+
+
+class PersonalContext(PersonalMaterialModel):
+    schema_version: Literal[1]
+    owner: PersonalContextOwner
+    profile: PersonalProfile | None
+    knowledge: PersonalKnowledge
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _version(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("invalid personal context schema version")
+        return value
+
+
 class CustomApiProfileSelection(StrictModel):
     """Safe exact Platform intent, never descriptions, credentials or authority."""
 
@@ -89,6 +198,10 @@ _CUSTOM_API_SELECTIONS_ADAPTER: TypeAdapter[
 class RunRequest(StrictModel):
     """Frozen business selections; the trusted Feature still owns the runtime graph."""
 
+    model_config = ConfigDict(
+        strict=True, extra="forbid", frozen=True, hide_input_in_errors=True
+    )
+
     kind: Literal["run.request"]
     # HTTP ingress supplies request_id. Direct worker callers may omit it;
     # run_id remains the execution idempotency key in RunRepository.
@@ -112,6 +225,23 @@ class RunRequest(StrictModel):
     selected_custom_api_profiles: tuple[CustomApiProfileSelection, ...] = Field(
         default=(), max_length=32, exclude_if=lambda refs: not refs
     )
+
+    # None is omitted so pre-8.11 durable JSON and idempotency fences stay exact.
+    personal_context: PersonalContext | None = Field(
+        default=None, exclude_if=lambda value: value is None, repr=False
+    )
+
+    @model_validator(mode="after")
+    def _personal_owner(self) -> RunRequest:
+        context = self.personal_context
+        identity = self.execution_identity
+        if context is not None and (
+            identity.actor.kind != "user"
+            or context.owner.tenant_ref != identity.tenant_ref
+            or context.owner.user_ref != identity.actor.opaque_ref
+        ):
+            raise ValueError("personal context owner differs from trusted actor")
+        return self
 
     @field_validator("selected_custom_api_profiles", mode="before")
     @classmethod

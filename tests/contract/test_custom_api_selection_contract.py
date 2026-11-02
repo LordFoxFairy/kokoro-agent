@@ -24,7 +24,7 @@ def document():
 
 def test_exact_parent_bytes_and_selection_shape() -> None:
     current = document()
-    assert current["info"]["version"] == "8.10.0"
+    assert current["info"]["version"] == "8.11.0"
     assert (
         hashlib.sha256(http89_custom_api_parent_bytes(current)).hexdigest()
         == PARENT_SHA

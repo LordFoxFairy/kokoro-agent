@@ -430,7 +430,18 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
     AND classification_state IN ('complete','partial','unknown')
     AND (usage_state <> 'unresolved' OR (totals_state = 'unknown' AND classification_state = 'unknown'))
     AND (usage_state <> 'normalized' OR (
-      (totals_state IN ('known_zero','known_nonzero') AND classification_state = 'partial')
+      (totals_state IN ('known_zero','known_nonzero') AND (
+        (classification_state = 'partial' AND COALESCE(
+          convert_from(evidence_bytes, 'UTF8')::jsonb #>> '{usage,value,profile_assessment,state}' = 'supported',
+          FALSE
+        ))
+        OR (classification_state = 'unknown' AND COALESCE(
+          convert_from(evidence_bytes, 'UTF8')::jsonb #>> '{usage,value,profile_assessment,state}' = 'unsupported'
+          AND convert_from(evidence_bytes, 'UTF8')::jsonb #>> '{usage,value,profile_assessment,reason}'
+            IN ('unsupported_usage_category','unsupported_service_tier','unverified_source_semantics'),
+          FALSE
+        ))
+      ))
       OR (totals_state = 'unknown' AND classification_state = 'unknown')
     ))
     AND (execution_outcome <> 'not_dispatched' OR usage_state = 'unresolved')

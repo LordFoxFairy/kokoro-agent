@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+from typing import Literal
 from uuid import uuid4
 
 import pytest
@@ -698,3 +699,180 @@ async def test_source_response_locator_is_atomic_and_immutable(
         with pytest.raises(ModelCallIdentityConflict):
             await reopened.seal_observation(changed)
         assert await prepared.row() == before
+
+
+@pytest.mark.parametrize(
+    "unsupported_reason",
+    [
+        None,
+        "unsupported_usage_category",
+        "unsupported_service_tier",
+        "unverified_source_semantics",
+    ],
+)
+@pytest.mark.parametrize("zero", [False, True])
+async def test_seal_observation_preserves_known_totals_with_profile_assessment(
+    prepared: Prepared,
+    unsupported_reason: Literal[
+        "unsupported_usage_category",
+        "unsupported_service_tier",
+        "unverified_source_semantics",
+    ]
+    | None,
+    zero: bool,
+) -> None:
+    from psycopg.errors import CheckViolation
+    from kokoro_agent.model.call_models import (
+        SealModelCallObservation,
+        StartModelCallDispatch,
+        ModelCallInputInvalid,
+    )
+    from kokoro_agent.model.usage_evidence_v2 import parse_evidence
+    from kokoro_agent.model.usage_observation import (
+        PhysicalUsageObservation,
+        ObservedCount,
+    )
+    from kokoro_agent.model.usage_producer import normalize_observed_usage
+    from kokoro_agent.protocol.model_usage_v2_generated import (
+        UnknownAttribution,
+        UnsupportedProfile,
+    )
+
+    p = prepared.prepared
+    grant = await authorizer(prepared, Budget(), Proofs()).authorize(p)
+    await prepared.repo.start_dispatch(
+        StartModelCallDispatch(
+            tenant_id=p.tenant_id,
+            run_id=p.run_id,
+            attempt_id=p.attempt_id,
+            lease=p.lease,
+            attempt_binding_digest=p.attempt_binding_digest,
+            planned_digest=p.planned_digest,
+            authorization_digest=grant.authorization_digest,
+            request_ref=grant.request_ref,
+            admission_ref=grant.admission_ref,
+        )
+    )
+    usage = normalize_observed_usage(
+        PhysicalUsageObservation(
+            status="complete",
+            reason=None,
+            compression_integrity="validated",
+            usage_presence="object",
+            projection_digest="b" * 64,
+            counts={
+                "prompt_tokens": ObservedCount("reported", 0 if zero else 20),
+                "completion_tokens": ObservedCount("reported", 0 if zero else 3),
+                "total_tokens": ObservedCount("reported", 0 if zero else 23),
+                "cached_tokens": ObservedCount("missing"),
+                "reasoning_tokens": ObservedCount("missing"),
+            },
+        )
+    )
+    assert usage.state == "normalized"
+    if unsupported_reason is not None:
+        usage = usage.model_copy(
+            update={
+                "value": usage.value.model_copy(
+                    update={
+                        "classification_state": "unknown",
+                        "profile_assessment": UnsupportedProfile(
+                            state="unsupported", reason=unsupported_reason
+                        ),
+                    }
+                )
+            }
+        )
+    command = SealModelCallObservation(
+        tenant_id=p.tenant_id,
+        run_id=p.run_id,
+        attempt_id=p.attempt_id,
+        lease=p.lease,
+        attempt_binding_digest=p.attempt_binding_digest,
+        planned_digest=p.planned_digest,
+        authorization_digest=grant.authorization_digest,
+        outcome="completed",
+        actual=UnknownAttribution(state="unknown", reason="unverified_binding"),
+        usage=usage,
+    )
+    before = await prepared.row()
+    # The normal writer must still reject a classification that contradicts its profile.
+    wrong = usage.model_copy(
+        update={
+            "value": usage.value.model_copy(
+                update={
+                    "classification_state": "unknown"
+                    if unsupported_reason is None
+                    else "partial",
+                }
+            )
+        }
+    )
+    with pytest.raises(ModelCallInputInvalid):
+        await prepared.repo.seal_observation(
+            command.model_copy(update={"usage": wrong})
+        )
+    assert await prepared.row() == before
+
+    receipt = await prepared.repo.seal_observation(command)
+    stored = await PostgresModelCallRepository(
+        prepared.url, prepared.schema
+    ).read_final_evidence(
+        p.tenant_id,
+        p.attempt_id,
+        receipt.event_id,
+    )
+    assert stored is not None
+    fact = parse_evidence(stored.evidence_bytes)
+    assert fact.execution.outcome == "completed" and fact.actual == command.actual
+    assert fact.usage == usage
+    assert fact.usage.state == "normalized"
+    assert fact.usage.value.totals_state == ("known_zero" if zero else "known_nonzero")
+    assert fact.usage.value.input_cache_read.state == "unreported"
+    assert fact.usage.value.output_reasoning.state == "unreported"
+
+    # Defense in depth: even bypassing the typed writer cannot persist a false profile.
+    evidence_table = qualified(prepared.schema, "kokoro_agent_model_usage_evidence")
+    for assessment in (
+        None,
+        {},
+        {"state": "unsupported"},
+        {"state": "unsupported", "reason": "invented_reason"},
+        {"state": "supported"},
+    ):
+        document = fact.model_dump(mode="json")
+        document["usage"]["value"]["classification_state"] = "unknown"
+        if assessment is None:
+            del document["usage"]["value"]["profile_assessment"]
+        else:
+            document["usage"]["value"]["profile_assessment"] = assessment
+        async with connect_pg(prepared.url) as c, c.cursor() as cur:
+            with pytest.raises(CheckViolation, match="ck_model_evidence_state"):
+                async with c.transaction():
+                    await execute_sql(
+                        cur,
+                        f"UPDATE {evidence_table} SET evidence_bytes=%s,classification_state='unknown' WHERE event_id=%s",
+                        (json.dumps(document).encode(), receipt.event_id),
+                    )
+    replay = await prepared.repo.seal_observation(command)
+    assert replay.replayed and replay.event_id == receipt.event_id
+
+    # An unsupported assessment cannot be relabeled partial to look priceable.
+    document = fact.model_dump(mode="json")
+    document["usage"]["value"]["classification_state"] = "partial"
+    document["usage"]["value"]["profile_assessment"] = {
+        "state": "unsupported",
+        "reason": "unsupported_usage_category",
+    }
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        with pytest.raises(CheckViolation, match="ck_model_evidence_state"):
+            async with c.transaction():
+                await execute_sql(
+                    cur,
+                    f"UPDATE {evidence_table} SET evidence_bytes=%s,classification_state='partial' WHERE event_id=%s",
+                    (json.dumps(document).encode(), receipt.event_id),
+                )
+    preserved = await prepared.repo.read_final_evidence(
+        p.tenant_id, p.attempt_id, receipt.event_id
+    )
+    assert preserved is not None and preserved.evidence_bytes == stored.evidence_bytes

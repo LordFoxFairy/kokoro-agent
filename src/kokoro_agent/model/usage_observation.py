@@ -191,7 +191,9 @@ def _unsupported_cost_metadata(usage: dict[str, object]) -> bool:
     )
 
 
-def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
+def _projection(
+    document: dict[str, object], *, litellm: bool = False
+) -> PhysicalUsageObservation:
     raw = document.get("usage")
     presence: Literal["missing", "null", "object"] = (
         "missing" if "usage" not in document else "null" if raw is None else "object"
@@ -218,8 +220,19 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
         if details is not None and not isinstance(details, _JsonObject):
             _fail("invalid_usage")
         detail_object = details if isinstance(details, _JsonObject) else _JsonObject()
-        unknown |= bool(detail_object.keys() - {member})
         counts[member] = _count(detail_object, member)
+        allowed = {member}
+        if (
+            litellm
+            and member == "reasoning_tokens"
+            and counts[member].presence == "reported"
+            and counts[member].value == 0
+            and counts["completion_tokens"].presence == "reported"
+            and type(detail_object.get("text_tokens")) is int
+            and detail_object.get("text_tokens") == counts["completion_tokens"].value
+        ):
+            allowed.add("text_tokens")
+        unknown |= bool(detail_object.keys() - allowed)
     input_count, output_count, total = (counts[name].value for name in _NAMES[:3])
     if input_count is not None and output_count is not None and total is not None:
         if input_count + output_count != total:
@@ -352,7 +365,7 @@ class _Parser:
             _fail("nonterminal_usage")
         if not candidate_frame:
             return
-        candidate = _projection(document)
+        candidate = _projection(document, litellm=self._litellm)
         if (
             self.projection is not None
             and self.projection.projection_digest != candidate.projection_digest
@@ -380,7 +393,7 @@ class _Parser:
 
     def finish(self) -> PhysicalUsageObservation:
         if not self.streaming:
-            return _projection(_document(bytes(self.scratch)))
+            return _projection(_document(bytes(self.scratch)), litellm=self._litellm)
         self.utf8.decode(b"", final=True)
         if not self.done:
             _fail("missing_done")

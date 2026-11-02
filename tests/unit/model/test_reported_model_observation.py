@@ -127,6 +127,126 @@ def empty_delta_choices() -> list[dict[str, object]]:
     return [{"index": 0, "delta": delta}]
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_litellm_explicit_redundant_text_preserves_reported_facts(
+    streaming: bool,
+) -> None:
+    usage = {
+        "prompt_tokens": 20,
+        "completion_tokens": 3,
+        "total_tokens": 23,
+        "completion_tokens_details": {"reasoning_tokens": 0, "text_tokens": 3},
+    }
+    actual = observe(
+        ["raw-a"], streaming=streaming, connection_type="litellm", usage=usage
+    )
+    reference = observe(
+        ["raw-a"],
+        streaming=streaming,
+        connection_type="litellm",
+        usage={**usage, "completion_tokens_details": {"reasoning_tokens": 0}},
+    )
+    normalized = normalize_observed_usage(actual)
+    assert normalized.state == "normalized"
+    assert normalized.value.profile_assessment.state == "supported"
+    assert normalized.value.classification_state == "partial"
+    assert normalized.value.output_total.model_dump() == {
+        "state": "reported",
+        "count": "3",
+    }
+    assert normalized.value.output_reasoning.model_dump() == {
+        "state": "reported",
+        "count": "0",
+    }
+    assert normalized.value.input_cache_read.state == "unreported"
+    assert actual.projection_digest == reference.projection_digest
+
+
+@pytest.mark.parametrize("text", [None, True, 3.0, "3", -1, 4])
+def test_litellm_text_must_be_explicit_exact_integer(text: object) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        usage={
+            "prompt_tokens": 17,
+            "completion_tokens": 3,
+            "total_tokens": 20,
+            "completion_tokens_details": {"reasoning_tokens": 0, "text_tokens": text},
+        },
+    )
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "normalized"
+    assert normalized.value.profile_assessment.state == "unsupported"
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"text_tokens": 3},
+        {"text_tokens": 3, "reasoning_tokens": None},
+        {"text_tokens": 2, "reasoning_tokens": 1},
+        {"text_tokens": 3, "reasoning_tokens": 0, "audio_tokens": 0},
+        {"text_tokens": 3, "reasoning_tokens": 0, "cache_write_tokens": 0},
+        {"text_tokens": 3, "reasoning_tokens": 0, "unknown": 0},
+    ],
+)
+def test_litellm_text_does_not_erase_other_unknown_knowledge(details: object) -> None:
+    value = observe(
+        ["raw-a"],
+        streaming=True,
+        connection_type="litellm",
+        usage={
+            "prompt_tokens": 17,
+            "completion_tokens": 3,
+            "total_tokens": 20,
+            "completion_tokens_details": details,
+        },
+    )
+    normalized = normalize_observed_usage(value)
+    assert normalized.state == "normalized"
+    assert normalized.value.profile_assessment.state == "unsupported"
+
+
+@pytest.mark.parametrize("completion", [None, Ellipsis])
+def test_litellm_text_cannot_supply_missing_output_total(completion: object) -> None:
+    usage: dict[str, object] = {
+        "prompt_tokens": 17,
+        "total_tokens": 20,
+        "completion_tokens_details": {"reasoning_tokens": 0, "text_tokens": 3},
+    }
+    if completion is not Ellipsis:
+        usage["completion_tokens"] = completion
+    normalized = normalize_observed_usage(
+        observe(
+            ["raw-a"],
+            streaming=True,
+            connection_type="litellm",
+            usage=usage,
+        )
+    )
+    assert normalized.state == "normalized"
+    assert normalized.value.output_total.state == "unreported"
+    assert normalized.value.profile_assessment.state == "unsupported"
+
+
+def test_direct_redundant_text_remains_unsupported() -> None:
+    normalized = normalize_observed_usage(
+        observe(
+            ["raw-a"],
+            streaming=True,
+            usage={
+                "prompt_tokens": 17,
+                "completion_tokens": 3,
+                "total_tokens": 20,
+                "completion_tokens_details": {"reasoning_tokens": 0, "text_tokens": 3},
+            },
+        )
+    )
+    assert normalized.state == "normalized"
+    assert normalized.value.profile_assessment.state == "unsupported"
+
+
 @pytest.mark.parametrize("compressed", [False, True])
 def test_litellm_empty_delta_tail_preserves_actual_counts_without_cache_facts(
     compressed: bool,

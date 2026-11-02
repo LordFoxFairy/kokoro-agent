@@ -11,13 +11,14 @@ import logging
 import math
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Annotated, Literal, Protocol, runtime_checkable
 
 from deepagents.backends.protocol import (
     ExecuteResponse,
+    FileInfo,
     FileDownloadResponse,
     FileUploadResponse,
     ReadResult,
@@ -34,7 +35,13 @@ from kokoro_agent.sandbox.execution_environment import (
     ExecutionEnvironmentRunner,
     ExecutionBoundaryError,
 )
-from kokoro_agent.sandbox.file_egress import FileEgress, FILE_UNAVAILABLE, relative_path
+from kokoro_agent.sandbox.file_egress import (
+    FileEgress,
+    FILE_UNAVAILABLE,
+    SnapshotFileTools,
+    relative_path,
+)
+from kokoro_agent.sandbox.e2b_metadata import E2BMetadata
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.e2b")
 
@@ -187,6 +194,24 @@ class E2BSandboxBackend(BaseSandbox):
             if self._environment is not None
             else None
         )
+        self._file_tools = (
+            SnapshotFileTools(self._file_egress, self._metadata, max_output_bytes)
+            if self._file_egress is not None
+            else None
+        )
+
+    def _metadata(
+        self,
+        path: str,
+        recursive: bool,
+        inspect: Callable[[bytes], None],
+        deadline: float,
+        cancelled: threading.Event,
+    ) -> list[FileInfo]:
+        with _file_io_logs():
+            return E2BMetadata(self._sandbox)(
+                path, recursive, inspect, deadline, cancelled
+            )
 
     def _read_snapshot(self, path: str, maximum: int, deadline: float) -> bytes:
         remaining = deadline - time.monotonic()
@@ -275,19 +300,36 @@ class E2BSandboxBackend(BaseSandbox):
     def grep(
         self, pattern: str, path: str | None = None, glob: str | None = None
     ) -> GrepResult:
-        if self._file_egress is not None:
-            return GrepResult(error=FILE_UNAVAILABLE)
+        if self._file_tools is not None:
+            return self._file_tools.grep(pattern, path, glob)
         return super().grep(pattern, path, glob)
 
     def ls(self, path: str) -> LsResult:
-        if self._file_egress is not None:
-            return LsResult(error=FILE_UNAVAILABLE)
+        if self._file_tools is not None:
+            return self._file_tools.ls(path)
         return super().ls(path)
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
-        if self._file_egress is not None:
-            return GlobResult(error=FILE_UNAVAILABLE)
+        if self._file_tools is not None:
+            return self._file_tools.glob(pattern, path)
         return super().glob(pattern, path)
+
+    async def agrep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        if self._file_tools is not None:
+            return await self._file_tools.agrep(pattern, path, glob)
+        return await super().agrep(pattern, path, glob)
+
+    async def als(self, path: str) -> LsResult:
+        if self._file_tools is not None:
+            return await self._file_tools.als(path)
+        return await super().als(path)
+
+    async def aglob(self, pattern: str, path: str = "/") -> GlobResult:
+        if self._file_tools is not None:
+            return await self._file_tools.aglob(pattern, path)
+        return await super().aglob(pattern, path)
 
     async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         if self._file_egress is not None:

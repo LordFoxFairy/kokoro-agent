@@ -11,9 +11,11 @@ import logging
 from logging.handlers import QueueHandler
 from queue import SimpleQueue
 from pathlib import Path
+from collections.abc import Callable
 
 import pytest
 import httpx
+from e2b.envd.filesystem import filesystem_pb2 as pb
 
 from support.file_egress import (
     ArchiveClient,
@@ -768,3 +770,254 @@ async def test_plain_docker_file_tools_keep_native_sdk_behavior(tmp_path: Path) 
     assert searched.matches == [
         {"path": "/docs/nested.txt", "line": 1, "text": "native literal [a]"}
     ]
+
+
+class MetadataSandbox(Sandbox):
+    """Official protobuf over a finite transport double; never a cloud sandbox."""
+
+    def __init__(self) -> None:
+        from e2b.connection_config import ConnectionConfig
+
+        super().__init__()
+        self.envd_api_url = "https://metadata.invalid"
+        self.connection_config = ConnectionConfig(
+            api_key="e2b_" + "0" * 40,
+            extra_sandbox_headers={"X-Access-Token": "private-rpc-token"},
+        )
+
+    def download_url(
+        self,
+        path: str,
+        user: str | None = None,
+        use_signature_expiration: int | None = None,
+    ) -> str:
+        assert path.startswith("/home/user/")
+        return "https://metadata.invalid/download/" + path.removeprefix("/home/user/")
+
+
+def metadata_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    files: dict[str, bytes],
+    *,
+    modify: Callable[[dict[str, pb.EntryInfo]], None] | None = None,
+) -> tuple[list[str], list[AsyncFileBody]]:
+    calls: list[str] = []
+    bodies: list[AsyncFileBody] = []
+    entries = {
+        "/home/user": pb.EntryInfo(
+            name="user", path="/home/user", type=pb.FILE_TYPE_DIRECTORY, mode=0o755
+        )
+    }
+    for name, raw in files.items():
+        parts = name.split("/")
+        for index in range(1, len(parts)):
+            path = "/home/user/" + "/".join(parts[:index])
+            entries[path] = pb.EntryInfo(
+                name=parts[index - 1],
+                path=path,
+                type=pb.FILE_TYPE_DIRECTORY,
+                mode=0o755,
+            )
+        path = "/home/user/" + name
+        entries[path] = pb.EntryInfo(
+            name=parts[-1], path=path, type=pb.FILE_TYPE_FILE, mode=0o644, size=len(raw)
+        )
+
+    if modify is not None:
+        modify(entries)
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.method == "GET":
+            raw = files[request.url.path.removeprefix("/download/")]
+            headers = {}
+        else:
+            assert request.headers["x-access-token"] == "private-rpc-token"
+            assert request.headers["content-type"] == "application/proto"
+            assert request.headers["connect-protocol-version"] == "1"
+            if request.url.path == "/filesystem.Filesystem/Stat":
+                stat = pb.StatRequest.FromString(request.content)
+                if stat.path not in entries:
+                    return httpx.Response(404, content=b'{"code":"not_found"}')
+                raw = pb.StatResponse(entry=entries[stat.path]).SerializeToString()
+            else:
+                assert request.url.path == "/filesystem.Filesystem/ListDir"
+                listed = pb.ListDirRequest.FromString(request.content)
+                assert listed.depth == 1
+                raw = pb.ListDirResponse(
+                    entries=[
+                        entry
+                        for path, entry in entries.items()
+                        if path.rpartition("/")[0] == listed.path
+                    ]
+                ).SerializeToString()
+            headers = {"content-type": "application/proto"}
+        body = AsyncFileBody(raw)
+        bodies.append(body)
+        return httpx.Response(200, stream=body, headers=headers)
+
+    def transport(**kwargs: object) -> httpx.MockTransport:
+        assert kwargs["trust_env"] is False
+        assert kwargs["retries"] == 0
+        return httpx.MockTransport(handle)
+
+    monkeypatch.setattr(httpx, "AsyncHTTPTransport", transport)
+    return calls, bodies
+
+
+@pytest.mark.asyncio
+async def test_protected_e2b_unary_tools_restore_navigation_and_literal_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = Environment()
+    calls, bodies = metadata_transport(
+        monkeypatch,
+        {"root.txt": b"literal [a]\r\nsecond\n", "docs/nested.txt": b"literal [a]\n"},
+    )
+    instance = E2BSandboxBackend(
+        MetadataSandbox(),
+        environment_provider=provider,
+        environment_loop=asyncio.get_running_loop(),
+    )
+    listed = await instance.als("/")
+    assert listed.error is None
+    assert listed.entries is not None
+    assert {entry["path"] for entry in listed.entries} == {"/docs", "/root.txt"}
+    globbed = await instance.aglob("**/*.txt")
+    assert globbed.error is None
+    assert globbed.matches is not None
+    assert [entry["path"] for entry in globbed.matches] == [
+        "/docs/nested.txt",
+        "/root.txt",
+    ]
+    searched = await instance.agrep("[a]", glob="**/*.txt")
+    assert searched.error is None
+    assert searched.matches == [
+        {"path": "/docs/nested.txt", "line": 1, "text": "literal [a]"},
+        {"path": "/root.txt", "line": 1, "text": "literal [a]\r"},
+    ]
+    synced = await asyncio.to_thread(instance.grep, "second", "/root.txt")
+    assert synced.matches == [{"path": "/root.txt", "line": 2, "text": "second"}]
+    assert provider.calls == 4
+    assert "/filesystem.Filesystem/ListDir" in calls
+    assert all(body.closed for body in bodies)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("place", ["unmatched-name", "unmatched-line", "binary"])
+async def test_e2b_metadata_and_content_are_checked_before_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    place: str,
+) -> None:
+    files = {"safe.txt": b"needle\n"}
+    if place == "unmatched-name":
+        files["private-原值-marker.bin"] = b"safe"
+    elif place == "unmatched-line":
+        files["last.txt"] = b"needle\nprivate-" + "原值-marker".encode()
+    else:
+        files["last.txt"] = b"\x00private-" + "原值-marker".encode()
+    _, bodies = metadata_transport(monkeypatch, files)
+    provider = Environment()
+    instance = E2BSandboxBackend(MetadataSandbox(), environment_provider=provider)
+    denied = await instance.agrep("needle", glob="*.txt")
+    assert denied.error == "sandbox_file_unavailable"
+    assert denied.matches is None
+    assert all(body.closed for body in bodies)
+    before = len(bodies)
+    provider.revoked = True
+    assert (await instance.als("/")).entries is None
+    assert len(bodies) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "unknown-type",
+        "symlink",
+        "empty-symlink",
+        "escaped-path",
+        "wrong-name",
+        "backslash",
+    ],
+)
+async def test_e2b_raw_entries_refuse_unknown_links_and_wrong_bindings(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+) -> None:
+    def modify(entries: dict[str, pb.EntryInfo]) -> None:
+        entry = entries["/home/user/safe.txt"]
+        if invalid == "unknown-type":
+            entry.MergeFromString(bytes([pb.EntryInfo.TYPE_FIELD_NUMBER << 3, 99]))
+        elif invalid in {"symlink", "empty-symlink"}:
+            entry.symlink_target = "" if invalid == "empty-symlink" else "/etc/passwd"
+        elif invalid == "escaped-path":
+            entry.path = "/etc/safe.txt"
+        elif invalid == "wrong-name":
+            entry.name = "../safe.txt"
+        else:
+            entry.name = "safe\\file.txt"
+            entry.path = "/home/user/" + entry.name
+
+    _, bodies = metadata_transport(monkeypatch, {"safe.txt": b"safe"}, modify=modify)
+    instance = E2BSandboxBackend(MetadataSandbox(), environment_provider=Environment())
+    denied = await instance.aglob("no-match*")
+    assert denied.error == "sandbox_file_unavailable"
+    assert denied.matches is None
+    assert all(body.closed for body in bodies)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "capacity", ["files", "entries", "names", "depth", "total-wire"]
+)
+async def test_e2b_discovery_budgets_apply_before_filtering(
+    monkeypatch: pytest.MonkeyPatch,
+    capacity: str,
+) -> None:
+    files = {"safe.txt": b"safe"}
+    if capacity == "files":
+        files = {f"file-{index}": b"safe" for index in range(129)}
+    elif capacity == "entries":
+        files = {f"dir-{index}/file": b"safe" for index in range(1025)}
+    elif capacity == "names":
+        files = {f"dir-{index}/" + "x" * 255: b"safe" for index in range(128)}
+    elif capacity == "depth":
+        files = {"dir/" * 64 + "file": b"safe"}
+    elif capacity == "total-wire":
+        files = {f"dir-{index}/file": b"safe" for index in range(12)}
+
+    def modify(entries: dict[str, pb.EntryInfo]) -> None:
+        if capacity == "total-wire":
+            for entry in entries.values():
+                if entry.type == pb.FILE_TYPE_FILE:
+                    entry.metadata["padding"] = "x" * 195000
+
+    _, bodies = metadata_transport(monkeypatch, files, modify=modify)
+    instance = E2BSandboxBackend(MetadataSandbox(), environment_provider=Environment())
+    denied = await instance.aglob("no-match*")
+    assert denied.error == "sandbox_file_unavailable"
+    assert denied.matches is None
+    assert all(body.closed for body in bodies)
+
+
+@pytest.mark.asyncio
+async def test_e2b_grep_preserves_empty_binary_and_whole_snapshot_budgets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, bodies = metadata_transport(
+        monkeypatch, {"binary": b"\x00needle", "text": b"needle\n"}
+    )
+    instance = E2BSandboxBackend(
+        MetadataSandbox(), environment_provider=Environment(), max_output_bytes=1
+    )
+    assert (await instance.agrep("")).matches is None
+    assert bodies == []
+    assert (await instance.agrep("needle")).matches is None
+    assert all(body.closed for body in bodies)
+    _, bodies = metadata_transport(
+        monkeypatch, {"first": b"needle", "large": b"x" * (MAX_FILE_BYTES + 1)}
+    )
+    instance = E2BSandboxBackend(MetadataSandbox(), environment_provider=Environment())
+    assert (await instance.agrep("needle")).matches is None
+    assert all(body.closed for body in bodies)

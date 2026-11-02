@@ -1,3 +1,9 @@
+## 2026-11-02 E2B 受保护文件发现（候选）
+
+- `sandbox/e2b_metadata.py`：SDK正式Stat/ListDir unary、总期限/单响应与批次预算、原名字和类型检查，无shell/进程。
+- `sandbox/file_egress.py`：共享有限snapshot发现/搜索投影；Docker原dirfd发现保持，E2B复用完整内容检查。
+- 原sandbox三测试文件：恢复RED、正式protobuf/HTTP容量/取消与原秘密边界；真实云箱未验。
+
 # kokoro-agent 仓库索引
 
 ## 运行入口

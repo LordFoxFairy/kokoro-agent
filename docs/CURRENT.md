@@ -1,3 +1,15 @@
+## 2026-11-02 E2B 文件工具有限审查与复验
+
+冻结生产输入经独立只读审查有限通过，无确定 P0–P2；Root 对当前原四个相关测试文件复验 130 passed / 1 原 marker 未选（14.10s）。完整 Pyright、受影响 Ruff/format 与契约检查以同一冻结生产输入的日志为准。此处只补交付状态，不改生产或原断言；真实云箱、正式授权链、模板及资源销毁仍未验，路径竞态和 execute 远端取消缺口继续保留。
+
+## 2026-11-02 B-02 E2B 文件发现（待独审候选，未云验）
+
+基线bfd1e9c；正式Filesystem Stat/ListDir unary与有限HTTPX已接受保护ls/glob/grep，复用FileEgress一次fresh Acquire/完整bytes检查；原Docker dirfd发现算法保持。单body256KiB/累计2MiB及原发现/内容/输出预算，未知类型、symlink字段presence、原名秘密/穿越全部拒绝，不启动进程/云箱/正常源，不改依赖/wire/Schema。新模块已登记原e2b运行配方源码闭集。
+
+冻结Py3.12.14/DeepAgents0.6.7/E2B2.30.0：先真实RED 1失败（安全ls原unavailable）；原3sandbox＋manifest相关文件128通过/1原marker未选（14.18s）。后继仅测试fixture/无长度chunked超限/合法名字总量的delta，定向19通过；最后原E2B文件20通过/1原marker未选（4.15s），包括普通无provider六入口回归。真实本地HTTP验证首响应/停片/慢片/超量/错误/重定向/半截/坏proto/取消close，不称真实云箱。完整Pyright0错、受影响Ruff/format与contract通过；阶段测试fixture私有属性/未用import类型lint失败保留并已修正，未放宽断言或超时。
+
+本片未跑全default/真实E2B；path-based Stat/ListDir/download的symlink竞态、execute取消不kill远端和真实模板/凭据末端仍OPEN，不冒完成B-02。Root负责独审、冻结复跑及后继真实运行。
+
 ## 2026-11-01 B-02 Docker 文件发现恢复（已独审候选，未正常激活）
 
 基线2139674，由本片唯一writer恢复Docker受保护ls/glob/grep，E2B源码不改。所有工具在同一次fresh Acquire/guard内检查遍历原名；grep对候选文件先取得完整受检bytes，再literal匹配；结果失败无成功前缀。1024项/128普通文件/32KiB相对原名/64层，8MiB单文件/16MiB批次及min(max_output_bytes,100000)结果JSON预算。支持根、目录尾斜杠与单文件grep；有限glob语义、二进制跳过、空pattern拒绝见本日设计/API首节。普通provider=None仍委派原SDK。

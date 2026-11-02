@@ -1,3 +1,7 @@
+## 2026-11-02 B-02 E2B 文件发现内部约束（未云验）
+
+不改任何公开wire/Schema。E2B有provider时ls/glob/grep六个sync/async入口沿同一fresh guard，正式Filesystem Stat/ListDir unary只读；全部原name/path先查后过滤，grep完整原bytes先查后解码/行匹配。单body256KiB/累计2MiB、原发现/内容/结果预算，失败仅稳定error无成功前缀；无provider委派原SDK。未知类型/链接拒绝，不以mode伪造POSIX类型；path-based竞态和execute远端取消缺口保留，不能以本地SDK替身冒云箱通过。
+
 ## 2026-11-01 B-02 Docker 受保护文件发现内部约束
 
 沿DeepAgents0.6.7原LsResult(entries)/GlobResult(matches)/GrepResult(matches[path,line,text])，无HTTP/Redis变更。Docker选API后每次fresh Acquire；ls当前层、glob仅文件；路径虚拟根/，grep literal、LF行号1-based、空pattern拒绝。glob支持逐组件*、?、[]、**（*.txt当前层；**/*.txt根及子层），不支持brace/extglob。所有遍历原名先检查，grep完整bytes先查再筛行；二进制/非UTF-8先检查后跳过。最多1024项/128文件/32KiB原路径字节/64层、8MiB单文件/16MiB总bytes、min(max_output_bytes,100000)结果JSON字节，失败只给稳定error且无entries/matches前缀。sync/async保持原接口与owned取消。E2B目录未闭环继续稳定拒绝；普通无provider保持SDK行为。

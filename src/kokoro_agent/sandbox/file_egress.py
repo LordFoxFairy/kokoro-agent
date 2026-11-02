@@ -311,80 +311,20 @@ def _entry_relative(path: str, base: str) -> str:
     return path.removeprefix("/" + base + "/" if base else "/")
 
 
-class LocalFileTools:
-    """Protected Docker discovery over dirfd metadata and whole-byte snapshots."""
+MetadataReader = Callable[
+    [str, bool, Inspector, float, threading.Event], list[FileInfo]
+]
 
-    def __init__(self, egress: FileEgress, root: Path, max_output_bytes: int) -> None:
+
+class SnapshotFileTools:
+    """Shared checked metadata and whole-byte snapshot projections."""
+
+    def __init__(
+        self, egress: FileEgress, entries: MetadataReader, max_output_bytes: int
+    ) -> None:
         self.egress = egress
-        self.root = root
+        self.entries = entries
         self.result_limit = min(max_output_bytes, MAX_DISCOVERY_RESULT_BYTES)
-
-    def _entries(
-        self, path: str, recursive: bool, inspect: Inspector
-    ) -> list[FileInfo]:
-        inspect(path.encode())
-        base = _discovery_base(path)
-        flags = os.O_RDONLY | os.O_NOFOLLOW
-        entries: list[FileInfo] = []
-        visited = files = name_bytes = 0
-
-        def record(relative: str, info: os.stat_result) -> None:
-            nonlocal visited, files, name_bytes
-            inspect(relative.encode())
-            relative_path(relative)
-            visited += 1
-            name_bytes += len(relative.encode())
-            is_directory = stat.S_ISDIR(info.st_mode)
-            if not is_directory and not stat.S_ISREG(info.st_mode):
-                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
-            files += not is_directory
-            if (
-                visited > MAX_DISCOVERY_ENTRIES
-                or files > MAX_BATCH_FILES
-                or name_bytes > MAX_DISCOVERY_NAME_BYTES
-                or len(relative.split("/")) > MAX_DISCOVERY_DEPTH
-            ):
-                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
-            entries.append(
-                {"path": "/" + relative, "is_dir": is_directory, "size": info.st_size}
-            )
-
-        def walk(descriptor: int, prefix: str, depth: int) -> None:
-            inspect(b"")
-            if depth > MAX_DISCOVERY_DEPTH:
-                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
-            with os.scandir(descriptor) as children:
-                for child in children:
-                    inspect(child.name.encode())
-                    relative = prefix + child.name
-                    info = child.stat(follow_symlinks=False)
-                    record(relative, info)
-                    if recursive and stat.S_ISDIR(info.st_mode):
-                        child_fd = os.open(
-                            child.name, flags | os.O_DIRECTORY, dir_fd=descriptor
-                        )
-                        try:
-                            walk(child_fd, relative + "/", depth + 1)
-                        finally:
-                            os.close(child_fd)
-
-        with ExitStack() as stack:
-            descriptor = os.open(self.root, flags | os.O_DIRECTORY)
-            stack.callback(os.close, descriptor)
-            try:
-                for part in base.split("/") if base else ():
-                    descriptor = os.open(part, flags | os.O_NONBLOCK, dir_fd=descriptor)
-                    stack.callback(os.close, descriptor)
-                info = os.fstat(descriptor)
-            except FileNotFoundError:
-                return []
-            if stat.S_ISDIR(info.st_mode):
-                walk(descriptor, base + "/" if base else "", 0)
-            elif stat.S_ISREG(info.st_mode):
-                record(base, info)
-            else:
-                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
-        return sorted(entries, key=lambda item: item["path"])
 
     def _bounded(self, item: FileInfo | GrepMatch, used: int) -> int:
         size = len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode())
@@ -397,11 +337,12 @@ class LocalFileTools:
         def operation(
             inspect: Inspector, deadline: float, cancelled: threading.Event
         ) -> list[FileInfo]:
-            del deadline, cancelled  # inspect owns both checks on every step.
             if pattern is not None:
                 inspect(pattern.encode())
             components = _glob_components(pattern) if pattern is not None else None
-            entries = self._entries(path, components is not None, inspect)
+            entries = self.entries(
+                path, components is not None, inspect, deadline, cancelled
+            )
             base = _discovery_base(path)
             result: list[FileInfo] = []
             used = 2
@@ -435,7 +376,7 @@ class LocalFileTools:
                 inspect(glob.encode())
             components = _glob_components(glob) if glob is not None else None
             base_path = path if path is not None else "/"
-            entries = self._entries(base_path, True, inspect)
+            entries = self.entries(base_path, True, inspect, deadline, cancelled)
             base = _discovery_base(base_path)
             paths = [
                 entry["path"]
@@ -542,3 +483,84 @@ class LocalFileTools:
             )
         except ExecutionBoundaryError:
             return GrepResult(error=FILE_UNAVAILABLE)
+
+
+class LocalFileTools(SnapshotFileTools):
+    """Docker discovery keeps its original dirfd/nofollow metadata source."""
+
+    def __init__(self, egress: FileEgress, root: Path, max_output_bytes: int) -> None:
+        self.root = root
+        super().__init__(egress, self._local_entries, max_output_bytes)
+
+    def _local_entries(
+        self,
+        path: str,
+        recursive: bool,
+        inspect: Inspector,
+        deadline: float,
+        cancelled: threading.Event,
+    ) -> list[FileInfo]:
+        del deadline, cancelled  # The guard inspector owns both checks.
+        inspect(path.encode())
+        base = _discovery_base(path)
+        flags = os.O_RDONLY | os.O_NOFOLLOW
+        entries: list[FileInfo] = []
+        visited = files = name_bytes = 0
+
+        def record(relative: str, info: os.stat_result) -> None:
+            nonlocal visited, files, name_bytes
+            inspect(relative.encode())
+            relative_path(relative)
+            visited += 1
+            name_bytes += len(relative.encode())
+            is_directory = stat.S_ISDIR(info.st_mode)
+            if not is_directory and not stat.S_ISREG(info.st_mode):
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            files += not is_directory
+            if (
+                visited > MAX_DISCOVERY_ENTRIES
+                or files > MAX_BATCH_FILES
+                or name_bytes > MAX_DISCOVERY_NAME_BYTES
+                or len(relative.split("/")) > MAX_DISCOVERY_DEPTH
+            ):
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            entries.append(
+                {"path": "/" + relative, "is_dir": is_directory, "size": info.st_size}
+            )
+
+        def walk(descriptor: int, prefix: str, depth: int) -> None:
+            inspect(b"")
+            if depth > MAX_DISCOVERY_DEPTH:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            with os.scandir(descriptor) as children:
+                for child in children:
+                    inspect(child.name.encode())
+                    relative = prefix + child.name
+                    info = child.stat(follow_symlinks=False)
+                    record(relative, info)
+                    if recursive and stat.S_ISDIR(info.st_mode):
+                        child_fd = os.open(
+                            child.name, flags | os.O_DIRECTORY, dir_fd=descriptor
+                        )
+                        try:
+                            walk(child_fd, relative + "/", depth + 1)
+                        finally:
+                            os.close(child_fd)
+
+        with ExitStack() as stack:
+            descriptor = os.open(self.root, flags | os.O_DIRECTORY)
+            stack.callback(os.close, descriptor)
+            try:
+                for part in base.split("/") if base else ():
+                    descriptor = os.open(part, flags | os.O_NONBLOCK, dir_fd=descriptor)
+                    stack.callback(os.close, descriptor)
+                info = os.fstat(descriptor)
+            except FileNotFoundError:
+                return []
+            if stat.S_ISDIR(info.st_mode):
+                walk(descriptor, base + "/" if base else "", 0)
+            elif stat.S_ISREG(info.st_mode):
+                record(base, info)
+            else:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        return sorted(entries, key=lambda item: item["path"])

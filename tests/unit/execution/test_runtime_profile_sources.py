@@ -15,6 +15,10 @@ def test_production_manifest_has_real_resource_closures() -> None:
         assert descriptor["files"]
     assert manifest.descriptor("native")["version"] == "0.6.7"
     assert manifest.dynamic_edges
+    e2b = next(source for source in manifest.sources if source.source_id == "e2b")
+    docker = next(source for source in manifest.sources if source.source_id == "docker")
+    assert "sandbox/e2b_metadata.py" in e2b.resource_paths
+    assert "sandbox/e2b_metadata.py" not in docker.resource_paths
     composition = next(
         source for source in manifest.sources if source.source_id == "composition"
     )

@@ -5,6 +5,9 @@ execute 映射。SDK 边界以 fake 注入验证我们的编排语义；SDK 真�
 from __future__ import annotations
 
 from typing import Self
+import asyncio
+import time
+import logging
 
 import pytest
 from e2b import CommandExitException, SandboxException
@@ -273,3 +276,222 @@ class TestExecuteMapping:
             None,
             "file_not_found",
         )
+
+
+class MetadataHTTPServer:
+    """Real loopback HTTP only; the official cloud service is not contacted."""
+
+    def __init__(self, phase: str) -> None:
+        self.phase = phase
+        self.server: asyncio.Server | None = None
+        self.tasks: set[asyncio.Task[None]] = set()
+        self.entered = asyncio.Event()
+        self.closed = asyncio.Event()
+        self.requests: list[bytes] = []
+
+    async def start(self) -> E2BSandboxBackend:
+        from e2b.connection_config import ConnectionConfig
+        from support.file_egress import Environment
+
+        self.server = await asyncio.start_server(self.handle, "127.0.0.1", 0)
+        port = self.server.sockets[0].getsockname()[1]
+
+        class LocalSandbox(FakeSandbox):
+            envd_api_url = f"http://127.0.0.1:{port}"
+            connection_config = ConnectionConfig(
+                api_key="e2b_" + "0" * 40,
+                extra_sandbox_headers={"X-Access-Token": "private-http-token"},
+            )
+
+        class DeadlineMetadataBackend(E2BSandboxBackend):
+            def __init__(self) -> None:
+                super().__init__(LocalSandbox(), environment_provider=Environment())
+                # Shorten only this test fixture's inherited file budget.
+                assert self._file_egress is not None
+                self._file_egress.timeout = 1
+
+        return DeadlineMetadataBackend()
+
+    async def handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        self.tasks.add(task)
+        try:
+            headers = await reader.readuntil(b"\r\n\r\n")
+            size = next(
+                int(row.split(b":", 1)[1])
+                for row in headers.split(b"\r\n")
+                if row.lower().startswith(b"content-length:")
+            )
+            request = await reader.readexactly(size)
+            self.requests.append(request)
+            self.entered.set()
+            if self.phase == "headers":
+                assert await reader.read(1) == b""
+                return
+            if self.phase == "redirect":
+                writer.write(
+                    b"HTTP/1.1 302 Found\r\nContent-Length: 0\r\nLocation: /never\r\n\r\n"
+                )
+            elif self.phase in {"body", "drip"}:
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/proto\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n"
+                )
+                await writer.drain()
+                if self.phase == "drip":
+                    for _ in range(20):
+                        await asyncio.sleep(0.1)
+                        writer.write(b"1\r\nx\r\n")
+                        await writer.drain()
+            elif self.phase == "chunked-oversize":
+                from kokoro_agent.sandbox.e2b_metadata import MAX_METADATA_BODY_BYTES
+
+                payload = b"x" * (MAX_METADATA_BODY_BYTES + 1)
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/proto\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    + format(len(payload), "x").encode()
+                    + b"\r\n"
+                    + payload
+                    + b"\r\n0\r\n\r\n"
+                )
+            else:
+                from kokoro_agent.sandbox.e2b_metadata import MAX_METADATA_BODY_BYTES
+
+                payload = (
+                    b"x" * (MAX_METADATA_BODY_BYTES + 1)
+                    if self.phase == "oversize"
+                    else b"private-rpc-error"
+                )
+                status = (
+                    b"500 Internal Server Error" if self.phase == "error" else b"200 OK"
+                )
+                declared = len(payload) + (1 if self.phase == "incomplete" else 0)
+                writer.write(
+                    b"HTTP/1.1 "
+                    + status
+                    + b"\r\nContent-Type: application/proto\r\nContent-Length: "
+                    + str(declared).encode()
+                    + b"\r\n\r\n"
+                    + payload
+                )
+                if self.phase == "incomplete":
+                    await writer.drain()
+                    return
+            await writer.drain()
+            assert await reader.read(1) == b""
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            self.tasks.discard(task)
+            self.closed.set()
+
+    async def close(self) -> None:
+        if self.server is not None:
+            self.server.close()
+            await self.server.wait_closed()
+        for task in self.tasks:
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "headers",
+        "body",
+        "drip",
+        "oversize",
+        "chunked-oversize",
+        "error",
+        "redirect",
+        "incomplete",
+        "malformed",
+    ],
+)
+async def test_e2b_metadata_real_http_is_bounded_and_closes(
+    phase: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = MetadataHTTPServer(phase)
+    instance = await server.start()
+    caplog.set_level(logging.DEBUG)
+    started = time.monotonic()
+    try:
+        denied = await instance.als("/")
+        assert denied.error == "sandbox_file_unavailable"
+        assert denied.entries is None
+        assert time.monotonic() - started < 1.5
+        if phase != "drip":
+            await asyncio.wait_for(server.closed.wait(), 0.4)
+        assert len(server.requests) == 1
+        assert "private-rpc-error" not in caplog.text
+        assert "private-http-token" not in caplog.text
+        assert "filesystem.Filesystem" not in caplog.text
+    finally:
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_e2b_metadata_cancel_closes_real_http_without_late_result() -> None:
+    server = MetadataHTTPServer("body")
+    instance = await server.start()
+    task = asyncio.create_task(instance.als("/"))
+    try:
+        await asyncio.wait_for(server.entered.wait(), 1)
+        task.cancel()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 0.7)
+        await asyncio.wait_for(server.closed.wait(), 0.4)
+        assert len(server.requests) == 1
+    finally:
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_e2b_without_api_keeps_original_native_file_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deepagents.backends.protocol import GlobResult, GrepResult, LsResult
+    from deepagents.backends.sandbox import BaseSandbox
+
+    def listed(self: BaseSandbox, path: str) -> LsResult:
+        assert path == "/native"
+        return LsResult(entries=[{"path": "/native/file"}])
+
+    def globbed(self: BaseSandbox, pattern: str, path: str = "/") -> GlobResult:
+        assert (pattern, path) == ("*.txt", "/native")
+        return GlobResult(matches=[{"path": "/native/file.txt"}])
+
+    def searched(
+        self: BaseSandbox,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        assert (pattern, path, glob) == ("needle", "/native", None)
+        return GrepResult(
+            matches=[{"path": "/native/file", "line": 1, "text": "needle"}]
+        )
+
+    monkeypatch.setattr(BaseSandbox, "ls", listed)
+    monkeypatch.setattr(BaseSandbox, "glob", globbed)
+    monkeypatch.setattr(BaseSandbox, "grep", searched)
+    instance = E2BSandboxBackend(FakeSandbox())
+    assert instance.ls("/native").entries == [{"path": "/native/file"}]
+    assert (await instance.als("/native")).entries == [{"path": "/native/file"}]
+    assert instance.glob("*.txt", "/native").matches == [{"path": "/native/file.txt"}]
+    assert (await instance.aglob("*.txt", "/native")).matches == [
+        {"path": "/native/file.txt"}
+    ]
+    assert instance.grep("needle", "/native").matches == [
+        {"path": "/native/file", "line": 1, "text": "needle"}
+    ]
+    assert (await instance.agrep("needle", "/native")).matches == [
+        {"path": "/native/file", "line": 1, "text": "needle"}
+    ]

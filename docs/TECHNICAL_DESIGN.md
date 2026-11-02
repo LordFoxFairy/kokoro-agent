@@ -1,3 +1,11 @@
+## 2026-11-02 B-02 E2B Filesystem unary（已批准实施，未云验）
+
+在现 sandbox owner 内新增内聚 `e2b_metadata.py`，仅以 SDK2.30 正式 FilesystemName/Stat/ListDir protobuf 和已有 HTTPX读取元数据；不创建进程、shell或新服务，不改协议/Schema/依赖。淘汰直接 files.list（先无界缓冲/跳过未知type）及 commands.run（login shell与PID清理额外风险）。FileEgress共享既有有限glob/literal grep投影，Local/Docker保dirfd行为；E2B在同一次fresh Acquire/guard内检查全部原名字后过滤，grep完整原bytes先检查再匹配。
+
+单RPC响应256KiB、一次发现累计2MiB；Stat/ListDir串行，共享原deadline/cancelled，显式关闭流/transport并等待owned线程。原1024entry/128file/32KiB名字/64层、8MiB每文件/16MiB批次和结果JSON预算保持，失败无成功前缀。每层depth1，不以过滤代替全遍历预算；未知enum、symlink_target presence、特殊文件/逃逸path拒绝。mode不按POSIX S_IFMT猜类型：官方runtime f9ed2af shared/filesystem/entry.go当前为Go FileMode.Perm，type与symlink字段才是可用类型依据。
+
+Stat/ListDir/download均为path-based，RPC间symlink替换竞态并非Docker原子nofollow fd，不能声称等价；最终完整内容仍fresh guard检查。execute login-shell/聚合输出与取消不kill远端另项保留。新callback/内部FileInfo只承接已校验元数据，generated类型止于adapter，无凭据缓存；真实E2B需Root专属箱另验。
+
 ## 2026-11-01 B-02 Docker 安全文件发现（已裁决实施）
 
 在现 FileEgress 同一个 fresh Acquire/guard 内补 Docker ls/glob/grep；不调用 shell/SDK 未受检文件工具，不新增依赖、协议或数据。根目录 fd、逐层 nofollow、regular file 枚举；名称检查早于匹配/投影。每次最多1024遍历项、128普通文件、32KiB原相对路径UTF-8字节，深度最多64；grep沿原8MiB每文件/16MiB批次完整bytes检查。结果UTF-8 JSON字节最多min(既有max_output_bytes,100000)，包括空壳；任何失败不给成功前缀。超时/取消沿既有guard与owned worker，逐项检查取消，普通provider=None不变。

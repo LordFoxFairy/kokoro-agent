@@ -623,3 +623,53 @@ def test_docker_destroy_confirmed_absent_is_idempotent(
         "--filter",
         "id=container-id",
     )
+
+
+@pytest.mark.asyncio
+async def test_e2b_discovery_cancel_keeps_owned_metadata_thread_until_retired() -> None:
+    from collections.abc import Callable
+    from deepagents.backends.protocol import FileInfo
+
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = threading.Event()
+    retired = threading.Event()
+
+    class OwnedMetadata(E2BSandboxBackend):
+        def _metadata(
+            self,
+            path: str,
+            recursive: bool,
+            inspect: Callable[[bytes], None],
+            deadline: float,
+            cancelled: threading.Event,
+        ) -> list[FileInfo]:
+            loop.call_soon_threadsafe(entered.set)
+            try:
+                assert release.wait(5)
+                return [{"path": "/late-safe.txt", "is_dir": False, "size": 1}]
+            finally:
+                retired.set()
+
+    instance = OwnedMetadata(
+        Sandbox(), environment_provider=Environment(("API_KEY", "private-value"))
+    )
+    task = asyncio.create_task(instance.als("/"))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert retired.is_set()
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass

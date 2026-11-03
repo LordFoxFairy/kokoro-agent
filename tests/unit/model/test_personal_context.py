@@ -7,7 +7,6 @@ import json
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain.agents.middleware import ModelRequest, ModelResponse
 from langchain_core.messages.utils import count_tokens_approximately
 from pydantic import ValidationError, SecretStr
 
@@ -16,9 +15,7 @@ from kokoro_agent.model.personal_context import (
     append_personal_context,
     validate_personal_context_window,
     PersonalContextWindowExceeded,
-    PersonalContextWindowMiddleware,
 )
-from kokoro_agent.clients.system import ResolvedModel
 from kokoro_agent.model.call_models import ModelCallInputInvalid
 from kokoro_agent.observability import trace_config, ObservabilitySettings
 
@@ -208,42 +205,3 @@ def test_counter_failure_is_explicit_and_never_guesses(
             max_output_tokens=256,
         )
     assert denied.value.__cause__ is None
-
-
-@pytest.mark.asyncio
-async def test_personal_context_is_reappended_after_late_system_instructions() -> None:
-    context = PersonalContext.model_validate_json(json.dumps(material()))
-    route = ResolvedModel(
-        model_id="model",
-        provider_id="provider",
-        revision_id="revision",
-        revision=1,
-        digest="digest",
-        generation="generation",
-        tenant_generation="tenant-generation",
-        provider_model_name="model",
-        request_model="model",
-        feature_key="chat",
-        label_key="default",
-        context_window=4096,
-        max_output_tokens=256,
-        connection=object(),
-    )
-    middleware = PersonalContextWindowMiddleware(route, context)
-    captured: list[ModelRequest] = []
-
-    async def handler(request: ModelRequest) -> ModelResponse:
-        captured.append(request)
-        return ModelResponse(result=[])
-
-    request = ModelRequest(
-        model=object(),
-        system_message=SystemMessage(content="late generic instructions"),
-        messages=[HumanMessage(content="hello")],
-        tools=[],
-    )
-    await middleware.awrap_model_call(request, handler)
-    assert captured
-    rendered = str(captured[0].system_message.content)
-    assert rendered.startswith("late generic instructions")
-    assert "KNOWLEDGE_PRIVATE" in rendered

@@ -353,7 +353,7 @@ async def build_deep_agent(
                 model_guard((*plan.peer_path, name)),
                 *chains.subagent[offset:],
                 *(
-                    (PersonalContextWindowMiddleware(route),)
+                    (PersonalContextWindowMiddleware(route, request.personal_context),)
                     if request.personal_context is not None
                     else ()
                 ),
@@ -460,7 +460,7 @@ async def build_deep_agent(
                     ),
                 ),
                 *(
-                    (PersonalContextWindowMiddleware(route),)
+                    (PersonalContextWindowMiddleware(route, request.personal_context),)
                     if request.personal_context is not None
                     else ()
                 ),

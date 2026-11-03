@@ -102,6 +102,26 @@ async def settle(
     )
 
 
+async def test_default_deadline_allows_the_bff_settlement_budget_without_resending() -> (
+    None
+):
+    calls: list[httpx.Request] = []
+
+    async def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        await asyncio.sleep(5.1)
+        return httpx.Response(200, json=ack(), headers=headers())
+
+    async with BffModelBudgetClient(
+        "http://bff.test",
+        lambda _: SecretStr("s" * 32),
+        transport=httpx.MockTransport(handler),
+    ) as c:
+        result = await settle(c)
+    assert result.status == "captured"
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("operation", ["recover", "settle"])
 async def test_financial_requests_are_exact_without_proof_or_user_token(
     operation: str,

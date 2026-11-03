@@ -24,6 +24,7 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
   tool args/results、subagent 内文与内部错误不会进入聊天事实。
 - `failures.py`：唯一执行失败归码与 safe `RunFailedPayload` 构造；typed System owner 错误优先，
   预算/递归错误保持专用 code，普通错误由调用点显式 assembly default 或 internal fallback 收口。
+  typed 财务 transport 的预算/凭据/结算 unavailable 映射 `dependency_unavailable` / `retryable=false`；缺回执不冒充已确认 `model_settlement_pending`，不触发模型重放。
 - `publish_agent_events.py`：`pump_run(emitter, run, source_for)`。四路 typed 投影
   （messages/tool_calls/subagents/custom）并发抽干 → queue 合流 → 单点发布。
   正文 completed 取同一 SDK text projection 的 await 终值，避免 assembled 工具块擦除流式阶段正文；不以 delta 拼接覆盖权威修订。

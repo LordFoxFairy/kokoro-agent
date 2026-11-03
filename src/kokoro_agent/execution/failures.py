@@ -8,6 +8,7 @@ from openai import APIConnectionError, APITimeoutError
 from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
 from kokoro_agent.clients.system import ModelResolutionError
+from kokoro_agent.clients.model_budget import ModelBudgetError
 from kokoro_agent.clients.custom_api_runtime import (
     CustomApiConfigurationError,
     CustomApiDependencyError,
@@ -37,6 +38,14 @@ _MODEL_FAILURE_CODES: dict[str, RunErrorCode] = {
     "MODEL_RESOLUTION_FAILED": "internal_error",
 }
 
+_FINANCIAL_UNAVAILABLE_CODES = frozenset(
+    {
+        "MODEL_BUDGET_UNAVAILABLE",
+        "MODEL_BUDGET_CREDENTIAL_UNAVAILABLE",
+        "MODEL_SETTLEMENT_UNAVAILABLE",
+    }
+)
+
 
 def failure_code(error: BaseException) -> RunErrorCode:
     """Classify typed execution failures without rendering exception diagnostics."""
@@ -51,6 +60,11 @@ def failure_code(error: BaseException) -> RunErrorCode:
     if isinstance(error, ModelCallSettlementPending):
         return "model_settlement_pending"
     if isinstance(error, ModelCallAuthorizationUnavailable):
+        return "dependency_unavailable"
+    if (
+        isinstance(error, ModelBudgetError)
+        and error.code in _FINANCIAL_UNAVAILABLE_CODES
+    ):
         return "dependency_unavailable"
     if isinstance(
         error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded
@@ -83,6 +97,11 @@ def run_failed_payload(
     if isinstance(error, ModelCallSettlementPending):
         return RunFailedPayload(code="model_settlement_pending", retryable=False)
     if isinstance(error, ModelCallAuthorizationUnavailable):
+        return RunFailedPayload(code="dependency_unavailable", retryable=False)
+    if (
+        isinstance(error, ModelBudgetError)
+        and error.code in _FINANCIAL_UNAVAILABLE_CODES
+    ):
         return RunFailedPayload(code="dependency_unavailable", retryable=False)
     if isinstance(
         error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded

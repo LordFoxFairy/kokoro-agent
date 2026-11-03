@@ -99,7 +99,7 @@ class BffModelBudgetClient:
         base_url: str,
         credentials: Callable[[str], SecretStr],
         *,
-        timeout_s: float = 5,
+        timeout_s: float = 10,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         valid = False

@@ -1,3 +1,11 @@
+## 2026-11-03 B12：财务依赖失败分类与单发送期限（局部候选）
+
+真实已完成模型调用后的失败来自 typed `ModelBudgetError`，此前落为 `internal_error`。现仅将预算、凭据与结算 unavailable 三个固定 code 映射为 `dependency_unavailable` / `retryable=false`；显式 assembly default 不覆盖该分类。只有已验证匹配的 pending ACK 才保留原 `model_settlement_pending`；未知 ACK 不释放冻结、不自动重发资金或模型。
+
+BFF client 默认总期限由5秒改为其既有允许上限10秒，仍单发送、整体期限、取消传播和严格 ACK。新延迟 ACK 与三种分类回归先红后绿；四个相关测试文件184通过、4原 marker未选，受影响 Ruff通过，显式Python3.12的Pyright为0错。第一次未指定venv的Pyright缺依赖失败保留，不将其归为源码错误。冻结生产输入经既有只读角色限定审查通过；未重跑完整owner门，不宣称可合并。
+
+候选真实新Run仍失败，不能把延长期限当成根因修复：首发冻结正确模型标签，单个模型attempt observed，usage completed/normalized/known_nonzero/partial，typed错误为 `MODEL_SETTLEMENT_UNAVAILABLE`。之后财务ACK恢复成功，关闭对照未发送，自有知识与usage已清理/恢复。BFF未显式配置总期限时仍默认5秒；后续应定位这条受限结算链路，不能反复重跑模型或将未知态改为成功。正常3314未切换。
+
 ## 2026-11-03 B08：个人材料首片（实施中，未发布）
 
 HTTP8.11 的 `personal_context` 是可选/null、schema_version=1 的私有 BFF 快照：owner{tenant_ref,user_ref} 必须匹配可信 human actor；profile 为 null 或 revision + nickname/occupation/about/instructions；knowledge 为 usage_revision/enabled/items，disabled 必须零 items，items 最多100、UUIDv4小写且不重复，每项携 revision/name/when_to_use/content。所有 revision 为安全整数，缺 usage 行表示0/false。字段上限与个人 owner 一致，不截断。POST /v1/runs 的 `x-kokoro-max-body-bytes=1048576` 公布既有上限，`context_window_exceeded` 是不可重试失败；旧8.10完整字节经有限逆验证不变。

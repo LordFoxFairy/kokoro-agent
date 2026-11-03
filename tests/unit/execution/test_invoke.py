@@ -109,6 +109,26 @@ def test_confirmed_pending_ack_is_nonretryable_even_with_a_default_failure_code(
     )
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "MODEL_BUDGET_UNAVAILABLE",
+        "MODEL_BUDGET_CREDENTIAL_UNAVAILABLE",
+        "MODEL_SETTLEMENT_UNAVAILABLE",
+    ],
+)
+def test_unknown_model_financial_ack_is_a_nonretryable_dependency_failure(
+    code: str,
+) -> None:
+    from kokoro_agent.clients.model_budget import ModelBudgetError
+
+    error = ModelBudgetError(code)
+    assert failure_code(error) == "dependency_unavailable"
+    assert run_failed_payload(error, code="internal_error") == RunFailedPayload(
+        code="dependency_unavailable", retryable=False
+    )
+
+
 def test_only_owned_handler_deadline_is_nonretryable_model_unavailable() -> None:
     from kokoro_agent.model.call_models import ModelCallDeadlineExceeded
 

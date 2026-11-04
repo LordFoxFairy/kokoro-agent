@@ -168,7 +168,6 @@ async def read_run_display(
                     }
                 journal = {key: row.name for key, row in records.items()}
                 connections: tuple[str, ...] = ()
-                mcp_source_sha256: str | None = None
                 native_tools: tuple[str, ...] = ()
                 if has_native or (
                     has_mcp
@@ -227,27 +226,6 @@ async def read_run_display(
                             if any(set(item) != {"connection_id"} for item in refs):
                                 raise ValueError("frozen MCP connection shape differs")
                             peer_sets.append({item["connection_id"] for item in refs})
-                        implementations = TypeAdapter(dict[str, Any]).validate_python(
-                            recipe.get("implementations", {}), strict=True
-                        )
-                        sources = TypeAdapter(list[dict[str, Any]]).validate_python(
-                            implementations.get("sources", []), strict=True
-                        )
-                        hashes: set[str] = set()
-                        for source in sources:
-                            if source.get("package") != "kokoro_agent":
-                                continue
-                            files = TypeAdapter(list[dict[str, str]]).validate_python(
-                                source.get("files", []), strict=True
-                            )
-                            hashes.update(
-                                item["sha256"]
-                                for item in files
-                                if item.get("path") == "mcp/tools.py"
-                            )
-                        if len(hashes) > 1:
-                            raise ValueError("conflicting frozen MCP implementation")
-                        mcp_source_sha256 = next(iter(hashes), None)
                         if peer_sets:
                             common = peer_sets[0].copy()
                             for values in peer_sets[1:]:
@@ -410,6 +388,5 @@ async def read_run_display(
                     journal=journal,
                     journal_records=records,
                     mcp_connections=connections,
-                    mcp_source_sha256=mcp_source_sha256,
                     native_tools=native_tools,
                 ).model_copy(update={"final_message_id": final_id})

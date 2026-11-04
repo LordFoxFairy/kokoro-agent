@@ -324,9 +324,7 @@ async def test_irrelevant_model_tool_checkpoints_do_not_consume_skill_locator_bu
         "33_relevant",
         "32_relevant",
         "large_native",
-        "legacy",
-        "legacy_other_hash",
-        "legacy_wrong_message",
+        "error_text_is_not_failure",
     ],
 )
 async def test_historical_mcp_only_exact_journal_native_and_frozen_recipe_are_read_without_writes(
@@ -341,6 +339,7 @@ async def test_historical_mcp_only_exact_journal_native_and_frozen_recipe_are_re
 
     run = request("historical-mcp")
     scope = RunScope.of(run)
+    activity_ids: dict[str, str] = {}
     for index, (call_id, name) in enumerate(
         [
             ("call-success", "mcp_call"),
@@ -375,12 +374,12 @@ async def test_historical_mcp_only_exact_journal_native_and_frozen_recipe_are_re
                 else "tool.mcp.call",
             )
             assert projection is not None
+            activity_id = json.loads(projection.event.payload_json)["activity_id"]
+            assert isinstance(activity_id, str)
+            activity_ids[call_id] = activity_id
             await chat_repository.append(projection)
-    source_hash = (
-        "a" * 64
-        if case == "legacy_other_hash"
-        else "f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea"
-    )
+    # The formerly recognized producer must not turn error text into failure facts.
+    source_hash = "f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea"
     recipe = canonical_json(
         {
             "domain_tag": "kokoro-agent:assembly-recipe:1",
@@ -500,14 +499,12 @@ async def test_historical_mcp_only_exact_journal_native_and_frozen_recipe_are_re
                     update={"content": "x" * (8 * 1024 * 1024 + 1)}
                 )
             native_messages: list[BaseMessage] = [message]
-            if case.startswith("legacy"):
+            if case == "error_text_is_not_failure":
                 native_messages.append(
                     ToolMessage(
                         content="error: MCP_TOOL_NOT_ALLOWED",
                         name="mcp_describe_tool",
-                        tool_call_id="other"
-                        if case == "legacy_wrong_message"
-                        else "describe",
+                        tool_call_id="describe",
                     )
                 )
             await saver.aput_writes(
@@ -520,9 +517,7 @@ async def test_historical_mcp_only_exact_journal_native_and_frozen_recipe_are_re
     else:
         result = await read_run_display(run_chat_database_url, run_chat_schema, run)
         facts = result.model_dump(mode="json")["tool_facts"]
-        assert sum(fact.get("status") == "failed" for fact in facts) == (
-            2 if case == "legacy" else 1
-        )
+        assert sum(fact.get("status") == "failed" for fact in facts) == 1
         names = [
             fact["display_detail"]["name"] for fact in facts if "display_detail" in fact
         ]
@@ -533,12 +528,28 @@ async def test_historical_mcp_only_exact_journal_native_and_frozen_recipe_are_re
                 "success",
                 "33_unrelated",
                 "32_relevant",
-                "legacy",
-                "legacy_other_hash",
-                "legacy_wrong_message",
+                "error_text_is_not_failure",
             }
             else []
         )
+        if case == "error_text_is_not_failure":
+            assert facts == [
+                {
+                    "activity_id": activity_ids["call-success"],
+                    "display_detail": {
+                        "kind": "mcp_tool",
+                        "name": "read_wiki_structure",
+                    },
+                },
+                {
+                    "activity_id": activity_ids["describe"],
+                    "display_detail": {
+                        "kind": "mcp_tool",
+                        "name": "read_wiki_structure",
+                    },
+                },
+                {"activity_id": activity_ids["call-failed"], "status": "failed"},
+            ]
         assert result.display_skills == result.tool_paths == []
     assert await _snapshot(run_chat_database_url, run_chat_schema) == before
 

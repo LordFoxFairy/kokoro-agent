@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from mcp.types import CallToolResult
 from kokoro_agent.application.native_activity_details import native_activity_details
 from kokoro_agent.domain.run.models import ToolJournalRecord
@@ -112,7 +112,6 @@ def recover_display(
     journal: Mapping[str, str],
     journal_records: Mapping[str, ToolJournalRecord] | None = None,
     mcp_connections: tuple[str, ...] = (),
-    mcp_source_sha256: str | None = None,
     native_tools: tuple[str, ...] = (),
 ) -> RunDisplay:
     """Intersect native facts with original ready/activity and real journal IDs.
@@ -237,7 +236,6 @@ def recover_display(
             messages,
             journal_records or {},
             mcp_connections,
-            mcp_source_sha256,
         ),
     )
 
@@ -250,7 +248,6 @@ def _mcp_facts(
     messages: Sequence[BaseMessage],
     journal: Mapping[str, ToolJournalRecord],
     connections: tuple[str, ...],
-    mcp_source_sha256: str | None,
 ) -> list[ToolFact]:
     codes = {
         "mcp_call": "tool.mcp.call",
@@ -310,43 +307,10 @@ def _mcp_facts(
             continue
         if not result.isError:
             approved.add(target)
-    legacy_failed: set[str] = set()
-    if (
-        mcp_source_sha256
-        == "f4f1b0c9ff95221cbf619cdf6376e79d8858c07f32b7c33c72f989458417ddea"
-    ):
-        # This exact reviewed implementation returned these local errors as
-        # successful ToolMessages. No arbitrary output or other version is parsed.
-        constants = {
-            "error: MCP_CONNECTION_NOT_DECLARED",
-            "error: MCP_TOOL_NOT_ALLOWED",
-            "error: MCP_CURRENT_READ_FAILED",
-        }
-        for message in messages:
-            if (
-                not isinstance(message, ToolMessage)
-                or message.name != "mcp_describe_tool"
-            ):
-                continue
-            call_id = message.tool_call_id
-            pair = matched.get(call_id)
-            if pair is None or call_id not in targets:
-                continue
-            row = pair[1]
-            content = message.model_dump().get("content")
-            if (
-                row.name == "mcp_describe_tool"
-                and row.status == "succeeded"
-                and not row.is_error
-                and row.result in constants
-                and isinstance(content, str)
-                and content == row.result
-            ):
-                legacy_failed.add(call_id)
     facts: dict[str, ToolFact] = {}
     for call_id, (activity_id, row) in matched.items():
         values: dict[str, Any] = {"activity_id": activity_id}
-        if (row.status == "failed" and row.is_error) or call_id in legacy_failed:
+        if row.status == "failed" and row.is_error:
             values["status"] = "failed"
         target = targets.get(call_id)
         if target is not None and target in approved:

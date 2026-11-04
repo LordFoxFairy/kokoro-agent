@@ -233,7 +233,9 @@ class TestDockerWithS3Archive:
             with pytest.raises(ClientError) as absent_before:
                 minio.head_bucket(Bucket=bucket)
             assert (
-                absent_before.value.response["ResponseMetadata"]["HTTPStatusCode"]
+                absent_before.value.response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
                 == 404
             )
             minio.create_bucket(Bucket=bucket)
@@ -261,6 +263,8 @@ class TestDockerWithS3Archive:
                 with pytest.raises(ClientError) as absent_after:
                     minio.head_bucket(Bucket=bucket)
                 assert (
-                    absent_after.value.response["ResponseMetadata"]["HTTPStatusCode"]
+                    absent_after.value.response.get("ResponseMetadata", {}).get(
+                        "HTTPStatusCode"
+                    )
                     == 404
                 )

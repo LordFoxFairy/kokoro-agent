@@ -69,7 +69,21 @@ async def test_bounded_native_final_is_read_only_and_exact_run(
         "feature": {"agents": [{}]},
         "implementations": {
             "dependencies": [list(pair) for pair in manifest.versions],
-            "sources": [manifest.descriptor("assembly"), manifest.descriptor("native")],
+            "sources": [
+                {
+                    "source_id": "assembly",
+                    "package": "kokoro_agent",
+                    "files": [
+                        {
+                            "path": "agent_factory.py",
+                            # Use the legacy read profile reviewed in b80d683,
+                            # not today's assembly fingerprint.
+                            "sha256": "0742b5f34218d3b5fb77b14cefae391a3862d5059fdafa17fd4d37f757ddbe55",
+                        }
+                    ],
+                },
+                manifest.descriptor("native"),
+            ],
         },
     }
     recipe = canonical_json(recipe_value)

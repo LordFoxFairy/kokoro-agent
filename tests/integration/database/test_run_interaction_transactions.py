@@ -1226,11 +1226,10 @@ async def test_r194_a3b_sealed_projection_drift_rolls_back_terminal(
                 (str(uuid4()), attempt_id),
             )
         else:
+            # The row remains admissible but its usage knowledge disagrees with the artifact.
             await execute_sql(
                 cursor,
-                f"""UPDATE {evidence} SET execution_outcome='completed',
-                    usage_state='normalized',totals_state='known_zero',
-                    classification_state='partial',sealed=TRUE WHERE attempt_id=%s""",
+                f"UPDATE {evidence} SET usage_state='normalized' WHERE attempt_id=%s",
                 (attempt_id,),
             )
     model_before = await _model_call_snapshot(

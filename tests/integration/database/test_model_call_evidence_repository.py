@@ -3427,10 +3427,11 @@ async def test_history_reader_rejects_corrupt_actual_head_even_for_intact_histor
                 (dispatch.attempt_id,),
             )
         elif damage == "bytes":
+            # Keep the SQL-validated usage profile; only the canonical bytes drift.
             await execute_sql(
                 cursor,
                 f"UPDATE {qualified(run_chat_schema, 'kokoro_agent_model_usage_evidence')} SET evidence_bytes=%s WHERE event_id=%s",
-                (b"{}", events[1][0]),
+                (events[1][1] + b"\n", events[1][0]),
             )
     with pytest.raises(ModelCallEvidenceInvariantFailed):
         await repository.read_final_evidence(

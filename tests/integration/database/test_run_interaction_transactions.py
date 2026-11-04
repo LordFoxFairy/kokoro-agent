@@ -2074,6 +2074,7 @@ async def _bridge_environment(
         CheckpointSettings,
         make_checkpointer,
     )
+    from kokoro_agent.protocol import SubagentSource
     from kokoro_agent.worker.supervisor import RunSupervisor
 
     capability = _bridge_capability(repository)
@@ -2223,6 +2224,7 @@ async def _bridge_environment(
             request_value: RunRequest,
             lease_value: LeaseFence,
             _progress: SkillProgressSink,
+            _action_observer: ActionObservationSink,
         ) -> AgentHandle:
             assert request_value.model_dump_json() == run.model_dump_json()
             assert lease_value.generation >= lease.generation
@@ -2236,11 +2238,10 @@ async def _bridge_environment(
         def trace(_request: RunRequest) -> None:
             return None
 
-        def source(_name: str) -> str:
+        def source(_name: str) -> SubagentSource:
             return "runtime-custom"
 
-        constructor: Any = RunSupervisor
-        supervisor = constructor(
+        supervisor = RunSupervisor(
             agent_builder=build,
             run_repository=repository,
             approval_tool_names=tool_names,

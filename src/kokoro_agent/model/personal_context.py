@@ -1,4 +1,4 @@
-"""Frozen personal material rendering and the existing approximate context counter."""
+"""Personal material rendering and the shared private prompt window guard."""
 
 from __future__ import annotations
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from kokoro_agent.chat_contract_check import (
     http810_personal_context_parent_bytes,
+    http811_project_instruction_parent_bytes,
     failure_model_bytes,
 )
 from kokoro_agent.contract_check import validate_openapi_document
@@ -19,16 +20,20 @@ def document() -> dict[str, Any]:
     return json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
 
 
+def historical_document():
+    return json.loads(http811_project_instruction_parent_bytes(document()))
+
+
 def test_personal_context_exact_parent_preserves_every_old_byte_and_capacity_failure() -> (
     None
 ):
-    current = document()
+    current = historical_document()
     assert current["info"]["version"] == "8.11.0"
     assert (
         hashlib.sha256(http810_personal_context_parent_bytes(current)).hexdigest()
         == "af76b63e7aeccec434bae30f41c554416dbd1ebf77871b94e67a5043221dbf6e"
     )
-    validate_openapi_document(current)
+    validate_openapi_document(document())
     assert b'"context_window_exceeded"' in failure_model_bytes(current)
     schemas = current["components"]["schemas"]
     assert "personal_context" not in schemas["LaunchRequest"]["required"]
@@ -40,7 +45,7 @@ def test_personal_context_exact_parent_preserves_every_old_byte_and_capacity_fai
 
 @pytest.mark.parametrize("target", ["material", "failure", "old_route", "old_field"])
 def test_material_inverse_rejects_new_or_historical_drift(target: str) -> None:
-    current = document()
+    current = historical_document()
     if target == "material":
         current["components"]["schemas"]["LaunchRequest"]["properties"][
             "personal_context"

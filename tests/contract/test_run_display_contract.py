@@ -6,16 +6,20 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from kokoro_agent.chat_contract_check import http811_project_instruction_parent_bytes
+
+
+def _http811_document() -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
+    return json.loads(
+        http811_project_instruction_parent_bytes(json.loads(path.read_text()))
+    )
 
 
 def test_http83_display_is_the_only_delta_from_exact_published_http82() -> None:
     from kokoro_agent.chat_contract_check import http82_display_parent_bytes
 
-    document = json.loads(
-        (
-            Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
-        ).read_text()
-    )
+    document = _http811_document()
     assert document["info"]["version"] == "8.11.0"
     assert (
         hashlib.sha256(http82_display_parent_bytes(document)).hexdigest()
@@ -63,13 +67,15 @@ def test_current_generator_rejects_a_complete_old_parent_before_any_write(
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / relative, target)
     source = tmp_path / "contract/openapi/v1/openapi.json"
-    source.write_bytes(http82_display_parent_bytes(json.loads(source.read_text())))
+    source.write_bytes(http82_display_parent_bytes(_http811_document()))
     before = {
         p.relative_to(tmp_path): p.read_bytes()
         for p in tmp_path.rglob("*")
         if p.is_file()
     }
-    with pytest.raises(ValueError, match="HTTP 8.10.0"):
+    with pytest.raises(
+        ValueError, match="project instruction requires the current Agent HTTP version"
+    ):
         generate_failure_models(tmp_path, check=check)
     assert {
         p.relative_to(tmp_path): p.read_bytes()
@@ -81,11 +87,7 @@ def test_current_generator_rejects_a_complete_old_parent_before_any_write(
 def test_http84_tool_facts_is_exact_additive_full_http83_parent() -> None:
     from kokoro_agent.chat_contract_check import http83_tool_facts_parent_bytes
 
-    document = json.loads(
-        (
-            Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
-        ).read_text()
-    )
+    document = _http811_document()
     assert document["info"]["version"] == "8.11.0"
     assert (
         hashlib.sha256(http83_tool_facts_parent_bytes(document)).hexdigest()
@@ -107,11 +109,7 @@ def test_http84_tool_facts_is_exact_additive_full_http83_parent() -> None:
 
 
 def test_http85_private_activity_details_preserve_the_entire_http84_parent() -> None:
-    document = json.loads(
-        (
-            Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
-        ).read_text()
-    )
+    document = _http811_document()
     assert document["info"]["version"] == "8.11.0"
     from kokoro_agent.chat_contract_check import http84_activity_details_parent_bytes
 
@@ -141,11 +139,7 @@ def test_http85_private_activity_details_preserve_the_entire_http84_parent() -> 
 def test_http86_capability_description_is_only_delta_from_exact_http85() -> None:
     from kokoro_agent.chat_contract_check import http85_tool_description_parent_bytes
 
-    document = json.loads(
-        (
-            Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
-        ).read_text()
-    )
+    document = _http811_document()
     assert (
         hashlib.sha256(http85_tool_description_parent_bytes(document)).hexdigest()
         == "b000f24e88bf5e4f20718ae7f6b29c94ef96b2c6fe42f73ef7231695f438e897"
@@ -173,11 +167,7 @@ def test_http87_action_title_is_only_delta_from_exact_http86() -> None:
         validate_decoded_chat_payload,
     )
 
-    document = json.loads(
-        (
-            Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
-        ).read_text()
-    )
+    document = _http811_document()
     assert (
         hashlib.sha256(http86_action_title_parent_bytes(document)).hexdigest()
         == "de73c229a962e37afbf3f69aba160a8b6b9a56cd2603952a3d3d97f5a610b64b"

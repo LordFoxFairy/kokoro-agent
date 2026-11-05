@@ -11,7 +11,10 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
-from kokoro_agent.chat_contract_check import http89_custom_api_parent_bytes
+from kokoro_agent.chat_contract_check import (
+    http89_custom_api_parent_bytes,
+    http811_project_instruction_parent_bytes,
+)
 from kokoro_agent.contract_check import validate_openapi_document
 
 ROOT = Path(__file__).parents[2]
@@ -22,8 +25,12 @@ def document():
     return json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
 
 
+def historical_document():
+    return json.loads(http811_project_instruction_parent_bytes(document()))
+
+
 def test_exact_parent_bytes_and_selection_shape() -> None:
-    current = document()
+    current = historical_document()
     assert current["info"]["version"] == "8.11.0"
     assert (
         hashlib.sha256(http89_custom_api_parent_bytes(current)).hexdigest()
@@ -54,7 +61,7 @@ def test_exact_parent_bytes_and_selection_shape() -> None:
         [{"profile_id": "p", "expected_state_version": 1, "value": "secret"}],
     ):
         assert list(validator.iter_errors(value))
-    validate_openapi_document(current)
+    validate_openapi_document(document())
 
 
 @pytest.mark.parametrize(
@@ -71,7 +78,7 @@ def test_exact_parent_bytes_and_selection_shape() -> None:
     ],
 )
 def test_complete_child_and_parent_drift_fail_closed(mutation: str) -> None:
-    current = copy.deepcopy(document())
+    current = copy.deepcopy(historical_document())
     launch = current["components"]["schemas"]["LaunchRequest"]
     selection = launch["properties"]["selected_custom_api_profiles"]
     if mutation == "required":

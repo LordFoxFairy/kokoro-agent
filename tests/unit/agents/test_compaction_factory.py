@@ -1412,3 +1412,132 @@ async def test_personal_context_counts_final_skill_system_after_all_prompt_middl
         )
     finally:
         await handle.aclose()
+
+
+def _project_request(instruction: str) -> RunRequest:
+    return RunRequest.model_validate(
+        {
+            **_request().model_dump(),
+            "project_ref": "project-1",
+            "project_instruction": instruction,
+        }
+    )
+
+
+async def test_project_instruction_private_native_prompt_for_main_and_static_peers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.observability import ObservabilitySettings, trace_config
+    from pydantic import SecretStr
+
+    original: Any = getattr(assembly.deepagents, "create_deep_agent")
+    captured: list[dict[str, Any]] = []
+    text = "  PROJECT_PRIVATE_D0_测试\nsecond line  "
+
+    def capture(**kwargs: Any) -> Any:
+        captured.append(kwargs)
+        return original(**kwargs)
+
+    def forbidden_callback() -> None:
+        raise AssertionError("private project context must not create a trace observer")
+
+    monkeypatch.setattr(assembly.deepagents, "create_deep_agent", capture)
+    monkeypatch.setattr(
+        "kokoro_agent.observability.CallbackHandler", forbidden_callback
+    )
+    handle, request, journal, execution, bodies = await _handle(
+        monkeypatch,
+        resolver=_Resolver(context_window=20000),
+        run_request=_project_request(text),
+    )
+    try:
+        assert handle.private_material
+        assert captured and captured[0]["subagents"]
+        assert text in captured[0]["system_prompt"]
+        for peer in captured[0]["subagents"]:
+            assert text in peer["system_prompt"]
+        assert (
+            trace_config(
+                ObservabilitySettings(
+                    langfuse_public_key=SecretStr("fixture"),
+                    langfuse_secret_key=SecretStr("fixture"),
+                ),
+                request,
+            )
+            is None
+        )
+        bus = FakeBus()
+        await _invoke(
+            handle,
+            request,
+            huge=False,
+            seed_words=1,
+            v3=True,
+            emitter=RunEmitter(bus, request.run_id),
+        )
+        events = bus.run_events(request.run_id)
+        assert [
+            event.payload.content
+            for event in events
+            if isinstance(event, MessageCompleted)
+        ] == ["continued"]
+        assert all(
+            "PROJECT_PRIVATE_D0" not in event.model_dump_json() for event in events
+        )
+        messages = bodies[-1]["messages"]
+
+        def content_text(content: Any) -> str:
+            if isinstance(content, str):
+                return content
+            return "".join(block.get("text", "") for block in content)
+
+        assert (
+            sum(
+                text in content_text(row["content"])
+                for row in messages
+                if row["role"] == "system"
+            )
+            == 1
+        )
+        assert all(
+            text not in content_text(row["content"])
+            for row in messages
+            if row["role"] != "system"
+        )
+        assert len(journal.commands) == len(execution.authorized) == 1
+    finally:
+        await handle.aclose()
+
+
+async def test_project_instruction_overflow_fails_before_summary_or_finance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
+    from kokoro_agent.execution.failures import run_failed_payload
+
+    async def forbidden_authorize(*args: object, **kwargs: object) -> None:
+        raise AssertionError("uncompressible project material must not acquire funds")
+
+    monkeypatch.setattr(_Execution, "authorize", forbidden_authorize)
+    with pytest.raises(PersonalContextWindowExceeded) as failure:
+        await _handle(
+            monkeypatch,
+            resolver=_Resolver(),
+            run_request=_project_request("word " * 45000),
+        )
+    assert run_failed_payload(failure.value).code == "context_window_exceeded"
+    assert not run_failed_payload(failure.value).retryable
+
+
+async def test_project_instruction_refuses_sdk_content_observer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallInputInvalid
+
+    monkeypatch.setattr(assembly, "get_debug", lambda: True)
+    with pytest.raises(ModelCallInputInvalid, match="content observer"):
+        await _handle(
+            monkeypatch,
+            resolver=_Resolver(),
+            run_request=_project_request("PROJECT_PRIVATE_D0"),
+        )

@@ -76,7 +76,7 @@ async def invoke_once(
     """
     emitter.bind_tool_display_codes(tool_display_codes)
     emitter.bind_tool_display_sources(tool_display_sources)
-    config = _config(thread_id, trace, recursion_limit)
+    config = _config(thread_id, None if private_material else trace, recursion_limit)
     if initial:
         # run.started eligibility is explicit; the Run-locked outbox deduplicates retries.
         await emitter.emit(RunStartedPayload())
@@ -104,7 +104,7 @@ async def invoke_once(
                     or tracing_v2_callback_var.get() is not None
                 ):
                     raise ModelCallInputInvalid(
-                        "personal material content observer is enabled"
+                        "private prompt material content observer is enabled"
                     )
                 run = await agent.astream_events(
                     payload,

@@ -5,7 +5,10 @@ import copy
 import hashlib
 import json
 import pytest
-from kokoro_agent.chat_contract_check import http72_parent_bytes
+from kokoro_agent.chat_contract_check import (
+    http72_parent_bytes,
+    http811_project_instruction_parent_bytes,
+)
 from kokoro_agent.contract_check import http73_parent_bytes
 from jsonschema import validate, ValidationError
 
@@ -16,7 +19,11 @@ PARENT_SHA = "4e75244c676e02736867d2f461d18b4d67d93151ff03ffaf6e632685b77ca9db"
 def test_pending_code_is_nonretryable_and_only_http72_change():
     document = json.loads(
         http73_parent_bytes(
-            json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+            json.loads(
+                http811_project_instruction_parent_bytes(
+                    json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+                )
+            )
         )
     )
     assert document["info"]["version"] == "7.3.0"
@@ -46,7 +53,11 @@ def test_pending_code_is_nonretryable_and_only_http72_change():
 def test_pending_extension_proof_rejects_other_owner_changes(mutation: str) -> None:
     document = json.loads(
         http73_parent_bytes(
-            json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+            json.loads(
+                http811_project_instruction_parent_bytes(
+                    json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+                )
+            )
         )
     )
     failure = document["components"]["schemas"]["Failure"]

@@ -25,6 +25,9 @@ from pydantic import (
 )
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+# Match a non-White_Space code point. Spell out the same class in the owner
+# artifact: JS trim and Python strip disagree on U+0085, U+FEFF and controls.
+PROJECT_INSTRUCTION_PATTERN = r"[^\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"
 
 
 class StrictModel(BaseModel):
@@ -230,6 +233,38 @@ class RunRequest(StrictModel):
     personal_context: PersonalContext | None = Field(
         default=None, exclude_if=lambda value: value is None, repr=False
     )
+
+    # Private Project owner material belongs to the original Run envelope, not RunInput.
+    project_instruction: str | None = Field(
+        default=None, exclude_if=lambda value: value is None, repr=False
+    )
+
+    @property
+    def has_private_prompt_material(self) -> bool:
+        return self.personal_context is not None or self.project_instruction is not None
+
+    @field_validator("project_instruction")
+    @classmethod
+    def _project_instruction_text(cls, value: str | None) -> str | None:
+        if value is not None:
+            if re.search(PROJECT_INSTRUCTION_PATTERN, value) is None or "\x00" in value:
+                raise ValueError("project instruction is not valid text")
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError("project instruction is not valid text") from None
+        return value
+
+    @model_validator(mode="after")
+    def _project_instruction_scope(self) -> RunRequest:
+        if self.project_instruction is not None and (
+            self.project_ref is None
+            or not self.project_ref.strip()
+            or self.feature_key != "chat"
+            or self.execution_identity.actor.kind != "user"
+        ):
+            raise ValueError("project instruction requires a trusted Project chat")
+        return self
 
     @model_validator(mode="after")
     def _personal_owner(self) -> RunRequest:

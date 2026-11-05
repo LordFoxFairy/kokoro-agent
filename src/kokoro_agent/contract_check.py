@@ -14,6 +14,7 @@ from kokoro_agent.chat_contract_check import (
     http82_display_parent_bytes,
     http72_parent_bytes,
     http74_parent_bytes,
+    http811_project_instruction_parent_bytes,
     generate_failure_models,
     read_contract_document as read_document,
     validate_chat_response_contract,
@@ -113,10 +114,12 @@ def http73_parent_bytes(document: dict[str, object]) -> bytes:
 
 
 def validate_openapi_document(document: dict[str, object]) -> None:
-    if _object(document.get("info"), source="info").get("version") != "8.11.0":
-        raise ValueError("Agent HTTP contract version must be 8.11.0")
+    parent = _object(
+        json.loads(http811_project_instruction_parent_bytes(document)),
+        source="HTTP8.11 project instruction parent",
+    )
     document = _object(
-        json.loads(http82_display_parent_bytes(document)),
+        json.loads(http82_display_parent_bytes(parent)),
         source="HTTP8.2 display parent",
     )
     validate_http82_parent_document(document)

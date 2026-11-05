@@ -5,7 +5,10 @@ import hashlib
 import json
 from pathlib import Path
 
-from kokoro_agent.chat_contract_check import http82_display_parent_bytes
+from kokoro_agent.chat_contract_check import (
+    http82_display_parent_bytes,
+    http811_project_instruction_parent_bytes,
+)
 
 import pytest
 from jsonschema import ValidationError, validate
@@ -18,7 +21,11 @@ PARENT_SHA = "c096eab9f2aa392215351a106a670692d5f58f945980a5e028b3a83d17509731"
 def _document():
     return json.loads(
         http82_display_parent_bytes(
-            json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+            json.loads(
+                http811_project_instruction_parent_bytes(
+                    json.loads((ROOT / "contract/openapi/v1/openapi.json").read_text())
+                )
+            )
         )
     )
 

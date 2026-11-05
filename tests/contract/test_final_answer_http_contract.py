@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from kokoro_agent.chat_contract_check import (
     http87_final_answer_parent_bytes,
+    http811_project_instruction_parent_bytes,
     validate_decoded_chat_payload,
 )
 
@@ -24,7 +25,8 @@ def _document() -> dict[str, Any]:
 
 def test_complete_http87_parent_is_preserved_without_other_deltas() -> None:
     document = _document()
-    assert document["info"]["version"] == "8.11.0"
+    assert document["info"]["version"] == "8.12.0"
+    document = json.loads(http811_project_instruction_parent_bytes(document))
     assert (
         hashlib.sha256(http87_final_answer_parent_bytes(document)).hexdigest()
         == "74fb43159ba559fe049f027a5fe4877d29524f5a73eae88c8d15913760cfb9fc"

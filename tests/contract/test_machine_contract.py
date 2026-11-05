@@ -24,9 +24,13 @@ def _object(value: object) -> dict[str, object]:
 
 
 def _parent_document() -> dict[str, object]:
-    from kokoro_agent.chat_contract_check import http82_display_parent_bytes
+    from kokoro_agent.chat_contract_check import (
+        http82_display_parent_bytes,
+        http811_project_instruction_parent_bytes,
+    )
 
-    return _object(json.loads(http82_display_parent_bytes(_document())))
+    parent = _object(json.loads(http811_project_instruction_parent_bytes(_document())))
+    return _object(json.loads(http82_display_parent_bytes(parent)))
 
 
 def _document() -> dict[str, object]:
@@ -37,7 +41,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "8.11.0"
+    assert _object(document["info"])["version"] == "8.12.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -564,7 +568,7 @@ def test_current_http7_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "8.11.0"
+    assert _object(document["info"])["version"] == "8.12.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:

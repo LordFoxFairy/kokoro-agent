@@ -16,7 +16,10 @@ from jsonschema.exceptions import ValidationError as SchemaValidationError
 from pydantic import SecretStr
 
 from kokoro_agent import contract_check
-from kokoro_agent.chat_contract_check import http82_display_parent_bytes
+from kokoro_agent.chat_contract_check import (
+    http82_display_parent_bytes,
+    http811_project_instruction_parent_bytes,
+)
 from kokoro_agent.domain.chat.models import ChatEventRecord
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.infrastructure.postgres_run_repository import RunRepositorySettings
@@ -73,7 +76,11 @@ def test_launch_and_replay_success_responses_bind_existing_typed_data() -> None:
 
 @pytest.mark.parametrize("operation", ["launch", "replay"])
 def test_checker_rejects_generic_data_fallback(operation: str) -> None:
-    document = json.loads(http82_display_parent_bytes(_document()))
+    document = json.loads(
+        http82_display_parent_bytes(
+            json.loads(http811_project_instruction_parent_bytes(_document()))
+        )
+    )
     changed = copy.deepcopy(document)
     if operation == "launch":
         path, method, status = "/v1/runs", "post", "202"
@@ -88,7 +95,11 @@ def test_checker_rejects_generic_data_fallback(operation: str) -> None:
 
 @pytest.mark.parametrize("schema", ["Meta", "LaunchReceipt", "ReplayPage", "ChatEvent"])
 def test_checker_rejects_weakened_referenced_chat_schema(schema: str) -> None:
-    changed = json.loads(http82_display_parent_bytes(_document()))
+    changed = json.loads(
+        http82_display_parent_bytes(
+            json.loads(http811_project_instruction_parent_bytes(_document()))
+        )
+    )
     changed["components"]["schemas"][schema] = {
         "type": "object",
         "additionalProperties": True,

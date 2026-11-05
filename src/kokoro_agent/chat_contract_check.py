@@ -11,9 +11,13 @@ from typing import get_args
 from jsonschema import Draft202012Validator, ValidationError as SchemaValidationError
 from jsonschema import validate as validate_schema_instance
 
-from kokoro_agent.execution_proof_contract import OWNER_SOURCE_FILES
+from kokoro_agent.execution_proof_contract import (
+    HTTP_CONTRACT_VERSION,
+    OWNER_SOURCE_FILES,
+)
 from kokoro_agent.bff_admission_contract import GENERATED as BFF_BUDGET_GENERATED
 from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolActivity
+from kokoro_agent.protocol.control import PROJECT_INSTRUCTION_PATTERN
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -567,6 +571,14 @@ def failure_model_bytes(
     document: dict[str, object], *, source_sha256: str = ""
 ) -> bytes:
     """Compile only the approved two failure profiles; reject unsupported shapes."""
+    if (
+        _object(document.get("info"), source="info").get("version")
+        == HTTP_CONTRACT_VERSION
+    ):
+        document = _object(
+            json.loads(http811_project_instruction_parent_bytes(document)),
+            source="HTTP8.11 project instruction parent",
+        )
     personal = _object(document.get("info"), source="info").get("version") == "8.11.0"
     document = _display_parent(document)
     if personal:
@@ -693,8 +705,12 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     document = read_contract_document(source)
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
-    http89_custom_api_parent_bytes(document)
-    expected = failure_model_bytes(document, source_sha256=source_hash)
+    parent = _object(
+        json.loads(http811_project_instruction_parent_bytes(document)),
+        source="HTTP8.11 project instruction parent",
+    )
+    http89_custom_api_parent_bytes(parent)
+    expected = failure_model_bytes(parent, source_sha256=source_hash)
     output = root / GENERATED_FAILURE_RELATIVE
     provenance_path = root / "contract/provenance.json"
     provenance = read_contract_document(provenance_path)
@@ -724,7 +740,7 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     output.write_bytes(expected)
     provenance["generated_artifacts"] = [artifact, records[1]]
     provenance["http_contract"] = {
-        "version": "8.11.0",
+        "version": HTTP_CONTRACT_VERSION,
         "path": OPENAPI_RELATIVE,
         "sha256": source_hash,
     }
@@ -802,7 +818,7 @@ def validate_decoded_chat_payload(
     profiles = (
         _CURRENT_DECODED_PROFILES
         if _object(document.get("info"), source="info").get("version")
-        in {"8.8.0", "8.9.0", "8.10.0", "8.11.0"}
+        in {"8.8.0", "8.9.0", "8.10.0", "8.11.0", HTTP_CONTRACT_VERSION}
         else _DECODED_PROFILES
     )
     if event_type not in profiles:
@@ -1490,6 +1506,45 @@ _PERSONAL_CONTEXT_SCHEMA: dict[str, object] = {
     ],
     "description": "Private BFF-owned personal snapshot bound to the trusted human actor and tenant. Omitted/null preserves pre-8.11 request bytes; knowledge items have unique knowledge_id values. Not public display or tool authority.",
 }
+
+
+_PROJECT_INSTRUCTION_SCHEMA = {
+    "type": "string",
+    "minLength": 1,
+    "pattern": PROJECT_INSTRUCTION_PATTERN,
+    "description": (
+        "Private Project owner instruction frozen for this Run. Valid only for trusted "
+        "user chat with project_ref. Omit when absent; blank, invalid Unicode and NUL "
+        "text are rejected. Not a Message, trace field or tool authority."
+    ),
+}
+
+
+def http811_project_instruction_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the exact Project launch delta and prove every issued 8.11 byte."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != HTTP_CONTRACT_VERSION:
+        raise ValueError("project instruction requires the current Agent HTTP version")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
+    props = _object(launch.get("properties"), source="launch properties")
+    if props.pop("project_instruction", None) != _PROJECT_INSTRUCTION_SCHEMA:
+        raise ValueError("project instruction schema differs")
+    launch["properties"] = props
+    schemas["LaunchRequest"] = launch
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.11.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "ad34ba2c8080f6a459a52116f929ed2c5f017a742dcb5d17d0e165ac18f1772b"
+    ):
+        raise ValueError("complete HTTP8.11 project instruction parent differs")
+    return raw
 
 
 def http810_personal_context_parent_bytes(document: dict[str, object]) -> bytes:

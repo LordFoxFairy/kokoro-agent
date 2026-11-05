@@ -83,6 +83,7 @@ class LaunchBody(BaseModel):
     requested_model_label: str | None = None
     trace: dict[str, Any] | None = None
     personal_context: PersonalContext | None = Field(default=None, repr=False)
+    project_instruction: str | None = Field(default=None, repr=False)
     selected_mcp_connection_ids: list[str] = Field(default_factory=list)
     selected_custom_api_profiles: list[CustomApiProfileSelection] = Field(
         default_factory=lambda: list[CustomApiProfileSelection](), max_length=32
@@ -121,6 +122,8 @@ def _parse_launch(
 ) -> RunRequest:
     try:
         launch = LaunchBody.model_validate(dict(body))
+        if launch.project_instruction is None and "project_instruction" in body:
+            raise ValueError("project instruction must be omitted or text")
         return RunRequest(
             kind="run.request",
             request_id=launch.request_id,
@@ -136,6 +139,7 @@ def _parse_launch(
             requested_model_label=launch.requested_model_label,
             trace=launch.trace,
             personal_context=launch.personal_context,
+            project_instruction=launch.project_instruction,
         )
     except (ValidationError, TypeError, ValueError) as error:
         raise IngressError(

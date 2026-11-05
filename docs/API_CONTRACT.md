@@ -1,3 +1,9 @@
+## A‑06 Project 指令（Agent HTTP 8.12 候选）
+
+现有 `POST /v1/runs` 唯一增量为可省略的非空文本 `project_instruction`；仅可信 human actor、`chat` 和有 `project_ref` 的 launch 接受。空白以 OpenAPI 明确的 Unicode White_Space 字符集判定，不 trim 或归一化有效文本。省略时保留旧 Run JSON、fence 和行为；非空原样进入既有私有 dispatch/Redis/recovery，参与同 Run fence，不进入 RunInput、Chat/AG‑UI 公开事实、个人材料、trace 或工具授权。无新的 Project 读取、鉴权、表、路由、控制或公共版本。项目 owner 由 BFF 按新 Run 冻结；Scheduled 不生产该字段。
+
+Agent 将正文作为独立私有 prompt 材料，在主 Agent/已有静态子 Agent 使用原 native factory。复用现内容观察器保护及 model window 预算；HTTP body 保持 1 MiB，超窗沿 `context_window_exceeded`、不可重试，不截断或扩大原额度。去掉唯一新字段并还原版本可精确还原已发行 HTTP8.11 SHA256 `ad34ba2c8080f6a459a52116f929ed2c5f017a742dcb5d17d0e165ac18f1772b`。BFF 尚须 pin 本 owner 精确 artifact 并完成端到端验证。
+
 ## 2026-11-03 B08：个人材料首片（实施中，未发布）
 
 HTTP8.11 的 `personal_context` 是可选/null、schema_version=1 的私有 BFF 快照：owner{tenant_ref,user_ref} 必须匹配可信 human actor；profile 为 null 或 revision + nickname/occupation/about/instructions；knowledge 为 usage_revision/enabled/items，disabled 必须零 items，items 最多100、UUIDv4小写且不重复，每项携 revision/name/when_to_use/content。所有 revision 为安全整数，缺 usage 行表示0/false。字段上限与个人 owner 一致，不截断。POST /v1/runs 的 `x-kokoro-max-body-bytes=1048576` 公布既有上限，`context_window_exceeded` 是不可重试失败；旧8.10完整字节经有限逆验证不变。

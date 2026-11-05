@@ -455,7 +455,7 @@ start_dispatch 的当前 fence／取消／single-dispatch 检查不替换。本�
 
 沿用户已批准的 System 现模块方案，不新增服务或密钥缓存。Agent 复用 SystemModelClient 原连接池，在 resolve 后、构造任何模型客户端/沙箱前，携带可信 tenant、原始 feature/可选 label 选择及精确 provider/revision/digest 读取。默认选择保持缺省，不改造成显式 label 以绕过当前默认策略。响应逐项比较 feature/label/provider/revision/digest/handle，Key 只以 SecretStr 在该模型客户端生命周期持有；错误脱敏、有界读取/总 deadline、禁跳转/重试和取消沿既有边界。
 
-固定消费为 System `550d65498822d8d2e629199482de4f6990b62708` /6.0.0；artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`，provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`，22来源与两操作receipt经Git原件及安装发行物检查。组件验证与正常未激活边界见CURRENT。
+当前固定消费为 System `49a5f8e5e2797ec2d1a6fcf8c5f398184821bf33` / 6.1.0；artifact `77792d3b31446a70adf25693bdea4bd9ebfd39f3b77c6816bc324591827ca758`，provenance `2ee7006f2b6c5a87be422a70975750764b40b738261793d8569ed0cb4fb41c57`。23 个来源由同一 Git 提交取证；两条既有操作及闭包与 6.0 相同，不新增 provider discovery 调用。
 
 删除旧凭据文件 parser、配置字段及 YAML 入口；旧环境配置明确报退役，不双读或回退原生环境 Key。model/credentials.py 只保留严格的内存凭据值；ModelHttpClients 必须显式接收绑定凭据，原 provider/handle 校验保留。非路由原生 SDK 分支本片不扩改。先固定 System6 已验证 source/artifact/provenance 再消费；新构建 profile 自然变化，冻结 usage1/usage2、历史 Run/证据与 SQL 不重写。正常 worker 停用，真实模型/工具/扣费不启动。
 

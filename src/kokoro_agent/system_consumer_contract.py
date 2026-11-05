@@ -8,7 +8,7 @@ from pathlib import Path
 
 from typing import TypeGuard
 
-_RECEIPT_SHA256 = "9cf1529afa751490b389aee19689ceabcf46edb289de494381759ebadf69f7e8"
+_RECEIPT_SHA256 = "d65e7cedb79a9d35ccb753c4675aaa5f48aaad51ae9bccd4d16428b92f0af58f"
 _RECEIPT_KEYS = {
     "owner",
     "contract",
@@ -71,7 +71,7 @@ def validate_system_consumer_receipt(root: Path) -> None:
         or not _is_object(provenance)
         or set(provenance) != {"path", "sha256"}
         or not _is_object(sources)
-        or len(sources) != 22
+        or len(sources) != 23
         or receipt.get("operations")
         != [
             "POST /v1/system/model-catalog/resolve",

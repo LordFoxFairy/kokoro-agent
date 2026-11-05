@@ -20,7 +20,7 @@
     "src/kokoro_agent/clients/bff_admission_generated.py",
     "scripts/generate_bff_admission_models.py"
   ],
-  "combined_sha256": "c2b0d644f2613b51335489a141effbd0f0b8ba1bfaa39670da879e0f2f1cb1c2",
+  "combined_sha256": "ad85ae475acf4b2ee4368a863f6cd3af05fd9f8ff310d73d3641eda61c98fe30",
   "generated_artifacts": [
     {
       "path": "src/kokoro_agent/protocol/run_failure_generated.py",
@@ -42,22 +42,23 @@
     {
       "owner": "kokoro-system",
       "contract": "contract/openapi/system.openapi.json",
-      "version": "6.0.0",
-      "source_commit": "550d65498822d8d2e629199482de4f6990b62708",
-      "sha256": "10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061",
+      "version": "6.1.0",
+      "source_commit": "49a5f8e5e2797ec2d1a6fcf8c5f398184821bf33",
+      "sha256": "77792d3b31446a70adf25693bdea4bd9ebfd39f3b77c6816bc324591827ca758",
       "provenance": {
         "path": "contract/provenance.json",
-        "sha256": "ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5"
+        "sha256": "2ee7006f2b6c5a87be422a70975750764b40b738261793d8569ed0cb4fb41c57"
       },
       "source_sha256": {
-        "scripts/generate-system-openapi.ts": "dd1d925831891df3df30cb1944a9448f193abdbb93098455208c2fc5c650768e",
-        "scripts/system-openapi-operations.ts": "04e622203936aa7e240aa089bd37d220dff67be9a8d460cb1d59cf50cd1a29c6",
-        "src/access/access.guard.ts": "4e985d1a2aafe6d4d78742cd7d8a7e3c876263c0cb49bccdea0775e7f8c2e225",
+        "scripts/generate-system-openapi.ts": "501a56004202c61393c8ba8c6f7d2e294eea79e1cbd0d97d9cea660084c3cfaf",
+        "scripts/system-openapi-operations.ts": "a2829dba26cc853610f3c9ec6b1d6836ad67dfe8e1751ad3a0d158ba4656e759",
+        "src/access/access.guard.ts": "ec27c0211e4e42f7831f647f196c3e10453011cffb177367c4a5f9010b733b13",
         "src/http/protocol.schema.ts": "72dbe6ee57d842b855b337d1f1603a7ddbb8c3a4bb6c4f7bf3fe62821c8160c0",
         "src/modules/model-catalog/schemas/connection.schema.ts": "7d9efcaeb0d4d8725b50e2e2da95d37f9c64094ecbe99143aba3076df615ab03",
         "src/modules/model-catalog/schemas/credential.schema.ts": "19ae4496c1a12c04c1529d8d2f9269971eaa347cc19879cc7e79e9dbaa2bd929",
         "src/modules/model-catalog/schemas/definition.schema.ts": "e2063b9ae62b8e5c4ca7cccce09dd4874f818831fc8966de2cf6d015a99bef64",
         "src/modules/model-catalog/schemas/label.schema.ts": "021859b2c762f234419ce9ca1f7d31983a13df13776470e1faa7d2b66c1c64fa",
+        "src/modules/model-catalog/schemas/provider-model-discovery.schema.ts": "2cddec3af100b1bfed066c90632fe26151afed5b1a73b84aa1976738ae7c5878",
         "src/modules/model-catalog/schemas/provider.schema.ts": "76f1b7b47a158805eb252409d6362fe4bf90b8ace58a1913de63b6dd49be38db",
         "src/modules/model-catalog/schemas/resolve.schema.ts": "f75d2f22e04fb6af6c40adb5ac678e9349e036d2db159f779f520e4bb701aa34",
         "src/modules/model-catalog/schemas/revision.schema.ts": "1c8dff196ff037e0565bc67d9abf7984a946829a8fa22e437617e16c326d2f94",

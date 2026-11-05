@@ -273,7 +273,7 @@ binding version/digest、prepared_at、observed_at、lease_expires_at，时间 U
 
 唯一 System 消费在既有 resolve 外加入 `POST /v1/system/model-catalog/credentials/read`，固定 System6 正式 source/artifact/provenance，拒旧/新混用。领取是无幂等写入的只读 POST，服务身份仍 kokoro-agent，可信 tenant 与原始选择保持；精确版本只作一致性比较，不授予历史路由读取权。仅接受200、no-store及严格字段/Key字符域，错误/超大/错误版本/错绑定/跳转均脱敏失败，不重试或返回给 Web/BFF。无 Agent public/Redis/usage 契约修改。
 
-固定消费为 System `550d65498822d8d2e629199482de4f6990b62708` /6.0.0；artifact `10ff7ee82ca7405dcab473f3fd80e620aa6c4e0bc92e64111797144ce0fa4061`，provenance `ed2e312bc5bc3022111797771190e57133818af83c0bb7ad2024a615a4e033c5`，22来源与两操作receipt经Git原件及安装发行物检查。组件验证与正常未激活边界见CURRENT。
+当前固定消费为 System `49a5f8e5e2797ec2d1a6fcf8c5f398184821bf33` / 6.1.0；artifact `77792d3b31446a70adf25693bdea4bd9ebfd39f3b77c6816bc324591827ca758`，provenance `2ee7006f2b6c5a87be422a70975750764b40b738261793d8569ed0cb4fb41c57`。23 个来源由同一 Git 提交取证；两条既有操作及闭包与 6.0 相同，不新增 provider discovery 调用。
 
 ## MC-02A：System5 固定依赖（2026-10-20）
 

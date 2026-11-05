@@ -46,6 +46,7 @@ from kokoro_agent.domain.run.interactions import (
 )
 from kokoro_agent.domain.run.repository import RunRepository, LeaseFence
 from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.features.catalog import get_feature
 from kokoro_agent.hitl.request import HumanRequest
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
@@ -61,6 +62,7 @@ from kokoro_agent.infrastructure.postgres_run_interactions import (
     decode_interaction_bytes,
     decode_pause_snapshot,
     StoredResumePlan,
+    SwarmRootHandoff,
     decode_checkpoint_observation,
 )
 
@@ -767,6 +769,147 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
             command=Command(resume=mapping),
         )
 
+    async def _read_swarm_root_handoff(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        handle: AgentHandle,
+        context: ResumeReadContext,
+        group_id: str,
+        leaf: CheckpointTuple,
+        leaf_head_id: str,
+    ) -> SwarmRootHandoff | None:
+        """A retired direct peer is not the lifecycle authority of an official Swarm."""
+        leaf_locator = _locator(leaf.config)
+        namespace = leaf_locator["checkpoint_ns"]
+        source, separator, source_task = namespace.partition(":")
+        if not separator or not source_task or "|" in namespace or ":" in source_task:
+            return None
+        try:
+            feature = get_feature(request.feature_key)
+        except KeyError:
+            return None
+        if not any(peer == source for peer, _ in feature.handoffs):
+            return None
+        root_anchor_id = (leaf.metadata.get("parents") or {}).get("")
+        if not isinstance(root_anchor_id, str) or not root_anchor_id:
+            return None
+        root = {"thread_id": leaf_locator["thread_id"], "checkpoint_ns": ""}
+        anchor_locator = {**root, "checkpoint_id": root_anchor_id}
+        anchor = await self._reader.aget_tuple(_config(anchor_locator))
+        if (
+            anchor is None
+            or _locator(anchor.config) != anchor_locator
+            or anchor.metadata.get("kokoro_run_id") != request.run_id
+        ):
+            return None
+        anchor_state: Any = await handle.runnable.aget_state(_config(anchor_locator))
+        if (
+            anchor_state.values.get("active_agent") != source
+            or not any(
+                task.id == source_task and task.name == source
+                for task in anchor_state.tasks
+            )
+            or any(task.error is not None for task in anchor_state.tasks)
+            or any(channel == _ERROR for _, channel, _ in anchor.pending_writes or ())
+        ):
+            return None
+        destinations = [
+            value
+            for task, channel, value in anchor.pending_writes or ()
+            if task == source_task and channel == "active_agent"
+        ]
+        if len(destinations) != 1:
+            return None
+        destination = destinations[0]
+        if (
+            not isinstance(destination, str)
+            or (source, destination) not in feature.handoffs
+        ):
+            return None
+        head = await self._reader.aget_tuple(_config(root))
+        if head is None:
+            return None
+        head_locator = _locator(head.config)
+        if (
+            head_locator["thread_id"] != root["thread_id"]
+            or head_locator["checkpoint_ns"] != ""
+        ):
+            return None
+        children: dict[str, list[CheckpointTuple]] = {}
+        anchor_found = False
+        async for candidate in self._reader.alist(_config(root), limit=65):
+            locator = _locator(candidate.config)
+            if locator == anchor_locator:
+                anchor_found = True
+            if (parent := _parent(candidate)) is not None:
+                children.setdefault(parent, []).append(candidate)
+        if not anchor_found:
+            return None
+        successors: list[str] = []
+        quiet = False
+        cursor, seen = root_anchor_id, {root_anchor_id}
+        target = (
+            request.run_id,
+            lease.generation,
+            context.intent.command_id,
+            context.intent.attempt_id,
+        )
+        while cursor in children:
+            branch = children[cursor]
+            if len(branch) != 1 or len(successors) == 64:
+                return None
+            candidate = branch[0]
+            locator = _locator(candidate.config)
+            metadata = candidate.metadata
+            if (
+                locator["thread_id"] != root["thread_id"]
+                or locator["checkpoint_ns"] != ""
+                or locator["checkpoint_id"] in seen
+                or (
+                    metadata.get("kokoro_run_id"),
+                    metadata.get("kokoro_generation"),
+                    metadata.get("kokoro_command_id"),
+                    metadata.get("kokoro_attempt_id"),
+                )
+                != target
+                or any(
+                    channel == _ERROR
+                    for _, channel, _ in candidate.pending_writes or ()
+                )
+            ):
+                return None
+            state: Any = await handle.runnable.aget_state(_config(locator))
+            if (
+                state.values.get("active_agent") != destination
+                or state.interrupts
+                or any(task.error is not None for task in state.tasks)
+            ):
+                return None
+            if not successors and (
+                tuple(state.next) != (destination,)
+                or len(state.tasks) != 1
+                or state.tasks[0].name != destination
+            ):
+                return None
+            quiet = not state.next and not state.tasks
+            cursor = locator["checkpoint_id"]
+            successors.append(cursor)
+            seen.add(cursor)
+        if cursor != head_locator["checkpoint_id"] or len(successors) < 2 or not quiet:
+            return None
+        return SwarmRootHandoff.model_validate(
+            {
+                "group_id": group_id,
+                "leaf_checkpoint_id": leaf_head_id,
+                "source_peer": source,
+                "source_task_id": source_task,
+                "destination_peer": destination,
+                "root_anchor_id": root_anchor_id,
+                "root_successor_ids": successors,
+            }
+        )
+
     async def _observe(
         self,
         request: RunRequest,
@@ -798,6 +941,7 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
             )
         facts: list[dict[str, Any]] = []
         complete = True
+        swarm_handoff: SwarmRootHandoff | None = None
         for group, planned in zip(original.locator.groups, plan.groups, strict=True):
             locator = {
                 "thread_id": group.thread_id,
@@ -909,7 +1053,17 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
                 or successors[-1]["current_task_ids"]
                 or successors[-1]["current_interrupt_ids"]
             ):
-                complete = False
+                if (
+                    complete
+                    and len(original.locator.groups) == 1
+                    and successors
+                    and successors[-1]["current_task_ids"]
+                    and not successors[-1]["current_interrupt_ids"]
+                ):
+                    swarm_handoff = await self._read_swarm_root_handoff(
+                        request, lease, handle, context, group.group_id, exact, cursor
+                    )
+                complete = swarm_handoff is not None
             facts.append(
                 {
                     "group_id": group.group_id,
@@ -938,6 +1092,11 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
                 if next_pause
                 else None,
                 next_pause_ref=next_pause.pause_ref if next_pause else None,
+                **(
+                    {"swarm_root_handoff": swarm_handoff.model_dump(mode="json")}
+                    if swarm_handoff
+                    else {}
+                ),
             )
             evidence = ConsumedPauseEvidence(
                 command_id=context.intent.command_id,

@@ -43,6 +43,7 @@ from kokoro_agent.infrastructure.schema import (
     RUN_OUTBOX_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
     RUN_RECEIPTS_TABLE,
+    RUN_STEERS_TABLE,
 )
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     close_model_call_attempts_for_terminal,
@@ -770,6 +771,26 @@ class PostgresRunLeases:
                             ),
                             (now, run_id, authority.command_id),
                         )
+                    # This Run cannot consume further supplements. Preserve
+                    # confirmed receipts, and settle all remaining steer
+                    # commands under the same claim lock as terminal outcome.
+                    await execute_sql(
+                        cur,
+                        """UPDATE {} SET status='failed',error_code='control_superseded',
+                        updated_at=to_timestamp(%s/1000.0)
+                        WHERE run_id=%s AND status IN ('admitted','persisted')
+                        AND body::jsonb->>'kind'='run.steer'""".format(
+                            qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
+                        ),
+                        (now, run_id),
+                    )
+                    await execute_sql(
+                        cur,
+                        "DELETE FROM {} WHERE run_id=%s".format(
+                            qualified(self._context.schema, RUN_STEERS_TABLE)
+                        ),
+                        (run_id,),
+                    )
                     await execute_sql(
                         cur,
                         """UPDATE {} SET terminal=TRUE,terminal_at=to_timestamp(%s/1000.0),

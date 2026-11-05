@@ -6,13 +6,16 @@ committed facts; only exact reads through the independent saver form evidence.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence, Mapping
 from collections import deque
 from dataclasses import dataclass
 import hashlib
-from typing import Any, Literal, Protocol
+import logging
+from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.base import (
     BaseCheckpointSaver,
@@ -44,6 +47,9 @@ from kokoro_agent.domain.run.interactions import (
 from kokoro_agent.domain.run.repository import RunRepository, LeaseFence
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.hitl.request import HumanRequest
+from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
+from kokoro_agent.infrastructure.postgres import connect_pg, qualified
+from kokoro_agent.infrastructure.sql import execute_sql, fetch_all
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.events import (
     InteractionGroup,
@@ -62,6 +68,9 @@ _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _RESUME = "__resume__"
 _INTERRUPT = "__interrupt__"
 _ERROR = "__error__"
+_STEER_NODE = "SteeringMiddleware.before_model"
+_STEER_TASK_PATH = f"~__pregel_pull, {_STEER_NODE}"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _digest(value: object) -> str:
@@ -85,6 +94,18 @@ def _locator(config: RunnableConfig) -> dict[str, str]:
 
 def _config(locator: dict[str, str]) -> RunnableConfig:
     return {"configurable": dict(locator)}
+
+
+def _steer_messages(value: object) -> list[tuple[str, str]]:
+    items = cast(list[object], value) if isinstance(value, list) else [value]
+    exact: list[tuple[str, str]] = []
+    for item in items:
+        if isinstance(item, HumanMessage) and isinstance(item.id, str):
+            # SDK message blocks have a dynamically typed nested shape.
+            content: object = getattr(item, "content", None)
+            if isinstance(content, str):
+                exact.append((item.id, content))
+    return exact
 
 
 def _parent(value: CheckpointTuple) -> str | None:
@@ -159,6 +180,7 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
         saver: BaseCheckpointSaver[str],
         reader: BaseCheckpointSaver[str],
         repository: RunRepository,
+        settings: CheckpointSettings | None = None,
     ) -> None:
         if saver is reader:
             raise ValueError("checkpoint evidence requires an independent reader")
@@ -166,8 +188,11 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
         self._saver = saver
         self._reader = reader
         self._repository = repository
+        self._settings = settings
         self._writes: dict[tuple[str, str, str], int] = {}
         self._write_stages: deque[tuple[str, tuple[str, str, str]]] = deque(maxlen=64)
+        # Candidate locators only; the independent committed read is authority.
+        self._steer_writes: deque[tuple[dict[str, str], str]] = deque(maxlen=64)
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         return await self._saver.aget_tuple(config)
@@ -192,7 +217,160 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        return await self._saver.aput(config, checkpoint, metadata, new_versions)
+        saved = await self._saver.aput(config, checkpoint, metadata, new_versions)
+        if (
+            "messages" in (checkpoint.get("updated_channels") or ())
+            and self._steer_writes
+        ):
+            try:
+                if config.get("configurable", {}).get("checkpoint_id"):
+                    parent = _locator(config)
+                    tasks = {
+                        task_id
+                        for candidate, task_id in self._steer_writes
+                        if candidate == parent
+                    }
+                    if tasks:
+                        await self._confirm_steer_checkpoint(saved, parent, tasks)
+            except Exception:
+                # Evidence is supplemental. No successful receipt or Run
+                # failure is inferred if the independent read/write fails.
+                _LOGGER.exception("steer checkpoint confirmation deferred")
+        return saved
+
+    async def _confirm_steer_checkpoint(
+        self,
+        saved: RunnableConfig,
+        parent_locator: dict[str, str],
+        task_ids: set[str],
+        *,
+        recovery: tuple[RunRequest, LeaseFence] | None = None,
+    ) -> None:
+        locator = _locator(saved)
+        exact = await self._reader.aget_tuple(_config(locator))
+        if (
+            exact is None
+            or _locator(exact.config) != locator
+            or exact.parent_config is None
+            or _locator(exact.parent_config) != parent_locator
+        ):
+            return
+        # The saver merges trusted runnable metadata at serialization time;
+        # the graph-supplied write argument alone does not carry Run identity.
+        run_id = exact.metadata.get("kokoro_run_id")
+        generation = exact.metadata.get("kokoro_generation")
+        if not isinstance(run_id, str) or type(generation) is not int:
+            return
+        parent = await self._reader.aget_tuple(_config(parent_locator))
+        if (
+            parent is None
+            or _locator(parent.config) != parent_locator
+            or parent.metadata.get("kokoro_run_id") != run_id
+            or parent.metadata.get("kokoro_generation") != generation
+            or exact.checkpoint["channel_versions"].get("messages")
+            == parent.checkpoint["channel_versions"].get("messages")
+        ):
+            return
+        # LangGraph saves DeltaChannel writes against the parent before
+        # committing its successor. Only that exact successor proves the
+        # steering node's HumanMessages entered the committed messages channel.
+        messages = [
+            message
+            for task_id, channel, value in parent.pending_writes or ()
+            if task_id in task_ids and channel == "messages"
+            for message in _steer_messages(value)
+        ]
+        if not messages:
+            return
+        if recovery is None:
+            request = await self._repository.get_request(run_id)
+            lease = await self._repository.get_fence(run_id)
+            if lease is None or lease.generation != generation:
+                return
+        else:
+            request, lease = recovery
+            # A recovered owner can attest a previously committed checkpoint of
+            # this Run, but never a future generation or a different Run.
+            if request.run_id != run_id or not 0 < generation <= lease.generation:
+                return
+        if (
+            request is not None
+            and RunScope.of(request).scoped_thread_id == locator["thread_id"]
+            and await self._repository.confirm_steers(run_id, lease, messages)
+        ):
+            for candidate in tuple(self._steer_writes):
+                if candidate[0] == parent_locator:
+                    self._steer_writes.remove(candidate)
+
+    async def recover_steers(self, request: RunRequest, lease: LeaseFence) -> None:
+        """Recover a missed receipt from exact committed SDK rows, not process memory."""
+        settings = self._settings
+        if settings is None:
+            return
+        try:
+            async with asyncio.timeout(2):
+                if not await self._repository.peek_steers(request.run_id):
+                    return
+                thread = RunScope.of(request).scoped_thread_id
+                checkpoints = qualified(settings.schema_name, "checkpoints")
+                writes = qualified(settings.schema_name, "checkpoint_writes")
+                async with (
+                    connect_pg(settings.database_url) as conn,
+                    conn.cursor() as cur,
+                ):
+                    # Start from each namespace's latest checkpoint for this
+                    # Run and follow its committed ancestry only. The thread
+                    # prefix is indexed; no global scan or per-model probe.
+                    await execute_sql(
+                        cur,
+                        f"""WITH RECURSIVE head AS (
+                            SELECT DISTINCT ON (checkpoint_ns)
+                                   checkpoint_ns,checkpoint_id,parent_checkpoint_id
+                            FROM {checkpoints}
+                            WHERE thread_id=%s AND metadata->>'kokoro_run_id'=%s
+                            ORDER BY checkpoint_ns,checkpoint_id DESC
+                        ), lineage AS (
+                            SELECT head.*, 0 AS depth FROM head
+                            UNION ALL
+                            SELECT p.checkpoint_ns,p.checkpoint_id,p.parent_checkpoint_id,l.depth+1
+                            FROM lineage l JOIN {checkpoints} p
+                              ON p.thread_id=%s AND p.checkpoint_ns=l.checkpoint_ns
+                              AND p.checkpoint_id=l.parent_checkpoint_id
+                            WHERE l.depth<255 AND p.metadata->>'kokoro_run_id'=%s
+                        )
+                        SELECT DISTINCT l.checkpoint_ns,l.checkpoint_id,l.parent_checkpoint_id,
+                                        w.task_id,l.depth
+                        FROM lineage l JOIN {writes} w
+                          ON w.thread_id=%s AND w.checkpoint_ns=l.checkpoint_ns
+                          AND w.checkpoint_id=l.parent_checkpoint_id
+                        WHERE w.task_path=%s AND w.channel='messages'
+                        ORDER BY l.depth,l.checkpoint_ns,l.checkpoint_id,w.task_id
+                        LIMIT 64""",
+                        (
+                            thread,
+                            request.run_id,
+                            thread,
+                            request.run_id,
+                            thread,
+                            _STEER_TASK_PATH,
+                        ),
+                    )
+                    candidates = await fetch_all(cur)
+                for row in candidates:
+                    path = {
+                        "thread_id": thread,
+                        "checkpoint_ns": str(row["checkpoint_ns"]),
+                    }
+                    await self._confirm_steer_checkpoint(
+                        _config({**path, "checkpoint_id": str(row["checkpoint_id"])}),
+                        {**path, "checkpoint_id": str(row["parent_checkpoint_id"])},
+                        {str(row["task_id"])},
+                        recovery=(request, lease),
+                    )
+        except Exception:
+            _LOGGER.exception(
+                "steer checkpoint recovery deferred run_id=%s", request.run_id
+            )
 
     async def aput_writes(
         self,
@@ -214,6 +392,10 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
             raise
         else:
             self._write_stages.append(("delegated", key))
+            if task_path == _STEER_TASK_PATH and any(
+                channel == "messages" for channel, _ in writes
+            ):
+                self._steer_writes.append((locator, task_id))
         finally:
             remaining = self._writes[key] - 1
             if remaining:
@@ -834,8 +1016,11 @@ def make_interaction_checkpointer(
     saver: BaseCheckpointSaver[str],
     reader: BaseCheckpointSaver[str],
     repository: RunRepository,
+    settings: CheckpointSettings | None = None,
 ) -> InteractionCheckpointer:
-    return InteractionCheckpointer(saver=saver, reader=reader, repository=repository)
+    return InteractionCheckpointer(
+        saver=saver, reader=reader, repository=repository, settings=settings
+    )
 
 
 def make_quiescent_probe(

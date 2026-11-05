@@ -15,6 +15,7 @@ from kokoro_agent.domain.run.repository import (
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.postgres_run_context import (
     PostgresRunRepositoryContext,
+    STEER_MAILBOX_FINGERPRINT,
 )
 from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
@@ -153,7 +154,7 @@ class PostgresRunAdmission:
                 await execute_sql(
                     cur,
                     """
-                    SELECT run_id, command_id, request_digest, status, error_code
+                    SELECT run_id, command_id, request_digest, status, error_code, fingerprint
                     FROM {}
                     WHERE run_id = %s AND command_id = %s
                     """.format(
@@ -187,6 +188,7 @@ class PostgresRunAdmission:
                     replayed=True,
                     # Terminal teardown owns the stream; replay the receipt, not the frame.
                     publish_required=not terminal
+                    and row_data["fingerprint"] != STEER_MAILBOX_FINGERPRINT
                     and str(row_data["status"]) in {"admitted", "persisted"},
                 )
 
@@ -281,11 +283,13 @@ class PostgresRunAdmission:
                     FROM {} i
                     JOIN {} r ON r.run_id = i.run_id
                     WHERE i.status = 'persisted' AND r.terminal = FALSE
+                      AND i.fingerprint IS DISTINCT FROM %s
                     ORDER BY i.run_id ASC, i.command_id ASC
                     """.format(
                         qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE),
                         qualified(self._context.schema, RUN_CLAIMS_TABLE),
                     ),
+                    (STEER_MAILBOX_FINGERPRINT,),
                 )
                 rows = await fetch_all(cur)
         return [RunControlCommandRecord(**dict(row)) for row in rows]

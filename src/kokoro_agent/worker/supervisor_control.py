@@ -76,20 +76,8 @@ class SupervisorControlMixin(SupervisorContext):
         elif isinstance(msg, RunResume):
             await self._on_resume(bus, msg)
         elif isinstance(msg, RunSteer):
-            # 入账信箱即完成（keep-first 幂等）：注入由 SteeringMiddleware 在下一模型轮消费；
-            # 暂停 run 同样入账，resume 后首轮生效；终态后到达无消费者，安全无害。
-            try:
-                request = await self._control_request(msg.run_id)
-                if request is None:
-                    LOGGER.warning("dropping steer for unknown run_id=%s", msg.run_id)
-                    return
-                if not self._control_session_matches(request, msg.session_id):
-                    return
-                await self._run_repository.add_steer(
-                    msg.run_id, msg.message_id, msg.content
-                )
-            except Exception:  # noqa: BLE001 — 插话丢失可由用户重发；绝不为此把健康 run 判死
-                LOGGER.exception("steer persist failed run_id=%s", msg.run_id)
+            # The requests stream cannot bypass durable control delivery.
+            LOGGER.warning("dropping misrouted steer run_id=%s", msg.run_id)
         else:
             await self._on_cancel(bus, msg)
 
@@ -355,18 +343,6 @@ class SupervisorControlMixin(SupervisorContext):
                 return
             raise
 
-    async def _guarded_control_apply(
-        self, bus: StreamProtocol, run_id: str, msg: InboundMessage
-    ) -> bool:
-        # 单控制帧容错：隔离故障收口为 run.failed，保 control 循环（既有 dispatch 语义）。
-        try:
-            await self.dispatch(bus, msg)
-            return True
-        except Exception as error:  # noqa: BLE001
-            LOGGER.exception("control dispatch failed: run_id=%s", run_id)
-            await self._fail_terminal(bus, run_id, error)
-            return False
-
     async def _consume_control_frame(
         self,
         bus: StreamProtocol,
@@ -453,16 +429,12 @@ class SupervisorControlMixin(SupervisorContext):
             await self._run_repository.mark_control_succeeded(run_id, msg.command_id)
             await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
             return
-        # resume/steer：apply 后再写 applied，随后把 HTTP receipt 收口为 succeeded。
-        if await self._guarded_control_apply(bus, run_id, msg):
-            await self._run_repository.mark_control_applied(run_id, msg.command_id)
-            await self._run_repository.mark_control_succeeded(run_id, msg.command_id)
-            metrics.record_control_delivery("applied")
-            await self._emit_control_receipt(bus, run_id, msg.command_id, "applied")
-        else:
-            await self._run_repository.mark_control_failed(
-                run_id, msg.command_id, "control_apply_failed"
-            )
+        try:
+            # Mailbox is admission, not consumption. A storage error leaves
+            # the command persisted for the existing recovery scan.
+            await self._run_repository.store_steer(msg)
+        except Exception:
+            LOGGER.exception("steer mailbox write deferred run_id=%s", run_id)
 
     async def _emit_control_receipt(
         self,

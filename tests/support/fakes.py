@@ -1556,20 +1556,27 @@ class FakeRunRepository:
         if all(mid != message_id for mid, _ in box):
             box.append((message_id, content))
 
+    async def store_steer(self, command: RunSteer) -> None:
+        record = self.control_commands.get((command.run_id, command.command_id))
+        if (
+            record is not None
+            and record["status"] == "persisted"
+            and command.run_id not in self.terminals
+        ):
+            await self.add_steer(command.run_id, command.message_id, command.content)
+
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
         return list(self.steers.get(run_id, []))
 
-    async def ack_steers(
-        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    async def confirm_steers(
+        self, run_id: str, lease: LeaseFence, messages: list[tuple[str, str]]
     ) -> bool:
         if not await self.is_lease_current(run_id, lease):
             return False
         box = self.steers.get(run_id)
         if box is None:
             return True
-        self.steers[run_id] = [
-            (mid, c) for mid, c in box if mid not in set(message_ids)
-        ]
+        self.steers[run_id] = [message for message in box if message not in messages]
         return True
 
     async def put_tool_result(

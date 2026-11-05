@@ -857,6 +857,8 @@ async def test_postgres_lease_generation_fences_stale_same_owner_worker(
 async def test_postgres_execution_effects_require_current_lease_generation(
     acceptance_state: _AcceptanceState,
 ) -> None:
+    from kokoro_agent.protocol import RunSteer
+
     clock_ms = [int(time.time() * 1000)]
     repository = PostgresRunRepository(
         acceptance_state.config.database_url,
@@ -869,7 +871,23 @@ async def test_postgres_execution_effects_require_current_lease_generation(
 
     stale = await repository.try_claim(current_request, "reused-worker-name")
     assert stale is not None
-    await repository.add_steer(current_request.run_id, "steer-1", "keep me")
+    command = RunSteer(
+        kind="run.steer",
+        run_id=current_request.run_id,
+        session_id=current_request.session_id,
+        command_id="steer-fence",
+        request_digest="steer-fence-digest",
+        message_id="steer-1",
+        content="keep me",
+    )
+    body = command.model_dump_json()
+    await repository.admit_control(
+        command.run_id, command.command_id, "steer-fence-digest", body
+    )
+    assert await repository.record_control_delivery(
+        command.run_id, command.command_id, command.request_digest, None, body
+    )
+    await repository.store_steer(command)
     clock_ms[0] += 10_001
     reclaimed = await repository.reclaim_expired("reused-worker-name")
     current = reclaimed[0].lease
@@ -900,7 +918,10 @@ async def test_postgres_execution_effects_require_current_lease_generation(
         is None
     )
     assert (
-        await repository.ack_steers(current_request.run_id, stale, ["steer-1"]) is False
+        await repository.confirm_steers(
+            current_request.run_id, stale, [("steer-1", "keep me")]
+        )
+        is False
     )
     assert await repository.peek_steers(current_request.run_id) == [
         ("steer-1", "keep me")
@@ -962,7 +983,9 @@ async def test_postgres_execution_effects_require_current_lease_generation(
         == "sandbox-new"
     )
     assert (
-        await repository.ack_steers(current_request.run_id, current, ["steer-1"])
+        await repository.confirm_steers(
+            current_request.run_id, current, [("steer-1", "keep me")]
+        )
         is True
     )
     assert (
@@ -1707,6 +1730,7 @@ async def test_terminal_run_control_does_not_reopen_redis_stream(
         ExecutionTerminalAuthority,
         RunTerminalOutcome,
     )
+    from kokoro_agent.protocol import RunSteer
 
     run_id = f"late-control-{uuid.uuid4().hex}"
     request = _request(run_id)
@@ -1724,6 +1748,20 @@ async def test_terminal_run_control_does_not_reopen_redis_stream(
         assert response.status_code == 202, response.text
         return _nested(_json_object(response.json()), "data")
 
+    async def steer_before_terminal() -> dict[str, JsonValue]:
+        response = await http_client.post(
+            control_path,
+            headers={**_headers(), "Idempotency-Key": "unconfirmed-before-terminal"},
+            json={
+                "kind": "run.steer",
+                "session_id": request.session_id,
+                "message_id": "no-next-model-round",
+                "content": "The Run completes before another model round.",
+            },
+        )
+        assert response.status_code == 202, response.text
+        return _nested(_json_object(response.json()), "data")
+
     async with make_run_repository(
         acceptance_state.config.run_repository
     ) as repository:
@@ -1736,7 +1774,22 @@ async def test_terminal_run_control_does_not_reopen_redis_stream(
         assert lease is not None
         accepted = await cancel("accepted-before-terminal")
         assert accepted["status"] == "pending" and accepted["replayed"] is False
-        assert len(await _read_matching(acceptance_state, stream, run_id)) == 1
+        unconfirmed = await steer_before_terminal()
+        assert unconfirmed["status"] == "pending" and unconfirmed["replayed"] is False
+        frames = await _read_matching(acceptance_state, stream, run_id)
+        assert len(frames) == 2
+        command = RunSteer.model_validate(frames[1])
+        assert await repository.record_control_delivery(
+            run_id,
+            command.command_id,
+            command.request_digest,
+            None,
+            command.model_dump_json(),
+        )
+        await repository.store_steer(command)
+        assert await repository.peek_steers(run_id) == [
+            (command.message_id, command.content)
+        ]
         terminal = await repository.finalize_terminal(
             run_id,
             ExecutionTerminalAuthority(lease=lease),
@@ -1748,6 +1801,7 @@ async def test_terminal_run_control_does_not_reopen_redis_stream(
         )
         assert terminal.status == "committed"
         assert await repository.is_terminal(run_id)
+        assert await repository.peek_steers(run_id) == []
 
     # Retire only this Run's stream, as the worker does on a real terminal.
     port = RedisStream(acceptance_state.redis_url)
@@ -1777,6 +1831,12 @@ async def test_terminal_run_control_does_not_reopen_redis_stream(
     assert late["error_code"] == "control_superseded" and late["replayed"] is False
     assert await cancel("new-after-terminal") == {**late, "replayed": True}
     assert await cancel("accepted-before-terminal") == {**accepted, "replayed": True}
+    assert await steer_before_terminal() == {
+        **unconfirmed,
+        "replayed": True,
+        "status": "failed",
+        "error_code": "control_superseded",
+    }
 
     conflict = await http_client.post(
         control_path,
@@ -3150,3 +3210,333 @@ async def test_http_mcp_choice_survives_repository_reopen_and_exact_replay(
                 separators=(",", ":"),
             ).encode()
             assert row["fence"] == "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "miss_live_confirmation", [False, True], ids=["live", "durable-recovery"]
+)
+async def test_same_run_steer_receipt_waits_for_native_injection(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    miss_live_confirmation: bool,
+) -> None:
+    """A real mailbox write is not a provider/PG checkpoint consumption receipt."""
+    from contextlib import suppress
+
+    from langchain_core.callbacks import CallbackManagerForLLMRun
+    from langchain_core.messages import BaseMessage
+    from langchain_core.outputs import ChatResult
+    from langchain_core.runnables import RunnableConfig
+
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.execution.protocols import AgentRunnable
+    from kokoro_agent.infrastructure.checkpoint_interactions import (
+        make_interaction_checkpointer,
+    )
+    from kokoro_agent.infrastructure.checkpoints import (
+        CheckpointSettings,
+        make_checkpointer,
+    )
+    from kokoro_agent.infrastructure.schema import RUN_CONTROL_COMMANDS_TABLE
+    from kokoro_agent.tools.middleware import SteeringMiddleware
+
+    config = acceptance_state.config
+    run_id = f"steer-worker-{uuid.uuid4().hex}"
+    command_id = f"steer-command-{uuid.uuid4().hex}"
+    message_id = f"steer-message-{uuid.uuid4().hex}"
+    content = "Use the owner checkpoint, not the mailbox receipt."
+    request = _request(run_id)
+    acceptance_state.register_run(run_id)
+    stream_name = run_events_stream(run_id)
+    path = f"/v1/runs/{run_id}/control"
+    control_body = {
+        "kind": "run.steer",
+        "session_id": request.session_id,
+        "message_id": message_id,
+        "content": content,
+    }
+    tool_entered = asyncio.Event()
+    release_tool = asyncio.Event()
+    tool_exits: list[str] = []
+    builds: list[tuple[str, int]] = []
+    captured: list[list[BaseMessage]] = []
+    missed_live_confirmations: list[bool] = []
+    graph: AgentRunnable | None = None
+
+    async def steer_barrier() -> str:
+        tool_entered.set()
+        await release_tool.wait()
+        tool_exits.append("released")
+        return "ready"
+
+    class Recorder(LocalFakeChatModel):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: CallbackManagerForLLMRun | None = None,
+            **kwargs: Any,
+        ) -> ChatResult:
+            captured.append(list(messages))
+            return super()._generate(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            )
+
+    model = Recorder.with_script(
+        [
+            AIMessage(
+                content="",
+                id="offline-first",
+                tool_calls=[
+                    {
+                        "name": "steer_barrier",
+                        "args": {},
+                        "id": "offline-barrier",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="finished", id="offline-final"),
+        ]
+    )
+
+    async def post_steer() -> dict[str, JsonValue]:
+        response = await http_client.post(
+            path,
+            headers={**_headers(), "Idempotency-Key": command_id},
+            json=control_body,
+        )
+        assert response.status_code == 202, response.text
+        return _nested(_json_object(response.json()), "data")
+
+    def steers(messages: list[BaseMessage]) -> list[tuple[str | None, str]]:
+        return [
+            (message.id, message.text)
+            for message in messages
+            if isinstance(message, HumanMessage) and message.id == message_id
+        ]
+
+    checkpoint_settings = CheckpointSettings(
+        database_url=config.database_url,
+        schema_name=config.database_schema,
+    )
+    chat_settings = PostgresChatRepositorySettings(
+        database_url=config.database_url,
+        schema_name=config.database_schema,
+    )
+    stream = RedisStream(acceptance_state.redis_url)
+    try:
+        async with (
+            make_run_repository(config.run_repository) as runs,
+            make_chat_repository(chat_settings) as chat,
+            make_checkpointer(checkpoint_settings) as saver,
+            make_checkpointer(checkpoint_settings) as independent_reader,
+        ):
+            bridge = make_interaction_checkpointer(
+                saver=saver,
+                reader=independent_reader,
+                repository=runs,
+                settings=checkpoint_settings,
+            )
+            recovery = bridge
+            if miss_live_confirmation:
+                # The writer has already committed the child when it reaches
+                # this hook. Drop that process's only attempt and recover with
+                # a new bridge, which has no steering-task cache.
+                async def miss_confirmation(*_args: object, **_kwargs: object) -> None:
+                    missed_live_confirmations.append(True)
+                    raise OSError(
+                        "checkpoint receipt unavailable after checkpoint commit"
+                    )
+
+                monkeypatch.setattr(
+                    bridge, "_confirm_steer_checkpoint", miss_confirmation
+                )
+                recovery = make_interaction_checkpointer(
+                    saver=saver,
+                    reader=independent_reader,
+                    repository=runs,
+                    settings=checkpoint_settings,
+                )
+
+            async def build(
+                active: RunRequest,
+                lease: LeaseFence,
+                _progress: SkillProgressSink,
+                _action_observer: ActionObservationSink,
+            ) -> AgentHandle:
+                nonlocal graph
+                assert active.run_id == request.run_id
+                builds.append((active.run_id, lease.generation))
+                graph = create_test_deep_agent(
+                    model=model,
+                    tools=[
+                        StructuredTool(
+                            name="steer_barrier",
+                            description="Deterministic local tool barrier.",
+                            args_schema=_LookupArgs,
+                            coroutine=steer_barrier,
+                        )
+                    ],
+                    system_prompt="Use the local tool once, then finish.",
+                    subagents=[],
+                    checkpointer=bridge,
+                    permissions=[],
+                    interrupt_on={},
+                    middleware=[
+                        SteeringMiddleware(
+                            run_repository=runs, run_id=active.run_id, lease=lease
+                        )
+                    ],
+                )
+                return AgentHandle(
+                    runnable=graph, tool_descriptions={"steer_barrier": "test gate"}
+                )
+
+            supervisor = RunSupervisor(
+                agent_builder=build,
+                interaction_reader=bridge.read_interaction,
+                recover_steers=recovery.recover_steers,
+                run_repository=runs,
+                approval_tool_names=lambda _request: frozenset(),
+                trace_factory=lambda _request: None,
+                source_for=lambda _name: "runtime-custom",
+                consumer=f"worker-{run_id}",
+                chat_repository=chat,
+            )
+            worker = asyncio.create_task(supervisor.serve(stream))
+            try:
+                launched = await http_client.post(
+                    "/v1/runs", headers=_headers(), json=_launch_body(run_id)
+                )
+                assert launched.status_code == 202, launched.text
+                await asyncio.wait_for(tool_entered.wait(), timeout=15)
+                assert len(captured) == 1 and steers(captured[0]) == []
+                accepted = await post_steer()
+                assert accepted["command_id"] == command_id
+                assert accepted["status"] == "pending"
+                assert accepted["replayed"] is False
+
+                async with asyncio.timeout(10):
+                    while await runs.peek_steers(run_id) != [(message_id, content)]:
+                        await asyncio.sleep(0.025)
+
+                # Wait for the old asynchronous status write after the mailbox
+                # commit, without driving delivery by repeatedly POSTing.
+                status = "not read"
+                deadline = asyncio.get_running_loop().time() + 1.5
+                async with connect_pg(config.database_url) as connection:
+                    while True:
+                        result = await connection.execute(
+                            sql.SQL(
+                                "SELECT status FROM {} WHERE run_id=%s AND command_id=%s"
+                            ).format(
+                                sql.Identifier(
+                                    config.database_schema, RUN_CONTROL_COMMANDS_TABLE
+                                )
+                            ),
+                            (run_id, command_id),
+                        )
+                        row = await result.fetchone()
+                        assert row is not None
+                        status = row["status"]
+                        if status not in ("admitted", "persisted"):
+                            break
+                        if asyncio.get_running_loop().time() >= deadline:
+                            break
+                        await asyncio.sleep(0.025)
+
+                before_release = await post_steer()
+                assert before_release["replayed"] is True
+                assert before_release["request_digest"] == accepted["request_digest"]
+                assert len(captured) == 1 and tool_exits == []
+                assert not await runs.is_terminal(run_id)
+
+                release_tool.set()
+                async with asyncio.timeout(15):
+                    while True:
+                        rows = await stream.read_all(stream_name)
+                        terminal = [
+                            row.event
+                            for row in rows
+                            if row.event["kind"] in {"run.completed", "run.failed"}
+                        ]
+                        if terminal:
+                            break
+                        await asyncio.sleep(0.025)
+                assert len(terminal) == 1
+                assert terminal[0]["kind"] == "run.completed", terminal
+                assert _nested(_json_object(terminal[0]), "payload")["status"] == (
+                    "completed"
+                ), terminal
+                assert await runs.is_terminal(run_id)
+                assert len(builds) == 1 and builds[0][0] == run_id
+                assert tool_exits == ["released"]
+                assert len(captured) == 2
+                assert steers(captured[0]) == []
+                assert steers(captured[1]) == [(message_id, content)]
+
+                # Read exact root checkpoint independently, not a latest
+                # session-state view which may overlay in-flight writes.
+                checkpoint_config: RunnableConfig = {
+                    "configurable": {
+                        "thread_id": RunScope.of(request).scoped_thread_id,
+                        "checkpoint_ns": "",
+                    }
+                }
+                latest = await independent_reader.aget_tuple(checkpoint_config)
+                assert latest is not None
+                exact_config = latest.config
+                assert exact_config.get("configurable", {}).get("checkpoint_id")
+                exact = await independent_reader.aget_tuple(exact_config)
+                assert exact is not None and exact.config == exact_config
+                assert exact.metadata.get("kokoro_run_id") == run_id
+                assert exact.metadata.get("kokoro_generation") == builds[0][1]
+                assert graph is not None
+                persisted_state = await graph.aget_state(exact_config)
+                assert steers(persisted_state.values["messages"]) == [
+                    (message_id, content)
+                ]
+                after_injection = await post_steer()
+                assert after_injection["replayed"] is True
+                assert after_injection["request_digest"] == accepted["request_digest"]
+                assert after_injection["status"] == "succeeded"
+                assert missed_live_confirmations == (
+                    [True] if miss_live_confirmation else []
+                )
+                print(
+                    "A03 same-run steer:"
+                    f" original tool finished={tool_exits == ['released']},"
+                    " provider exact HumanMessage=1, exact PG checkpoint message=1,"
+                    f" builds={len(builds)}, natural terminal=completed,"
+                    f" while held PG={status!r} HTTP={before_release['status']!r},"
+                    f" after injection HTTP={after_injection['status']!r}"
+                )
+                assert before_release["status"] == "pending", (
+                    "mailbox admission was reported as succeeded before the next "
+                    "provider call or durable checkpoint consumption"
+                )
+            finally:
+                release_tool.set()
+                worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker
+                try:
+                    assert await supervisor.drain(timeout_s=8)
+                finally:
+                    leftovers = tuple(
+                        dict.fromkeys(
+                            (
+                                *supervisor.tasks.values(),
+                                *supervisor.control_listeners.values(),
+                            )
+                        )
+                    )
+                    for task in leftovers:
+                        task.cancel()
+                    if leftovers:
+                        await asyncio.gather(*leftovers, return_exceptions=True)
+    finally:
+        await stream.aclose()

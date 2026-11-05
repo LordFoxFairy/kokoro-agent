@@ -319,15 +319,12 @@ async def test_steer_via_control_loop_uses_the_same_ledger_and_is_idempotent() -
     await consumer(bus, "cs", steer, run_control_stream("cs"), "1")
     await consumer(bus, "cs", steer, run_control_stream("cs"), "2")
 
-    assert run_repository.control_commands[("cs", "steer-1")]["status"] == "succeeded"
+    assert run_repository.control_commands[("cs", "steer-1")]["status"] == "persisted"
     assert run_repository.steers["cs"] == [
         ("message-1", "continue with the API contract")
     ]
     receipts = find_events(bus.run_events("cs"), RunControlReceipt)
-    assert [receipt.payload.control_status for receipt in receipts] == [
-        "persisted",
-        "applied",
-    ]
+    assert [receipt.payload.control_status for receipt in receipts] == ["persisted"]
     assert bus.acked == ["1", "2"]
 
 

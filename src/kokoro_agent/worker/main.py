@@ -320,7 +320,10 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             financial_repository, financial_reconciler
         )
         interaction_checkpointer = make_interaction_checkpointer(
-            saver=saver, reader=interaction_reader, repository=run_repository
+            saver=saver,
+            reader=interaction_reader,
+            repository=run_repository,
+            settings=config.checkpoint,
         )
         dependencies = WorkerDependencies(
             platform=platform,
@@ -347,6 +350,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         agent_factory = AgentFactory(dependencies)
         supervisor = RunSupervisor(
             interaction_reader=interaction_checkpointer.read_interaction,
+            recover_steers=interaction_checkpointer.recover_steers,
             agent_builder=agent_factory.build,
             run_repository=run_repository,
             approval_tool_names=agent_factory.approval_names,

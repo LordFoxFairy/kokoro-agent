@@ -1,3 +1,7 @@
+## 2026-11-05 A‑03：同 Run 补充按已提交检查点确认
+
+真实 HTTP / Redis / Worker / PG：原工具运行中 mailbox 回执保持 pending，下一模型只收到一条原 HumanMessage，独立 checkpoint 同一条，之后同键 succeeded。模拟快速确认故障后以无进程缓存的桥从持久父子检查点恢复；已保存暂停接管在放租约前核一次，不重新执行图。另验终态无后续模型、陈旧租约拒写；不更改 HTTP 8.11、Schema 或普通调用。若 Stop/执行失败先完成终态而尚无可验证证据，原回执是未确认，不承诺未注入；产品不得自动重发。BFF/App 组合和 Chromium 仍待。
+
 ## 2026-11-03 B12：财务依赖失败分类与单发送期限（局部候选）
 
 真实已完成模型调用后的失败来自 typed `ModelBudgetError`，此前落为 `internal_error`。现仅将预算、凭据与结算 unavailable 三个固定 code 映射为 `dependency_unavailable` / `retryable=false`；显式 assembly default 不覆盖该分类。只有已验证匹配的 pending ACK 才保留原 `model_settlement_pending`；未知 ACK 不释放冻结、不自动重发资金或模型。

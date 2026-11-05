@@ -285,6 +285,10 @@ binding version/digest、prepared_at、observed_at、lease_expires_at，时间 U
 
 当前HTTP7/Redis机器artifact与所有外部字段不变；BFF仍只读Agent durable Chat并写自身ledger，没有raw ACK endpoint。内部published通知不等待并不存在的外部receipt producer，移除宽限重发参数/配置及内部republish候选；Run/control admission receipt不是该通知回执。queued失败重试与精确Chat恢复不变。既有真实rejected和损坏历史保护继续，不把可丢通知称BFF已消费；不新增公开协议、自动模型/工具调用或扣费。
 
+## HTTP 8.11 同 Run 补充回执（2026-11-05）
+
+`run.steer` 沿既有 Control POST 与原 command identity。受理、Redis 投递及持久 mailbox 仍是 `pending`，只有原 Run 的已提交原生 checkpoint 证据匹配原消息 ID、正文及现有效租约后才回 `succeeded`。同键重放读同一持久回执，不重建 mailbox 或第二 Run。目标先终态而证据未获确认时，`failed/control_superseded` 表示未确认，**不证明模型未看到补充**，消费者不能自动重投成新意图。取消／继续及 HTTP 8.11 机器契约、Schema 保持原样。
+
 ## HTTP7 ControlReceipt 输出收敛（2026-10-19）
 
 `POST /v1/runs/{run_id}/control` 继续按原正式 `ControlReceipt` 输出 command_id、request_digest、status、replayed 和可选 error_code；内部入账模型的 run_id 不属于该 HTTP 数据体。首次、命令重放和 Redis 入队失败均通过同一个字段白名单映射，禁止直接序列化内部模型。命令摘要与可信身份/session/Run 核验不变；HTTP7 artifact、版本与 BFF 固定消费者均不变，无旧/新响应回退。

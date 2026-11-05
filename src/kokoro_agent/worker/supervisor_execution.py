@@ -103,6 +103,10 @@ class SupervisorExecutionMixin(SupervisorContext):
         primary: BaseException | None = None
         try:
             scope = RunScope.of(request)
+            if self._recover_steers is not None and lease.generation > 1:
+                # An already-saved pause releases the active lease without
+                # invoking the graph. Recover steer evidence before that branch.
+                await self._recover_steers(request, lease)
             # A committed native pause may precede the Run/Chat pause transaction.
             # Recover that fact without another graph invocation.
             try:
@@ -296,6 +300,9 @@ class SupervisorExecutionMixin(SupervisorContext):
             if request is None:
                 return
             resume = self._resume_attempts.get(run_id)
+            if self._recover_steers is not None and resume is not None:
+                # Resume assembles a graph without going through _start_run.
+                await self._recover_steers(request, lease)
             metadata = dict((trace or {}).get("metadata", {}))
             for key in (
                 "kokoro_run_id",
@@ -317,6 +324,8 @@ class SupervisorExecutionMixin(SupervisorContext):
                 # Reached only after interrupted() exhausts the official async
                 # iterator and its executor exit waits all child/write tasks.
                 # Cancellation never reaches this marker (task.done is insufficient).
+                if self._recover_steers is not None:
+                    await self._recover_steers(request, lease)
                 if resume is not None:
                     self._drained_attempts[
                         (run_id, lease.generation, resume[1].attempt_id)

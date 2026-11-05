@@ -53,6 +53,7 @@ SourceResolver = Callable[[str], SubagentSource]
 BackendResolver = Callable[[RunRequest], Backend]
 FeatureResolver = Callable[[str], Feature]
 SandboxTeardown = Callable[[SandboxBackendKind, str, str], Awaitable[None]]
+SteerCheckpointRecovery = Callable[[RunRequest, LeaseFence], Awaitable[None]]
 ProcessFatal = Callable[[int], Never]
 
 
@@ -62,6 +63,7 @@ class SupervisorContext:
     _boot_id: str
     _drained_attempts: dict[tuple[str, int, str], str]
     _interaction_reader: InteractionReader
+    _recover_steers: SteerCheckpointRecovery | None
     _resume_attempts: dict[str, tuple[str, StartedResume]]
     _build: AgentBuilder
     _run_repository: RunRepository
@@ -189,10 +191,6 @@ class SupervisorContext:
     def _ensure_control_listener(self, bus: StreamProtocol, run_id: str) -> None: ...
 
     async def _control_loop(self, bus: StreamProtocol, run_id: str) -> None: ...
-
-    async def _guarded_control_apply(
-        self, bus: StreamProtocol, run_id: str, msg: InboundMessage
-    ) -> bool: ...
 
     async def _consume_control_frame(
         self,

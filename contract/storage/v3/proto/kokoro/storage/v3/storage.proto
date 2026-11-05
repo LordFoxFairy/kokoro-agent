@@ -1,9 +1,9 @@
 // Canonical contract source owned by kokoro-storage; generated clients are derived from this file.
 // Every RPC requires authenticated x-kokoro-service, x-kokoro-internal-secret,
 // x-kokoro-tenant-id, x-kokoro-subject-id, and x-kokoro-request-id transport metadata.
-// x-kokoro-scope-kind (personal|project|conversation|skill_package|skill_cover) and
+// x-kokoro-scope-kind (personal|project|conversation|skill_package|skill_cover|connector_icon) and
 // x-kokoro-scope-id are required. For skill_package, scope-id is the exact
-// Platform revision skill_id, not a series ID; skill_cover uses that same exact revision binding.
+// Platform-owned resource ID; skill_cover and connector_icon use exact owner bindings.
 // Storage does not decide Skill authorization; Platform must freshly admit every read.
 // Scope is asserted by an authenticated, permitted business owner; body identity is forbidden.
 // kokoro-agent has only conversation/artifact-purpose delivery operations;
@@ -11,7 +11,7 @@
 // final-Artifact reads, not Artifact writes or package access. kokoro-platform
 // has only six package operations in skill_package scope: CreateUpload,
 // CompleteUpload, AbortUpload, GetUploadStatus, GetScanStatus, and
-// GetPackageReference. In skill_cover it has CreateUpload, CompleteUpload, AbortUpload,
+// GetPackageReference. In skill_cover and connector_icon it has CreateUpload, CompleteUpload, AbortUpload,
 // GetUploadStatus, GetScanStatus, GetAsset, GetDownloadReference, DeleteAsset only.
 // Covers are optional, but a present cover must be PNG/JPEG, fully decoded and CLEAN.
 // ListAssets permits only personal or project scope.
@@ -56,6 +56,7 @@ enum UploadPurpose {
   UPLOAD_PURPOSE_ASSET = 2;
   UPLOAD_PURPOSE_ARTIFACT = 3;
   UPLOAD_PURPOSE_SKILL_COVER = 4;
+  UPLOAD_PURPOSE_CONNECTOR_ICON = 5;
 }
 
 enum UploadState {
@@ -163,7 +164,7 @@ message ImageDimensions {
 }
 
 message GetAssetResponse {
-  // Required for SKILL_COVER; absent for other purposes.
+  // Required for SKILL_COVER and CONNECTOR_ICON; absent for other purposes.
   ImageDimensions image_dimensions = 13;
   reserved 2;
   reserved "tenant_id";

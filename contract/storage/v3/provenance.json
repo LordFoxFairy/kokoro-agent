@@ -1,7 +1,7 @@
 {
   "owner": "kokoro-storage",
   "owner_repository": "apps/kokoro-storage",
-  "owner_commit": "d13f33acfc7a482d61ebffc58e7b2667b58ae197",
+  "owner_commit": "4a990617ffe36d739b5a3e622132c304d4d48d41",
   "sources": [
     {
       "owner_path": "contract/proto/kokoro/common/v1/common.proto",
@@ -11,13 +11,13 @@
     {
       "owner_path": "contract/proto/kokoro/storage/v3/storage.proto",
       "path": "contract/storage/v3/proto/kokoro/storage/v3/storage.proto",
-      "sha256": "1021e603065978871c51519ddba5b23c9b97f16b781a08bd98e019b3342bf5f9"
+      "sha256": "b84a2fb1fd9c6e8c16e15a29cafbc33de670f40f703f3f33ef27652a0237a629"
     }
   ],
   "owner_provenance": {
     "path": "contract/storage/v3/owner-provenance.json",
-    "sha256": "6d2e7a4bdfbe5f92be1e42acb860fcf66102a0ee3f67a449a259940f4877604d",
-    "combined_sha256": "47e2659f577cf5c0a5e44a9ee9165d0fee17471bb3d7abb80095a956f655c1f9"
+    "sha256": "d068869a69edba0dec661bceebdb37e0a3c0734fb3332ec02e07393f165bd9d0",
+    "combined_sha256": "c8e9c5c975b2f2c0035b486dd1295c36603e1ad12fa6bc22dc26b94264becd78"
   },
   "codegen": {
     "python": "3.11",

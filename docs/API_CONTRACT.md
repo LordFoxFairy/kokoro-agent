@@ -323,7 +323,7 @@ worker 私有凭据文件与loopback开关的精确表示见技术方案MC01；�
 
 ### Wire authority 与可见性
 
-本片不新增 Agent public HTTP/OpenAPI、Redis event 或浏览器字段。唯一 wire authority 是 Storage commit `d13f33acfc7a482d61ebffc58e7b2667b58ae197` 的 `kokoro/common/v1/common.proto` 与 `kokoro/storage/v3/storage.proto`，组合 SHA-256 `47e2659f577cf5c0a5e44a9ee9165d0fee17471bb3d7abb80095a956f655c1f9`。Agent vendor pin与原generator已单轨切到 `kokoro.storage.v3.StorageService`；完整17 RPC生成可见，但生产只允许 `CreateUpload/CompleteUpload/AbortUpload/GetUploadStatus/GetScanStatus/CreateArtifact/FinalizeArtifact` 七操作，其余继续 `STORAGE_OPERATION_FORBIDDEN`。v2 vendor/generated已删除，无alias/fallback/双pin。
+本片不新增 Agent public HTTP/OpenAPI、Redis event 或浏览器字段。唯一 wire authority 是 Storage commit `4a990617ffe36d739b5a3e622132c304d4d48d41` 的 `kokoro/common/v1/common.proto` 与 `kokoro/storage/v3/storage.proto`，组合 SHA-256 `c8e9c5c975b2f2c0035b486dd1295c36603e1ad12fa6bc22dc26b94264becd78`。Agent vendor pin与原generator已单轨切到 `kokoro.storage.v3.StorageService`；完整17 RPC生成可见，但生产只允许 `CreateUpload/CompleteUpload/AbortUpload/GetUploadStatus/GetScanStatus/CreateArtifact/FinalizeArtifact` 七操作，其余继续 `STORAGE_OPERATION_FORBIDDEN`。v2 vendor/generated已删除，无alias/fallback/双pin。
 
 ### PUT ACK、Complete 与status核验
 

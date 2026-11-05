@@ -14,7 +14,7 @@ from connectrpc.errors import ConnectError
 from connectrpc.method import IdempotencyLevel, MethodInfo
 from connectrpc.server import ConnectASGIApplication, Endpoint
 
-from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginLocalSkillImportRequest, BeginLocalSkillImportResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse, BeginPersonalMcpIconUploadRequest, BeginPersonalMcpIconUploadResponse, BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CancelPersonalMcpIconIntentRequest, CancelPersonalMcpIconIntentResponse, CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse, CompletePersonalMcpIconUploadRequest, CompletePersonalMcpIconUploadResponse, CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse, CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse, CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse, CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse, CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse, DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse, DeletePersonalSkillSeriesRequest, DeletePersonalSkillSeriesResponse, DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse, DiscardSkillDraftRequest, DiscardSkillDraftResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse, GetAdminSkillRequest, GetAdminSkillResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetCurrentSkillRequest, GetCurrentSkillResponse, GetLocalSkillImportRequest, GetLocalSkillImportResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse, GetMcpServerRequest, GetMcpServerResponse, GetPersonalCustomApiRequest, GetPersonalCustomApiResponse, GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse, GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse, GetPersonalMcpIconIntentRequest, GetPersonalMcpIconIntentResponse, GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse, GetPersonalMcpServerRequest, GetPersonalMcpServerResponse, GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse, GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse, GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse, GetSkillCoverUploadRequest, GetSkillCoverUploadResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, GetSkillRevisionRequest, GetSkillRevisionResponse, ImportPersonalMcpIconUrlRequest, ImportPersonalMcpIconUrlResponse, ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse, InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse, InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse, InspectSkillPackageRequest, InspectSkillPackageResponse, InstallPersonalSkillRequest, InstallPersonalSkillResponse, InstallProjectSkillRequest, InstallProjectSkillResponse, InstallSkillRequest, InstallSkillResponse, ListAdminSkillsRequest, ListAdminSkillsResponse, ListAppSkillBindingsRequest, ListAppSkillBindingsResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListPersonalCustomApisRequest, ListPersonalCustomApisResponse, ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse, ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse, ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse, ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse, ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse, PublishOfficialSkillRequest, PublishOfficialSkillResponse, PublishSkillRequest, PublishSkillResponse, PutAppSkillBindingRequest, PutAppSkillBindingResponse, QuarantineSkillRequest, QuarantineSkillResponse, ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse, RemoveAppSkillBindingRequest, RemoveAppSkillBindingResponse, RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse, RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse, RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse, RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RestoreSkillRequest, RestoreSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse, SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse, SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse, SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse, SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse, SetSkillStatusRequest, SetSkillStatusResponse, UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse, UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse, UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse, UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse, UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse, UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse, UpdateSkillDraftRequest, UpdateSkillDraftResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawAdminSkillRequest, WithdrawAdminSkillResponse, WithdrawSkillRequest, WithdrawSkillResponse
+from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginLocalSkillImportRequest, BeginLocalSkillImportResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse, BeginPersonalMcpIconUploadRequest, BeginPersonalMcpIconUploadResponse, BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CancelPersonalMcpIconIntentRequest, CancelPersonalMcpIconIntentResponse, CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse, CompletePersonalMcpIconUploadRequest, CompletePersonalMcpIconUploadResponse, CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse, CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse, CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse, CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse, CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse, DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse, DeletePersonalSkillSeriesRequest, DeletePersonalSkillSeriesResponse, DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse, DiscardSkillDraftRequest, DiscardSkillDraftResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse, GetAdminSkillRequest, GetAdminSkillResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetCurrentSkillRequest, GetCurrentSkillResponse, GetLocalSkillImportRequest, GetLocalSkillImportResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse, GetMcpServerRequest, GetMcpServerResponse, GetPersonalCustomApiRequest, GetPersonalCustomApiResponse, GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse, GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse, GetPersonalMcpIconIntentRequest, GetPersonalMcpIconIntentResponse, GetPersonalMcpPrepareReceiptRequest, GetPersonalMcpPrepareReceiptResponse, GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse, GetPersonalMcpServerRequest, GetPersonalMcpServerResponse, GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse, GetProjectSkillInstallationPackageDownloadRequest, GetProjectSkillInstallationPackageDownloadResponse, GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse, GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse, GetSkillCoverUploadRequest, GetSkillCoverUploadResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, GetSkillRevisionRequest, GetSkillRevisionResponse, ImportPersonalMcpIconUrlRequest, ImportPersonalMcpIconUrlResponse, ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse, InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse, InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse, InspectProjectSkillInstallationPackageRequest, InspectProjectSkillInstallationPackageResponse, InspectSkillPackageRequest, InspectSkillPackageResponse, InstallPersonalSkillRequest, InstallPersonalSkillResponse, InstallProjectSkillRequest, InstallProjectSkillResponse, InstallSkillRequest, InstallSkillResponse, ListAdminSkillsRequest, ListAdminSkillsResponse, ListAppSkillBindingsRequest, ListAppSkillBindingsResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListPersonalCustomApisRequest, ListPersonalCustomApisResponse, ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse, ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse, ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse, ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse, ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse, PublishOfficialSkillRequest, PublishOfficialSkillResponse, PublishSkillRequest, PublishSkillResponse, PutAppSkillBindingRequest, PutAppSkillBindingResponse, QuarantineSkillRequest, QuarantineSkillResponse, ReauthorizePersonalMcpServerRequest, ReauthorizePersonalMcpServerResponse, ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse, RemoveAppSkillBindingRequest, RemoveAppSkillBindingResponse, RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse, RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse, RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse, RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RestoreSkillRequest, RestoreSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse, SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse, SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse, SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse, SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse, SetSkillStatusRequest, SetSkillStatusResponse, UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse, UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse, UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse, UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse, UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse, UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse, UpdateSkillDraftRequest, UpdateSkillDraftResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawAdminSkillRequest, WithdrawAdminSkillResponse, WithdrawSkillRequest, WithdrawSkillResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -2036,6 +2036,9 @@ class ProductSkillInstallationServiceClient(ConnectClient):
         )
 
 class ProductMcpPersonalService(Protocol):
+    async def reauthorize_personal_mcp_server(self, request: ReauthorizePersonalMcpServerRequest, ctx: RequestContext[ReauthorizePersonalMcpServerRequest, ReauthorizePersonalMcpServerResponse]) -> ReauthorizePersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def begin_personal_mcp_icon_upload(self, request: BeginPersonalMcpIconUploadRequest, ctx: RequestContext[BeginPersonalMcpIconUploadRequest, BeginPersonalMcpIconUploadResponse]) -> BeginPersonalMcpIconUploadResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -2058,6 +2061,9 @@ class ProductMcpPersonalService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def get_personal_mcp_server(self, request: GetPersonalMcpServerRequest, ctx: RequestContext[GetPersonalMcpServerRequest, GetPersonalMcpServerResponse]) -> GetPersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_mcp_prepare_receipt(self, request: GetPersonalMcpPrepareReceiptRequest, ctx: RequestContext[GetPersonalMcpPrepareReceiptRequest, GetPersonalMcpPrepareReceiptResponse]) -> GetPersonalMcpPrepareReceiptResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def prepare_personal_mcp_server(self, request: PreparePersonalMcpServerRequest, ctx: RequestContext[PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse]) -> PreparePersonalMcpServerResponse:
@@ -2125,6 +2131,16 @@ class ProductMcpPersonalServiceASGIApplication(ConnectASGIApplication[ProductMcp
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductMcpPersonalService/ReauthorizePersonalMcpServer": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ReauthorizePersonalMcpServer",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ReauthorizePersonalMcpServerRequest,
+                        output=ReauthorizePersonalMcpServerResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.reauthorize_personal_mcp_server,
+                ),
                 "/kokoro.platform.v1.ProductMcpPersonalService/BeginPersonalMcpIconUpload": Endpoint.unary(
                     method=MethodInfo(
                         name="BeginPersonalMcpIconUpload",
@@ -2204,6 +2220,16 @@ class ProductMcpPersonalServiceASGIApplication(ConnectASGIApplication[ProductMcp
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.get_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/GetPersonalMcpPrepareReceipt": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalMcpPrepareReceipt",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=GetPersonalMcpPrepareReceiptRequest,
+                        output=GetPersonalMcpPrepareReceiptResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_mcp_prepare_receipt,
                 ),
                 "/kokoro.platform.v1.ProductMcpPersonalService/PreparePersonalMcpServer": Endpoint.unary(
                     method=MethodInfo(
@@ -2389,6 +2415,26 @@ class ProductMcpPersonalServiceASGIApplication(ConnectASGIApplication[ProductMcp
 
 
 class ProductMcpPersonalServiceClient(ConnectClient):
+    async def reauthorize_personal_mcp_server(
+        self,
+        request: ReauthorizePersonalMcpServerRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReauthorizePersonalMcpServerResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReauthorizePersonalMcpServer",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ReauthorizePersonalMcpServerRequest,
+                output=ReauthorizePersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def begin_personal_mcp_icon_upload(
         self,
         request: BeginPersonalMcpIconUploadRequest,
@@ -2543,6 +2589,26 @@ class ProductMcpPersonalServiceClient(ConnectClient):
                 service_name="kokoro.platform.v1.ProductMcpPersonalService",
                 input=GetPersonalMcpServerRequest,
                 output=GetPersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_mcp_prepare_receipt(
+        self,
+        request: GetPersonalMcpPrepareReceiptRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalMcpPrepareReceiptResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalMcpPrepareReceipt",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=GetPersonalMcpPrepareReceiptRequest,
+                output=GetPersonalMcpPrepareReceiptResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -4241,6 +4307,101 @@ class ProductProjectSkillInstallationServiceClient(ConnectClient):
                 service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
                 input=ListProjectSkillInstallationsRequest,
                 output=ListProjectSkillInstallationsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductProjectSkillInstallationContentService(Protocol):
+    async def inspect_project_skill_installation_package(self, request: InspectProjectSkillInstallationPackageRequest, ctx: RequestContext[InspectProjectSkillInstallationPackageRequest, InspectProjectSkillInstallationPackageResponse]) -> InspectProjectSkillInstallationPackageResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_project_skill_installation_package_download(self, request: GetProjectSkillInstallationPackageDownloadRequest, ctx: RequestContext[GetProjectSkillInstallationPackageDownloadRequest, GetProjectSkillInstallationPackageDownloadResponse]) -> GetProjectSkillInstallationPackageDownloadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductProjectSkillInstallationContentServiceASGIApplication(ConnectASGIApplication[ProductProjectSkillInstallationContentService]):
+    def __init__(
+        self,
+        service: ProductProjectSkillInstallationContentService | AsyncGenerator[ProductProjectSkillInstallationContentService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductProjectSkillInstallationContentService/InspectProjectSkillInstallationPackage": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InspectProjectSkillInstallationPackage",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                        input=InspectProjectSkillInstallationPackageRequest,
+                        output=InspectProjectSkillInstallationPackageResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.inspect_project_skill_installation_package,
+                ),
+                "/kokoro.platform.v1.ProductProjectSkillInstallationContentService/GetProjectSkillInstallationPackageDownload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetProjectSkillInstallationPackageDownload",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                        input=GetProjectSkillInstallationPackageDownloadRequest,
+                        output=GetProjectSkillInstallationPackageDownloadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_project_skill_installation_package_download,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductProjectSkillInstallationContentService"
+
+
+class ProductProjectSkillInstallationContentServiceClient(ConnectClient):
+    async def inspect_project_skill_installation_package(
+        self,
+        request: InspectProjectSkillInstallationPackageRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InspectProjectSkillInstallationPackageResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InspectProjectSkillInstallationPackage",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                input=InspectProjectSkillInstallationPackageRequest,
+                output=InspectProjectSkillInstallationPackageResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_project_skill_installation_package_download(
+        self,
+        request: GetProjectSkillInstallationPackageDownloadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetProjectSkillInstallationPackageDownloadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetProjectSkillInstallationPackageDownload",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                input=GetProjectSkillInstallationPackageDownloadRequest,
+                output=GetProjectSkillInstallationPackageDownloadResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

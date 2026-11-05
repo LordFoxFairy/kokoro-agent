@@ -1287,6 +1287,7 @@ message CreatePersonalMcpConnectionResponse {
 }
 
 service ProductMcpPersonalService {
+  rpc ReauthorizePersonalMcpServer(kokoro.platform.v1.ReauthorizePersonalMcpServerRequest) returns (kokoro.platform.v1.ReauthorizePersonalMcpServerResponse);
   rpc BeginPersonalMcpIconUpload(kokoro.platform.v1.BeginPersonalMcpIconUploadRequest) returns (kokoro.platform.v1.BeginPersonalMcpIconUploadResponse);
   rpc CompletePersonalMcpIconUpload(kokoro.platform.v1.CompletePersonalMcpIconUploadRequest) returns (kokoro.platform.v1.CompletePersonalMcpIconUploadResponse);
   rpc GetPersonalMcpIconIntent(kokoro.platform.v1.GetPersonalMcpIconIntentRequest) returns (kokoro.platform.v1.GetPersonalMcpIconIntentResponse);
@@ -1295,6 +1296,7 @@ service ProductMcpPersonalService {
   rpc RegisterPersonalMcpServer(kokoro.platform.v1.RegisterPersonalMcpServerRequest) returns (kokoro.platform.v1.RegisterPersonalMcpServerResponse);
   rpc ImportPersonalMcpJson(kokoro.platform.v1.ImportPersonalMcpJsonRequest) returns (kokoro.platform.v1.ImportPersonalMcpJsonResponse);
   rpc GetPersonalMcpServer(kokoro.platform.v1.GetPersonalMcpServerRequest) returns (kokoro.platform.v1.GetPersonalMcpServerResponse);
+  rpc GetPersonalMcpPrepareReceipt(kokoro.platform.v1.GetPersonalMcpPrepareReceiptRequest) returns (kokoro.platform.v1.GetPersonalMcpPrepareReceiptResponse);
   rpc PreparePersonalMcpServer(kokoro.platform.v1.PreparePersonalMcpServerRequest) returns (kokoro.platform.v1.PreparePersonalMcpServerResponse);
   rpc UpdatePersonalMcpServer(kokoro.platform.v1.UpdatePersonalMcpServerRequest) returns (kokoro.platform.v1.UpdatePersonalMcpServerResponse);
   rpc DeletePersonalMcpServer(kokoro.platform.v1.DeletePersonalMcpServerRequest) returns (kokoro.platform.v1.DeletePersonalMcpServerResponse);
@@ -2114,6 +2116,8 @@ enum PersonalMcpErrorReason {
   PERSONAL_MCP_ERROR_REASON_NOT_PREPARED = 1;
   PERSONAL_MCP_ERROR_REASON_NEEDS_CLIENT = 2;
   PERSONAL_MCP_ERROR_REASON_AUTH_METHOD_UNSUPPORTED = 3;
+  PERSONAL_MCP_ERROR_REASON_PREPARE_CONNECTION_REJECTED = 4;
+  PERSONAL_MCP_ERROR_REASON_PREPARE_EXECUTION_FENCED = 5;
 }
 message PersonalMcpErrorDetail { kokoro.platform.v1.PersonalMcpErrorReason reason = 1; }
 
@@ -2475,4 +2479,71 @@ message ImportPersonalMcpIconUrlRequest {
 message ImportPersonalMcpIconUrlResponse {
   kokoro.platform.v1.PersonalMcpIconIntent intent = 1;
   bool replayed = 2;
+}
+
+// Historical Prepare ACK lookup only. This method never executes Prepare.
+message GetPersonalMcpPrepareReceiptRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.McpServerId server_id = 3;
+  uint64 expected_state_version = 4;
+}
+message GetPersonalMcpPrepareReceiptResponse {
+  kokoro.platform.v1.PreparePersonalMcpServerResponse completed = 1;
+}
+
+// Project exact installation content is not a personal/source read alias.
+message InspectProjectSkillInstallationPackageRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "project_ref", "command", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.SkillInstallationId installation_id = 2;
+  optional string file_path = 3;
+}
+
+message InspectProjectSkillInstallationPackageResponse {
+  kokoro.platform.v1.SkillSourceRef source_ref = 1;
+  uint64 revision = 2;
+  repeated kokoro.platform.v1.SkillPackageTextFile files = 3;
+  kokoro.platform.v1.SkillPackageSelectedText selected_file = 4;
+}
+
+message GetProjectSkillInstallationPackageDownloadRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "project_ref", "command", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.SkillInstallationId installation_id = 2;
+}
+
+message GetProjectSkillInstallationPackageDownloadResponse {
+  kokoro.platform.v1.SkillSourceRef source_ref = 1;
+  uint64 revision = 2;
+  string filename = 3;
+  string content_sha256 = 4;
+  uint64 size_bytes = 5;
+  kokoro.platform.v1.PackageTransferReference transfer_reference = 6;
+}
+
+service ProductProjectSkillInstallationContentService {
+  rpc InspectProjectSkillInstallationPackage(kokoro.platform.v1.InspectProjectSkillInstallationPackageRequest) returns (kokoro.platform.v1.InspectProjectSkillInstallationPackageResponse);
+  rpc GetProjectSkillInstallationPackageDownload(kokoro.platform.v1.GetProjectSkillInstallationPackageDownloadRequest) returns (kokoro.platform.v1.GetProjectSkillInstallationPackageDownloadResponse);
+}
+
+// A new local authorization generation never reactivates a revoked identity.
+message ReauthorizePersonalMcpServerRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "target_owner_scope", "product_context", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.McpServerId server_id = 3;
+  kokoro.platform.v1.McpConnectorId source_connector_id = 4;
+  uint64 expected_server_state_version = 5;
+  uint64 expected_connector_state_version = 6;
+}
+message ReauthorizePersonalMcpServerResponse {
+  kokoro.platform.v1.PersonalMcpServer server = 1;
+  kokoro.platform.v1.PersonalMcpConnector connector = 2;
+  bool replayed = 3;
 }

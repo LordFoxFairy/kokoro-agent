@@ -12,7 +12,7 @@ from collections import deque
 from dataclasses import dataclass
 import hashlib
 import logging
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, TypeGuard
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
@@ -98,8 +98,12 @@ def _config(locator: dict[str, str]) -> RunnableConfig:
     return {"configurable": dict(locator)}
 
 
+def _is_message_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
 def _steer_messages(value: object) -> list[tuple[str, str]]:
-    items = cast(list[object], value) if isinstance(value, list) else [value]
+    items = value if _is_message_list(value) else [value]
     exact: list[tuple[str, str]] = []
     for item in items:
         if isinstance(item, HumanMessage) and isinstance(item.id, str):

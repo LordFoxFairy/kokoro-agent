@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 import hashlib
 import json
-from typing import Annotated, Any, Literal, NoReturn, cast
+from typing import Annotated, Any, Literal, NoReturn
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
@@ -1355,7 +1355,8 @@ class PostgresRunInteractions:
         root_ids = [witness.root_anchor_id, *witness.root_successor_ids]
         await execute_sql(
             cur,
-            f"""SELECT checkpoint_ns, checkpoint_id, parent_checkpoint_id, metadata
+            f"""SELECT checkpoint_ns, checkpoint_id, parent_checkpoint_id, metadata,
+            metadata -> 'parents' ->> '' AS root_anchor_id
             FROM {checkpoints} WHERE thread_id=%s AND
             ((checkpoint_ns=%s AND checkpoint_id=%s) OR
              (checkpoint_ns='' AND checkpoint_id=ANY(%s)))""",
@@ -1367,14 +1368,12 @@ class PostgresRunInteractions:
         }
         leaf = rows.get((group.checkpoint_ns, group.checkpoint_id))
         anchor = rows.get(("", witness.root_anchor_id))
-        parents: object = leaf["metadata"].get("parents") if leaf is not None else None
         if (
             leaf is None
             or anchor is None
             or leaf["metadata"].get("kokoro_run_id") != value.run_id
             or anchor["metadata"].get("kokoro_run_id") != value.run_id
-            or not isinstance(parents, dict)
-            or cast(dict[str, object], parents).get("") != witness.root_anchor_id
+            or leaf["root_anchor_id"] != witness.root_anchor_id
         ):
             raise InteractionCorrupt(
                 "Swarm witness does not match the committed root anchor"

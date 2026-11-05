@@ -733,6 +733,10 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
                         native.append(
                             {"type": "reject", "message": payload.get("reason", "")}
                         )
+                    elif decision.kind == "respond":
+                        native.append(
+                            {"type": "respond", "message": payload["response"]}
+                        )
                     else:
                         native.append({"type": decision.kind})
                 value: JsonValue = (

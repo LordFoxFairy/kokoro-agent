@@ -58,14 +58,18 @@ class _NativeFixture:
     effects: list[JsonValue]
 
 
-def _approval(names: tuple[str, ...] = ("danger", "danger")) -> dict[str, JsonValue]:
+def _approval(
+    names: tuple[str, ...] = ("danger", "danger"),
+    *,
+    allowed: tuple[str, ...] = ("approve", "edit", "reject"),
+) -> dict[str, JsonValue]:
     return {
         "action_requests": [
             {"name": name, "args": {"secret": "private"}, "description": "sdk-template"}
             for name in names
         ],
         "review_configs": [
-            {"action_name": name, "allowed_decisions": ["approve", "edit", "reject"]}
+            {"action_name": name, "allowed_decisions": list(allowed)}
             for name in dict.fromkeys(names)
         ],
     }
@@ -311,12 +315,22 @@ async def test_full_collection_rejects_entire_invalid_batch_before_native(
             {"type": "edit", "edited_action": {"name": "danger", "args": {"x": 2}}},
         ),
         ("reject", {"reason": "no"}, {"type": "reject", "message": "no"}),
+        (
+            "respond",
+            {"response": "蓝色 / blue"},
+            {"type": "respond", "message": "蓝色 / blue"},
+        ),
     ],
 )
 async def test_native_approval_mapping_preserves_actual_decisions(
     kind: str, payload: dict[str, JsonValue], expected: dict[str, JsonValue]
 ) -> None:
-    fx = await _fixture((_approval(("danger",)),))
+    native = (
+        _approval(("ask_user_question",), allowed=("respond",))
+        if kind == "respond"
+        else _approval(("danger",))
+    )
+    fx = await _fixture((native,))
     item = decode_pause_snapshot(fx.paused.pause).groups[0].items[0]
     prepared = await _prepare(fx, [{"item_id": item.item_id, "type": kind, **payload}])
     mapping = _JSON.validate_python(prepared.command.resume)

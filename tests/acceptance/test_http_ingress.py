@@ -1699,6 +1699,107 @@ async def test_control_and_evidence_use_real_redis_and_postgres_state(
 
 
 @pytest.mark.asyncio
+async def test_terminal_run_control_does_not_reopen_redis_stream(
+    acceptance_state: _AcceptanceState,
+    http_client: httpx.AsyncClient,
+) -> None:
+    from kokoro_agent.domain.run.models import (
+        ExecutionTerminalAuthority,
+        RunTerminalOutcome,
+    )
+
+    run_id = f"late-control-{uuid.uuid4().hex}"
+    request = _request(run_id)
+    acceptance_state.register_run(run_id)
+    control_path = f"/v1/runs/{run_id}/control"
+    events_path = f"/v1/sessions/{request.session_id}/events?after_seq=0&limit=10"
+    stream = run_control_stream(run_id)
+
+    async def cancel(key: str) -> dict[str, JsonValue]:
+        response = await http_client.post(
+            control_path,
+            headers={**_headers(), "Idempotency-Key": key},
+            json={"kind": "run.cancel", "session_id": request.session_id},
+        )
+        assert response.status_code == 202, response.text
+        return _nested(_json_object(response.json()), "data")
+
+    async with make_run_repository(
+        acceptance_state.config.run_repository
+    ) as repository:
+        await repository.enqueue_dispatch(
+            request,
+            runtime_namespace(request.execution_identity),
+            f"acceptance:{run_id}",
+        )
+        lease = await repository.claim_dispatch(request, "late-control-fixture")
+        assert lease is not None
+        accepted = await cancel("accepted-before-terminal")
+        assert accepted["status"] == "pending" and accepted["replayed"] is False
+        assert len(await _read_matching(acceptance_state, stream, run_id)) == 1
+        terminal = await repository.finalize_terminal(
+            run_id,
+            ExecutionTerminalAuthority(lease=lease),
+            RunTerminalOutcome(
+                payload=RunCompletedPayload(status="completed", token_usage=None),
+                usage=None,
+            ),
+            (),
+        )
+        assert terminal.status == "committed"
+        assert await repository.is_terminal(run_id)
+
+    # Retire only this Run's stream, as the worker does on a real terminal.
+    port = RedisStream(acceptance_state.redis_url)
+    try:
+        await port.delete(stream)
+    finally:
+        await port.aclose()
+    before = await http_client.get(events_path, headers=_headers())
+    assert before.status_code == 200
+    evidence = _nested(_json_object(before.json()), "data")
+    events = evidence["events"]
+    assert isinstance(events, list)
+    terminals = [
+        event
+        for raw in events
+        if (event := _json_object(raw))["event_type"] in {"run.completed", "run.failed"}
+    ]
+    assert len(terminals) == 1 and terminals[0]["event_type"] == "run.completed"
+    assert terminals[0]["run_id"] == run_id
+    payload = terminals[0]["payload_json"]
+    assert isinstance(payload, str)
+    assert _json_object(json.loads(payload))["status"] == "completed"
+
+    late = await cancel("new-after-terminal")
+    frames = await _read_matching(acceptance_state, stream, run_id)
+    assert (late["status"], len(frames)) == ("failed", 0)
+    assert late["error_code"] == "control_superseded" and late["replayed"] is False
+    assert await cancel("new-after-terminal") == {**late, "replayed": True}
+    assert await cancel("accepted-before-terminal") == {**accepted, "replayed": True}
+
+    conflict = await http_client.post(
+        control_path,
+        headers={**_headers(), "Idempotency-Key": "new-after-terminal"},
+        json={
+            "kind": "run.steer",
+            "session_id": request.session_id,
+            "message_id": "different-message",
+            "content": "Different input for the same command",
+        },
+    )
+    assert conflict.status_code == 409
+    assert (
+        _nested(_json_object(conflict.json()), "error")["code"]
+        == "command_digest_mismatch"
+    )
+    assert await _read_matching(acceptance_state, stream, run_id) == []
+    after = await http_client.get(events_path, headers=_headers())
+    assert after.status_code == 200
+    assert _nested(_json_object(after.json()), "data") == evidence
+
+
+@pytest.mark.asyncio
 async def test_history_and_replay_are_identity_scoped_over_http(
     acceptance_state: _AcceptanceState,
     http_client: httpx.AsyncClient,

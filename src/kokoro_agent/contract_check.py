@@ -14,6 +14,7 @@ from kokoro_agent.chat_contract_check import (
     http82_display_parent_bytes,
     http72_parent_bytes,
     http74_parent_bytes,
+    http812_resource_refs_parent_bytes,
     http811_project_instruction_parent_bytes,
     generate_failure_models,
     read_contract_document as read_document,
@@ -114,6 +115,10 @@ def http73_parent_bytes(document: dict[str, object]) -> bytes:
 
 
 def validate_openapi_document(document: dict[str, object]) -> None:
+    document = _object(
+        json.loads(http812_resource_refs_parent_bytes(document)),
+        source="HTTP8.12 resource refs parent",
+    )
     parent = _object(
         json.loads(http811_project_instruction_parent_bytes(document)),
         source="HTTP8.11 project instruction parent",

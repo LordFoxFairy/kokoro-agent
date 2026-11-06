@@ -576,6 +576,10 @@ def failure_model_bytes(
         == HTTP_CONTRACT_VERSION
     ):
         document = _object(
+            json.loads(http812_resource_refs_parent_bytes(document)),
+            source="HTTP8.12 resource refs parent",
+        )
+        document = _object(
             json.loads(http811_project_instruction_parent_bytes(document)),
             source="HTTP8.11 project instruction parent",
         )
@@ -706,7 +710,14 @@ def generate_failure_models(root: Path, *, check: bool) -> None:
     # Current generation must contain the complete exact child, not merely a
     # compatible historical failure tuple with an invented new provenance tag.
     parent = _object(
-        json.loads(http811_project_instruction_parent_bytes(document)),
+        json.loads(
+            http811_project_instruction_parent_bytes(
+                _object(
+                    json.loads(http812_resource_refs_parent_bytes(document)),
+                    source="HTTP8.12 resource refs parent",
+                )
+            )
+        ),
         source="HTTP8.11 project instruction parent",
     )
     http89_custom_api_parent_bytes(parent)
@@ -1519,12 +1530,64 @@ _PROJECT_INSTRUCTION_SCHEMA = {
     ),
 }
 
+_RESOURCE_REF_SCHEMA = {
+    "type": "array",
+    "maxItems": 16,
+    "uniqueItems": True,
+    "x-kokoro-json-byte-limit": 4096,
+    "description": "Opaque owner references selected for this Run. Only asset/artifact IDs and an optional version ID are accepted; URLs, content, identities and digests are forbidden. Omission or [] selects none.",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["kind", "resource_id"],
+        "properties": {
+            "kind": {"type": "string", "enum": ["asset", "artifact"]},
+            "resource_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 191,
+                "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\s\S])",
+            },
+            "version_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 191,
+                "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\s\S])",
+            },
+        },
+    },
+}
+
+
+def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the A-08 opaque resource selection child."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != HTTP_CONTRACT_VERSION:
+        raise ValueError("resource refs require the current Agent HTTP version")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
+    props = _object(launch.get("properties"), source="launch properties")
+    if props.pop("selected_resource_refs", None) != _RESOURCE_REF_SCHEMA:
+        raise ValueError("resource refs schema differs")
+    launch["properties"] = props
+    schemas["LaunchRequest"] = launch
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.12.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if hashlib.sha256(raw).hexdigest() != "94c497ea815eaccc545429756af9b8826d82c7f82a896d3a1fda972e03c71596":
+        raise ValueError("complete HTTP8.12 resource refs parent differs")
+    return raw
+
 
 def http811_project_instruction_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact Project launch delta and prove every issued 8.11 byte."""
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
-    if info.get("version") != HTTP_CONTRACT_VERSION:
+    if info.get("version") not in {HTTP_CONTRACT_VERSION, "8.12.0"}:
         raise ValueError("project instruction requires the current Agent HTTP version")
     components = _object(parent.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")

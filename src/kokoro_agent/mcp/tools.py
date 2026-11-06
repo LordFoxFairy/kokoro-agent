@@ -18,7 +18,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from langchain.tools import ToolRuntime
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import StructuredTool, ToolException
 from langchain_mcp_adapters.callbacks import CallbackContext, Callbacks
 from mcp.shared.context import RequestContext
 from mcp.types import (
@@ -112,9 +112,11 @@ async def _call_with_elicitation(
                 if isinstance(exc, GraphInterrupt):
                     raise exc
                 if exc is not None:  # 远端执行失败：错误文本给模型自纠，不炸 run。
-                    return "error: MCP_TOOL_CALL_FAILED"
+                    raise ToolException("error: MCP_TOOL_CALL_FAILED") from None
                 result = invoke_task.result()
-                return ("error: " if result.isError else "") + result.model_dump_json()
+                if result.isError:
+                    raise ToolException("error: " + result.model_dump_json())
+                return result.model_dump_json()
             params, fut = next_task.result()
             next_task = None
             outcome = request_input(
@@ -215,17 +217,17 @@ def make_mcp_tools(
     async def describe_tool(server: str, tool: str) -> str:
         reference = granted.get(server)
         if reference is None or client is None:
-            return "error: MCP_CONNECTION_NOT_DECLARED"
+            raise ToolException("error: MCP_CONNECTION_NOT_DECLARED")
         try:
             tools = await client.list_tools(reference)
             found = next((value for value in tools if value.name == tool), None)
             if found is None:
-                return "error: MCP_TOOL_NOT_ALLOWED"
+                raise ToolException("error: MCP_TOOL_NOT_ALLOWED")
             return f"{server}/{tool}\n{found.description}\n参数 schema：{json.dumps(found.input_schema, ensure_ascii=False)}"
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GraphInterrupt, ToolException):
             raise
         except Exception:
-            return "error: MCP_CURRENT_READ_FAILED"
+            raise ToolException("error: MCP_CURRENT_READ_FAILED") from None
 
     async def call_tool(
         server: str,
@@ -242,9 +244,9 @@ def make_mcp_tools(
         reference = granted.get(server)
         call_id = current_mcp_tool_call_id(run_id)
         if reference is None or client is None:
-            return "error: MCP_CONNECTION_NOT_DECLARED"
+            raise ToolException("error: MCP_CONNECTION_NOT_DECLARED")
         if call_id is None:
-            return "error: MCP_JOURNAL_CALL_REQUIRED"
+            raise ToolException("error: MCP_JOURNAL_CALL_REQUIRED")
         try:
             return await _call_with_elicitation(
                 client.call_tool(
@@ -258,10 +260,10 @@ def make_mcp_tools(
                 tool,
                 call_id,
             )
-        except (asyncio.CancelledError, GraphInterrupt):
+        except (asyncio.CancelledError, GraphInterrupt, ToolException):
             raise
         except Exception:
-            return "error: MCP_TOOL_CALL_FAILED"
+            raise ToolException("error: MCP_TOOL_CALL_FAILED") from None
 
     return (
         StructuredTool(
@@ -275,11 +277,13 @@ def make_mcp_tools(
             description=MCP_1_DESCRIPTION,
             args_schema=DescribeToolArgs,
             coroutine=describe_tool,
+            handle_tool_error=True,
         ),
         StructuredTool(
             name=MCP_TOOL_METADATA[2][0],
             description=MCP_2_DESCRIPTION,
             args_schema=CallToolArgs,
             coroutine=call_tool,
+            handle_tool_error=True,
         ),
     )

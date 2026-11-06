@@ -14,22 +14,22 @@ MCP_RUNTIME_SOURCES = (
     (
         "contract/platform/v1/mcp-runtime/mcp-runtime-v1.json",
         "contract/execution-operations/mcp-runtime-v1.json",
-        "16b052f16193c01b1d110df9b9fb75aec66698771f87ee3ff0e595e1c47d09d4",
+        "c35cc7adaeeca98f88449a3d51b08db73071cde6007bbe021030ec5328442b90",
     ),
     (
         "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto",
         "contract/proto/kokoro/platform/v1/mcp_runtime.proto",
-        "1c0e942b56c9b711207f9f4e1155c7b5d24ce2632e18adc98cf9884542ab0b17",
+        "245ab6b081bf91207caf1d2ea51b453fafea6fbc07c040befbd06937ef9489d7",
     ),
     (
         "contract/platform/v1/mcp-runtime/mcp-runtime-v1.binpb",
         "contract/descriptor/mcp-runtime-v1.binpb",
-        "41fcab4fce74502e2a74e00a8c03d8d7ac913d5ee9e41adb764ef72f0620b955",
+        "56388f48b7d2f563a7aa9f56e0b9d15e73b2a453d640b3c8297502354fee6dc2",
     ),
     (
         "contract/platform/v1/mcp-runtime/mcp_runtime_pb.ts",
         "src/generated/proto/kokoro/platform/v1/mcp_runtime_pb.ts",
-        "0dad7af6d2d9d6b359f88d37fa113f7f53db9267356126f9f7fe7ff1c499136e",
+        "5a4fda4a36b4924a1bd6836f7f28a8a9976d3f903e58ed331aff71a0608981ec",
     ),
     (
         "contract/platform/v1/mcp-runtime/mcp-runtime-request-binding.ts",
@@ -61,9 +61,9 @@ def validate_mcp_runtime_artifact(root: Path, provenance: Mapping[str, object]) 
     ]
     if (
         set(runtime) != {"owner_commit", "profile", "version", "sources"}
-        or runtime.get("owner_commit") != "c3decfdc0910d1f9ddd992b90629d9ce3350b1b6"
+        or runtime.get("owner_commit") != "8cfead647856ef54ec851a3bebe169a3ca14d212"
         or runtime.get("profile") != "mcp-runtime-material-v1"
-        or runtime.get("version") != "1.1.0"
+        or runtime.get("version") != "1.5.0"
         or runtime.get("sources") != expected
     ):
         raise PlatformRequestBindingError("MCP runtime publication pin drift")
@@ -92,7 +92,7 @@ def validate_mcp_runtime_artifact(root: Path, provenance: Mapping[str, object]) 
     )
     if (
         profile.get("profile") != "mcp-runtime-material-v1"
-        or profile.get("version") != "1.1.0"
+        or profile.get("version") != "1.5.0"
         or profile.get("status") != "prepared"
         or profile.get("routable") is not False
         or profile.get("runtime_verified") is not False

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+import pytest
+
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     SummarizationMiddleware,
@@ -23,6 +25,63 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph_swarm import SwarmState, create_handoff_tool, create_swarm
 from pydantic import PrivateAttr
+
+from support.deepagents import create_test_deep_agent
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+async def test_deepagents_filesystem_preserves_official_handoff_route(
+    asynchronous: bool,
+) -> None:
+    """The real file middleware must preserve a tool's parent graph route."""
+    handoff = create_handoff_tool(agent_name="beta")
+    alpha: Any = create_test_deep_agent(
+        name="alpha",
+        model=ToolCapturingFakeModel(
+            messages=iter(
+                [
+                    AIMessage(
+                        content="handing over",
+                        tool_calls=[
+                            {"id": "handoff", "name": handoff.name, "args": {}}
+                        ],
+                    ),
+                    AIMessage(content="route was lost"),
+                ]
+            )
+        ),
+        tools=[handoff],
+        subagents=[],
+        permissions=[],
+        interrupt_on={},
+    )
+    beta: Any = create_test_deep_agent(
+        name="beta",
+        model=ToolCapturingFakeModel(
+            messages=iter([AIMessage(content="peer answered")])
+        ),
+        tools=[],
+        subagents=[],
+        permissions=[],
+        interrupt_on={},
+    )
+    graph = create_swarm([alpha, beta], default_active_agent="alpha").compile(
+        checkpointer=InMemorySaver()
+    )
+    payload = {"messages": [{"role": "user", "content": "handoff"}]}
+    config: Any = {"configurable": {"thread_id": f"filesystem-route-{asynchronous}"}}
+    result = (
+        await graph.ainvoke(payload, config=config)
+        if asynchronous
+        else graph.invoke(payload, config=config)
+    )
+    assert result["active_agent"] == "beta"
+    assert result["messages"][-1].content == "peer answered"
+    assert [
+        message.tool_call_id
+        for message in result["messages"]
+        if isinstance(message, ToolMessage)
+    ] == ["handoff"]
 
 
 def _peer(name: str, handoff_target: str):

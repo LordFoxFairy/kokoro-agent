@@ -2,14 +2,36 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from functools import partial
+from unittest.mock import AsyncMock, Mock
+from deepagents.backends.state import StateBackend
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import SystemMessage
+import kokoro_agent.agent_factory as assembly
+from kokoro_agent.clients.custom_api_runtime import (
+    CustomApiClientError,
+    CustomApiEnvironmentProvider,
+    PlatformCustomApiClient,
+)
+from kokoro_agent.clients.platform_transport import PlatformRequest
+from kokoro_agent.execution.platform_request_binding import project_request_binding
+from kokoro_agent.features.chat import CHAT_FEATURE
+from kokoro_agent.generated.kokoro.platform.v1 import custom_api_runtime_pb as api_pb
+from kokoro_agent.protocol.control import CustomApiProfileSelection
+
+from support.model_execution import unavailable_model_execution
+
 import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from pydantic import SecretStr
+from typing import Any, Literal
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.outputs import ChatResult
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.clients.skills import ResolvedSkill, PlatformSkillClient
 from kokoro_agent.domain.run.models import LeasedRun
 
@@ -108,6 +130,22 @@ class RouteResolver:
             max_output_tokens=128,
         )
 
+    async def read_credential(
+        self,
+        *,
+        tenant_id: str,
+        route: ResolvedModel,
+        label: str | None,
+        request_id: str | None,
+    ) -> ModelCredential:
+        assert tenant_id == "tenant"
+        assert label is None or label == route.label_key
+        return ModelCredential(
+            provider_id=route.provider_id,
+            secret_handle_ref=route.connection.secret_handle_ref,
+            api_key=SecretStr("unit-model-key"),
+        )
+
 
 def _request(feature_key: str) -> RunRequest:
     return RunRequest(
@@ -149,7 +187,9 @@ def _factory(
     config: AppConfig | None = None,
     delivery: DeliveryClient | None = None,
     platform: WorkerPlatformRuntime | None = None,
+    checkpointer: InMemorySaver | None = None,
     isolate_model_call_gate_for_unrelated_unit_scope: bool = False,
+    toolbox: ProcessToolbox | None = None,
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
@@ -173,24 +213,12 @@ def _factory(
             "ModelCallRuntimeMiddleware",
             _UnrelatedUnitScopeModelCallMiddleware,
         )
-    from pydantic import SecretStr
-
     active_config = config or AppConfig.from_env({})
-    active_config = active_config.model_copy(
-        update={
-            "model_credentials": (
-                ModelCredential(
-                    provider_id="provider",
-                    secret_handle_ref="model-unit-key",
-                    api_key=SecretStr("unit-model-key"),
-                ),
-            ),
-        }
-    )
     clients = WorkerClients()
     repository = FakeRunRepository()
     return AgentFactory(
         WorkerDependencies(
+            model_execution=unavailable_model_execution,
             model=active_config.model,
             sandbox=active_config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
@@ -201,8 +229,8 @@ def _factory(
             ),
             manifest=production_manifest(),
             subagent_catalog=build_subagent_catalog(None),
-            toolbox=build_toolbox(fetch_allow_private=False, search=None),
-            checkpointer=InMemorySaver(),
+            toolbox=toolbox or build_toolbox(fetch_allow_private=False, search=None),
+            checkpointer=checkpointer if checkpointer is not None else InMemorySaver(),
             run_repository=repository,
             model_call_repository=_UnusedModelCallRepository(),
             memory_store=InMemoryStore(),
@@ -250,6 +278,14 @@ async def test_builds_native_agent_without_external_clients(
     assert callable(handle.runnable.astream_events)
     assert callable(handle.runnable.aget_state)
     assert "deliver" not in handle.tool_descriptions
+    assert dict(handle.tool_display_codes) == {
+        "read_file": "tool.file.read",
+        "write_file": "tool.file.write",
+        "mcp_list_tools": "tool.mcp.discover",
+        "mcp_describe_tool": "tool.mcp.describe",
+        "mcp_call": "tool.mcp.call",
+        "web_fetch": "tool.web.fetch",
+    }
     assert resolver.calls
     assert all(call[:3] == ("tenant", feature_key, None) for call in resolver.calls)
 
@@ -481,6 +517,7 @@ async def _native_script(
     delivery: DeliveryClient,
     *,
     catalog: FeatureCatalog = FEATURE_CATALOG,
+    action_observer: ActionObservationSink = lambda _observation: None,
 ) -> tuple[list[BaseMessage], FakeRunRepository]:
     factory, repository = _factory(
         monkeypatch,
@@ -503,7 +540,7 @@ async def _native_script(
     lease = await repository.try_claim(request)
     assert lease is not None
     handle = await factory.build(
-        request, lease, await _r93_progress(repository, request, lease)
+        request, lease, await _r93_progress(repository, request, lease), action_observer
     )
     config: RunnableConfig = {"configurable": {"thread_id": request.session_id}}
     run = await handle.runnable.astream_events(
@@ -682,7 +719,6 @@ async def test_factory_exact_refs_preflight_and_empty_zero_skill_dependencies(
     from pathlib import Path
     from kokoro_agent.clients.skills import PlatformSkillClient
     from kokoro_agent.clients.platform_transport import (
-        PlatformRequest,
         PlatformResponse,
     )
     from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
@@ -1094,7 +1130,7 @@ async def test_selected_native_skill_coverage_failure_stops_before_model(
 
     durable_progress = await _r93_progress(repository, request, lease)
 
-    async def progress(phase: SkillPhase) -> SkillProgressCommitted:
+    async def progress(phase: SkillPhase, **_display: object) -> SkillProgressCommitted:
         if native_gap == "progress-store-unavailable" and phase.phase == "failed":
             raise ProgressPersistenceError("native phase store unavailable")
         return await durable_progress(phase)
@@ -1135,8 +1171,9 @@ async def test_selected_native_skill_coverage_failure_stops_before_model(
             and json.loads(row.payload_json).get("activity") == "skill"
         ]
         if native_gap == "progress-store-unavailable":
-            assert phases[-1]["phase"] == "ready"
-            assert all(phase["phase"] != "failed" for phase in phases)
+            # A failed native load never publishes ready; failed ACK loss keeps loading.
+            assert phases[-1]["phase"] == "loading"
+            assert all(phase["phase"] not in {"failed", "ready"} for phase in phases)
         else:
             assert phases[-1]["phase"] == "failed"
             assert phases[-1]["error_code"] == "skill_load_failed"
@@ -1236,7 +1273,7 @@ async def test_skill_lifecycle_adapter_preserves_native_warnings_without_mutatin
 
     from kokoro_agent.protocol import SkillPhase, SkillProgressCommitted
 
-    async def progress(phase: SkillPhase) -> SkillProgressCommitted:
+    async def progress(phase: SkillPhase, **_display: object) -> SkillProgressCommitted:
         assert phase.phase == "failed"
         return SkillProgressCommitted(source_index=1)
 
@@ -1780,9 +1817,16 @@ async def test_r91_real_factory_skill_io_observes_durable_phase(
         ], "real Skill I/O must see its phase already committed"
         assert phases() == ["resolving", "loading", "ready"]
         facts = repository.chat_repository.records
-        assert next(
+        started = next(
             i for i, row in enumerate(facts) if row.event_type == "run.started"
-        ) > max(i for i, row in enumerate(facts) if row.event_type == "activity")
+        )
+        skill_positions = [
+            i
+            for i, row in enumerate(facts)
+            if row.event_type == "activity"
+            and json.loads(row.payload_json).get("activity") == "skill"
+        ]
+        assert skill_positions[0] < skill_positions[1] < started < skill_positions[2]
 
 
 @pytest.mark.parametrize("failure", ["write_error", "fence_rejected"])
@@ -1857,7 +1901,7 @@ async def test_r91_mcp_failure_does_not_relabel_successful_skill_preflight(
         if row.event_type == "activity"
         and json.loads(row.payload_json).get("activity") == "skill"
     ]
-    assert [item["phase"] for item in skills] == ["resolving", "loading", "ready"]
+    assert [item["phase"] for item in skills] == ["resolving", "loading"]
     assert all("error_code" not in item for item in skills)
 
 
@@ -2015,8 +2059,19 @@ async def test_terminal_supervisor_closes_factory_owned_s3_client_after_drain(
         def custom(self) -> AsyncIterable[object]:
             return self._delegate.custom
 
+        @property
+        def extensions(self):
+            return self._delegate.extensions
+
+        @property
+        def subgraphs(self):
+            return self._delegate.subgraphs
+
         async def interrupted(self) -> bool:
             return await self._delegate.interrupted()
+
+        async def output(self) -> dict[str, Any] | None:
+            return await self._delegate.output()
 
         async def __aenter__(self) -> DrainWitnessRun:
             await self._delegate.__aenter__()
@@ -2056,7 +2111,10 @@ async def test_terminal_supervisor_closes_factory_owned_s3_client_after_drain(
             return await self._delegate.aget_state(config, subgraphs=subgraphs)
 
     async def build_with_drain_witness(
-        request: RunRequest, lease: LeaseFence, progress: SkillProgressSink
+        request: RunRequest,
+        lease: LeaseFence,
+        progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         handle = await factory.build(request, lease, progress)
         return replace(handle, runnable=DrainWitnessRunnable(handle.runnable))
@@ -2250,6 +2308,9 @@ async def test_partial_swarm_failure_closes_already_built_s3_client(
 
 
 class _UnusedModelCallRepository:
+    async def read_summary_result(self, command: object):
+        raise AssertionError("unrelated unit scope must not replay summaries")
+
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall:
         raise AssertionError(f"unexpected model-call preparation: {command.call_id}")
 
@@ -2273,6 +2334,9 @@ class _UnusedModelCallRepository:
     ) -> ModelCallEvidenceReceipt:
         raise AssertionError(f"unexpected evidence: {command.attempt_id}")
 
+    async def seal_observation(self, command: object):
+        raise AssertionError("unrelated unit scope must not seal model usage")
+
     async def read_final_evidence(
         self, tenant_id: str, attempt_id: str, event_id: str
     ) -> FinalModelCallEvidence | None:
@@ -2289,9 +2353,9 @@ async def r216_owned_clients(
     owned: list[tuple[ModelHttpClients, list[str]]] = []
 
     def construct(
-        settings: ChatModelSettings, route: ResolvedModel
+        settings: ChatModelSettings, route: ResolvedModel, credential: ModelCredential
     ) -> ModelHttpClients:
-        clients = ModelHttpClients(settings, route)
+        clients = ModelHttpClients(settings, route, credential)
         calls: list[str] = []
         sync_close, async_close = clients.sync.close, clients.async_client.aclose
 
@@ -2448,8 +2512,10 @@ async def test_r216_repeated_close_cancellation_settles_owned_async_client(
     assert clients.sync.is_closed and clients.async_client.is_closed
 
 
+@pytest.mark.parametrize("request_selection", [False, True])
 async def test_typed_mcp_selection_builds_native_agent_with_current_leased_owner(
     monkeypatch: pytest.MonkeyPatch,
+    request_selection: bool,
 ) -> None:
     from kokoro_agent.clients.mcp import McpConnectionRef
     from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
@@ -2473,13 +2539,25 @@ async def test_typed_mcp_selection_builds_native_agent_with_current_leased_owner
     agent = Agent(
         key="typed",
         prompt="typed",
-        mcp=(McpConnectionRef(connection_id="connection-1"),),
+        mcp=()
+        if request_selection
+        else (McpConnectionRef(connection_id="connection-1"),),
     )
     feature = Feature(key="typed", agents=(agent,), entry_agent="typed")
+    resolver = RouteResolver()
     factory, repository = _factory(
-        monkeypatch, RouteResolver(), FeatureCatalog((feature,)), platform=Platform()
+        monkeypatch, resolver, FeatureCatalog((feature,)), platform=Platform()
     )
-    request = _request("typed")
+    request = RunRequest.model_validate(
+        {
+            **_request("typed").model_dump(),
+            **(
+                {"selected_mcp_connection_ids": ["connection-1"]}
+                if request_selection
+                else {}
+            ),
+        }
+    )
     lease = await repository.try_claim(request)
     assert lease is not None
     handle = await factory.build(
@@ -2491,3 +2569,803 @@ async def test_typed_mcp_selection_builds_native_agent_with_current_leased_owner
         assert handle.describe_tool("mcp_call") is not None
     finally:
         await handle.aclose()
+
+    if request_selection:
+        # Recovery consumes the original stored request, not a mutable menu/default.
+        frozen = repository.static_recipes[request.run_id]
+        assert await repository.pause(request.run_id, lease)
+        recovered_lease = await repository.adopt(request.run_id, "recovered-worker")
+        assert recovered_lease is not None
+        recovered = RunRequest.model_validate_json(request.model_dump_json())
+        restored = await factory.build(
+            recovered,
+            recovered_lease,
+            await _r93_progress(repository, recovered, recovered_lease),
+        )
+        try:
+            assert repository.static_recipes[request.run_id] is frozen
+            assert leased[-1] == LeasedRun(request=recovered, lease=recovered_lease)
+            assert len(owner.requests) == 6
+        finally:
+            await restored.aclose()
+        # A frozen choice is not a permanent authorization grant.
+        from kokoro_agent.clients.mcp import McpClientError
+
+        owner.revoked = True
+        resolver.calls.clear()
+        with pytest.raises(McpClientError):
+            await factory.build(
+                recovered,
+                recovered_lease,
+                await _r93_progress(repository, recovered, recovered_lease),
+            )
+        assert resolver.calls == []
+        assert feature.agents[0].mcp == ()
+
+
+async def test_request_mcp_choice_is_entry_only_frozen_before_owner_io_without_catalog_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.clients.mcp import McpConnectionRef
+
+    original_entry = Agent(
+        key="entry", prompt="entry", mcp=(McpConnectionRef(connection_id="static"),)
+    )
+    peer = Agent(key="peer", prompt="peer")
+    feature = Feature(
+        key="selection",
+        agents=(peer, original_entry),
+        entry_agent="entry",
+        handoffs=(("entry", "peer"),),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    request = RunRequest.model_validate(
+        {
+            **_request("selection").model_dump(),
+            "selected_mcp_connection_ids": ["dynamic", "static"],
+        }
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+
+    async def verify_frozen(*args: object) -> None:
+        frozen = repository.static_recipes[request.run_id]
+        assert b'"dynamic"' in frozen.canonical_bytes
+        assert b'"static"' in frozen.canonical_bytes
+        raise RuntimeError("stop after verified freeze, before owner IO")
+
+    prepare = agent_factory_module.prepare_feature
+
+    def verify_entry(*args: Any, **kwargs: Any):
+        plan = prepare(*args, **kwargs)
+        refs = {
+            p.agent.key: tuple(ref.connection_id for ref in p.agent.mcp)
+            for p in plan.peers
+        }
+        assert refs == {"peer": (), "entry": ("static", "dynamic")}
+        return plan
+
+    monkeypatch.setattr(agent_factory_module, "prepare_feature", verify_entry)
+    monkeypatch.setattr(agent_factory_module, "_preflight", verify_frozen)
+    with pytest.raises(RuntimeError, match="stop after verified freeze"):
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
+    assert factory.feature("selection") is feature
+    assert feature.agents == (peer, original_entry)
+    assert original_entry.mcp == (McpConnectionRef(connection_id="static"),)
+
+
+async def test_trace_does_not_select_connections_and_empty_run_keeps_stable_mcp_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factory, repository = _factory(monkeypatch, RouteResolver())
+    request = RunRequest.model_validate(
+        {
+            **_request("chat").model_dump(),
+            "trace": {
+                "mcp_servers": ["connection-1"],
+                "selected_mcp_connection_ids": ["connection-1"],
+            },
+        }
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    try:
+        for name in ("mcp_list_tools", "mcp_describe_tool", "mcp_call"):
+            assert handle.describe_tool(name) is not None
+        assert factory.feature("chat").agents[0].mcp == ()
+    finally:
+        await handle.aclose()
+
+
+@pytest.mark.parametrize("backend", ["state", "local_shell"])
+@pytest.mark.parametrize("operation", ["write_file", "edit_file"])
+async def test_native_file_recovery_owns_state_changes_without_repeating_external_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    backend: Literal["state", "local_shell"],
+    operation: str,
+) -> None:
+    """A journal ACK may survive while the native tool node's checkpoint does not."""
+    from copy import deepcopy
+
+    from langchain.agents.middleware.types import ToolCallRequest
+    from langgraph.checkpoint.base import CheckpointTuple
+    from langgraph.types import Command
+
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.execution.protocols import AgentRunnable
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.policy import Permissions
+    from kokoro_agent.tools.middleware import ToolEffectJournalMiddleware
+
+    class BeforeToolCheckpoint(RuntimeError):
+        pass
+
+    saver = InMemorySaver()
+    agent = Agent(
+        key="file_recovery",
+        prompt="Write and read the owned file.",
+        backend=backend,
+        permissions=Permissions(filesystem="workspace_write"),
+    )
+    feature = Feature(key="file_recovery", agents=(agent,), entry_agent=agent.key)
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        FeatureCatalog((feature,)),
+        config=AppConfig.from_env({"KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path)}),
+        checkpointer=saver,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    config: RunnableConfig = {
+        "configurable": {"thread_id": "owned-file-checkpoint", "checkpoint_ns": ""},
+        "recursion_limit": 40,
+    }
+    turns = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": "/report.txt", "content": "owned before\n"},
+                    "id": "owned-write",
+                    "type": "tool_call",
+                }
+            ],
+        )
+    ]
+    if operation == "edit_file":
+        turns.append(
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "edit_file",
+                        "args": {
+                            "file_path": "/report.txt",
+                            "old_string": "before",
+                            "new_string": "after",
+                        },
+                        "id": "owned-edit",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        )
+    turns.extend(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read_file",
+                        "args": {"file_path": "/report.txt"},
+                        "id": "owned-read",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="Owned file read."),
+        ]
+    )
+    model = LocalFakeChatModel.with_script(turns)
+
+    def scripted_model(
+        _settings: ChatModelSettings,
+        _model: ModelConfig,
+        *,
+        model_clients: ModelHttpClients,
+    ) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", scripted_model)
+    durable: list[CheckpointTuple] = []
+    physical_calls = 0
+    original = ToolEffectJournalMiddleware.awrap_tool_call
+
+    async def crash_after_result(
+        middleware: ToolEffectJournalMiddleware,
+        call: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        async def observed_handler(
+            current: ToolCallRequest,
+        ) -> ToolMessage | Command[Any]:
+            nonlocal physical_calls
+            if current.tool_call["name"] == operation:
+                physical_calls += 1
+            return await handler(current)
+
+        result = await original(middleware, call, observed_handler)
+        if call.tool_call["name"] == operation and not durable:
+            # Capture only the public saver's already-durable records. A real
+            # abrupt exit cannot flush this task's pending files channel later.
+            durable.extend(deepcopy(list(saver.list(config))))
+            raise BeforeToolCheckpoint("owned crash boundary before tool checkpoint")
+        return result
+
+    monkeypatch.setattr(
+        ToolEffectJournalMiddleware, "awrap_tool_call", crash_after_result
+    )
+
+    async def invoke_native(runnable: AgentRunnable, payload: object) -> None:
+        run = await runnable.astream_events(
+            payload,
+            version="v3",
+            config=config,
+            transformers=[CustomTransformer],
+        )
+        async with run:
+            await asyncio.gather(
+                _collect_messages(run.messages),
+                _drain(run.tool_calls),
+                _drain(run.subagents),
+                _drain(run.custom),
+            )
+            assert await run.interrupted() is False
+
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    try:
+        with pytest.raises(BeforeToolCheckpoint):
+            await invoke_native(
+                handle.runnable,
+                {
+                    "messages": [
+                        HumanMessage(content="Write, then read the owned file.")
+                    ]
+                },
+            )
+    finally:
+        await handle.aclose()
+
+    assert durable
+    # Restore those actual durable records through the public saver API; do not
+    # retain later checkpoint writes made by graceful exception cleanup.
+    saver.delete_thread("owned-file-checkpoint")
+    for saved in reversed(durable):
+        saver.put(
+            saved.parent_config or config,
+            saved.checkpoint,
+            saved.metadata,
+            saved.checkpoint["channel_versions"],
+        )
+        task_writes: dict[str, list[tuple[str, Any]]] = {}
+        for task_id, channel, value in saved.pending_writes or ():
+            task_writes.setdefault(task_id, []).append((channel, value))
+        for task_id, writes in task_writes.items():
+            saver.put_writes(saved.config, writes, task_id)
+    restored = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    try:
+        pending = await restored.runnable.aget_state(config)
+        pending_messages: list[BaseMessage] = pending.values["messages"]
+        assert isinstance(pending_messages[-1], AIMessage)
+        assert pending_messages[-1].tool_calls[0]["name"] == operation
+        await invoke_native(restored.runnable, None)
+        result = await restored.runnable.aget_state(config)
+        native_messages: list[BaseMessage] = result.values["messages"]
+        messages = [
+            message for message in native_messages if isinstance(message, ToolMessage)
+        ]
+        read = next(message for message in messages if message.name == "read_file")
+        assert read.status == "success", read.text
+        assert (
+            "owned before" if operation == "write_file" else "owned after"
+        ) in read.text
+        # Native state writes must run again against the restored checkpoint.
+        # External workspace writes have already happened and must run only once.
+        assert physical_calls == (2 if backend == "state" else 1)
+    finally:
+        await restored.aclose()
+
+
+async def test_factory_binds_configured_search_and_fetch_objects_without_calling_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.tools.web_search import SearchProviderSettings
+
+    toolbox = build_toolbox(
+        fetch_allow_private=False,
+        search=SearchProviderSettings(
+            provider="searxng", base_url="https://not-contacted.invalid", api_key=None
+        ),
+    )
+    factory, repository = _factory(monkeypatch, RouteResolver(), toolbox=toolbox)
+    request = _request("chat")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    assert set(dict(handle.tool_display_codes).values()) == {
+        "tool.file.read",
+        "tool.file.write",
+        "tool.mcp.discover",
+        "tool.mcp.describe",
+        "tool.mcp.call",
+        "tool.web.search",
+        "tool.web.fetch",
+    }
+    await handle.aclose()
+
+
+async def test_swarm_does_not_borrow_a_tool_category_from_another_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from kokoro_agent.agents.definition import Agent
+    from kokoro_agent.features.definition import Feature
+    from kokoro_agent.agent_factory import AgentHandle
+
+    original = agent_factory_module.build_deep_agent
+    count = 0
+
+    async def narrow(*args: Any, **kwargs: Any) -> AgentHandle:
+        nonlocal count
+        built = await original(*args, **kwargs)
+        count += 1
+        if count == 2:
+            return replace(
+                built,
+                tool_display_codes=tuple(
+                    (name, code)
+                    for name, code in built.tool_display_codes
+                    if name != "web_fetch"
+                ),
+            )
+        return built
+
+    feature = Feature(
+        key="display_peers",
+        agents=(
+            Agent(key="first", prompt="first"),
+            Agent(key="second", prompt="second"),
+        ),
+        entry_agent="first",
+        handoffs=(("first", "second"),),
+    )
+    factory, repository = _factory(
+        monkeypatch, RouteResolver(), FeatureCatalog((feature,))
+    )
+    monkeypatch.setattr(agent_factory_module, "build_deep_agent", narrow)
+    request = _request(feature.key)
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    assert count == 2
+    assert "web_fetch" not in dict(handle.tool_display_codes)
+    assert "web_fetch" not in {source.name for source in handle.tool_display_sources}
+    assert dict(handle.tool_display_codes)["mcp_call"] == "tool.mcp.call"
+    await handle.aclose()
+
+
+async def test_display_ready_waits_for_native_loader_and_preserves_exact_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    platform = CheckpointSkillPlatform()
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    model = PromptRecordingModel()
+
+    def make_display_model(*_args: object, **_kwargs: object) -> BaseChatModel:
+        return model
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", make_display_model)
+    request = _request("chat").model_copy(
+        update={"project_ref": None, "selected_skill_source_refs": ("skill:alpha",)}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+
+    def skill_rows() -> list[dict[str, Any]]:
+        return [
+            json.loads(row.payload_json)
+            for row in repository.chat_repository.records
+            if row.event_type == "activity"
+            and json.loads(row.payload_json).get("activity") == "skill"
+        ]
+
+    try:
+        assert [row["phase"] for row in skill_rows()] == ["resolving", "loading"]
+        run = await handle.runnable.astream_events(
+            {"messages": [HumanMessage(content="start")]},
+            version="v3",
+            config={"configurable": {"thread_id": "native-display-ready"}},
+            transformers=[CustomTransformer],
+        )
+        async with run:
+            await asyncio.gather(
+                _collect_messages(run.messages),
+                _drain(run.tool_calls),
+                _drain(run.subagents),
+                _drain(run.custom),
+            )
+        ready = [row for row in skill_rows() if row["phase"] == "ready"]
+        assert ready
+        assert ready[-1]["display_skills"] == [
+            {
+                "source_ref": "skill:alpha",
+                "name": "alpha",
+                "virtual_path": "/.skills/YWxwaGE/SKILL.md",
+                "revision": "1",
+            }
+        ]
+        assert model.observed
+    finally:
+        await handle.aclose()
+
+
+async def test_shared_skill_ready_keeps_one_identity_and_rejects_changed_actual_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from kokoro_agent.protocol import SkillPhase
+
+    _unused_factory, repository = _factory(monkeypatch, RouteResolver())
+    run = _request("chat").model_copy(
+        update={"selected_skill_source_refs": ("skill:alpha",)}
+    )
+    lease = await repository.try_claim(run)
+    assert lease is not None
+    progress = await _r93_progress(repository, run, lease)
+    await progress(SkillPhase(phase="resolving"))
+    await progress(SkillPhase(phase="loading"))
+    display = (
+        {
+            "source_ref": "skill:alpha",
+            "name": "actual",
+            "virtual_path": "/.skills/YWxwaGE/SKILL.md",
+            "revision": "1",
+        },
+    )
+    await progress(SkillPhase(phase="ready"), display_skills=display)
+    await progress(SkillPhase(phase="ready"), display_skills=display)
+    with pytest.raises(ValueError, match="display binding"):
+        await progress(
+            SkillPhase(phase="ready"), display_skills=({**display[0], "revision": "2"},)
+        )
+    facts = [
+        json.loads(row.payload_json)
+        for row in repository.chat_repository.records
+        if row.event_type == "activity"
+    ]
+    ready = [fact for fact in facts if fact["phase"] == "ready"]
+    assert len(ready) == 2
+    assert len({fact["activity_id"] for fact in ready}) == 1
+    assert len({fact["preflight_id"] for fact in ready}) == 1
+    assert all(fact["display_skills"] == list(display) for fact in ready)
+
+
+async def test_factory_native_action_metadata_reaches_exact_observer_not_filesystem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.domain.chat.action_intent import ActionObservation
+    from kokoro_agent.tools.action_display import ACTION_FIELD
+
+    observed: list[ActionObservation] = []
+    args = {"file_path": "/action-plan.md", "content": "# plan"}
+    messages, _ = await _native_script(
+        monkeypatch,
+        [
+            AIMessage(
+                content="建立检查单。",
+                tool_calls=[
+                    {
+                        "name": "write_file",
+                        "id": "write-action",
+                        "args": {**args, ACTION_FIELD: "建立项目检查单"},
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="完成。"),
+        ],
+        RecordingDelivery(),
+        action_observer=observed.append,
+    )
+    result = next(
+        m
+        for m in messages
+        if isinstance(m, ToolMessage) and m.tool_call_id == "write-action"
+    )
+    assert result.status == "success"
+    assert len(observed) == 1 and observed[0].matches(
+        "write-action", "write_file", args
+    )
+    assert observed[0].title == "建立项目检查单"
+
+
+# Custom API task sandbox assembly (Platform/model/backend doubles).
+CUSTOM_API_SECRET = "fixture-acquire-only-secret-never-in-prompt"
+CUSTOM_API_NAME = "Fixture account lookup API"
+CUSTOM_API_INSTRUCTIONS = "Call /v1/account in the isolated execution environment."
+CUSTOM_API_ENV_NAME = "ACCOUNT_API_TOKEN"
+
+
+def custom_api_selected(run_id: str) -> RunRequest:
+    return _request("chat").model_copy(
+        update={
+            "run_id": run_id,
+            "selected_custom_api_profiles": (
+                CustomApiProfileSelection(profile_id="api-1", expected_state_version=3),
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize("kind", ["docker", "e2b"])
+async def test_real_factory_describes_once_before_model_and_keeps_recipe_static(
+    kind: Literal["docker", "e2b"], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = AppConfig.from_env(
+        {
+            "KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path),
+            **(
+                {"KOKORO_DOCKER_IMAGE": "fixture-image"}
+                if kind == "docker"
+                else {"KOKORO_E2B_API_KEY": "fixture-e2b-key"}
+            ),
+        }
+    )
+    calls: list[str] = []
+    requests: list[PlatformRequest] = []
+    model_messages: list[list[BaseMessage]] = []
+    metadata_revision = "first"
+
+    async def send(
+        request: PlatformRequest, *, run: LeasedRun, timeout_s: float = 10
+    ) -> object:
+        assert 0 < timeout_s <= 10
+        requests.append(request)
+        binding = project_request_binding(tenant_ref="tenant", request=request)
+        if isinstance(request, api_pb.DescribeCustomApiEnvironmentRequest):
+            calls.append("describe")
+            assert [
+                (ref.profile_id, ref.expected_state_version) for ref in request.profiles
+            ] == [("api-1", 3)]
+            return api_pb.DescribeCustomApiEnvironmentResponse(
+                request_binding_sha256=binding.sha256,
+                run_id=run.request.run_id,
+                execution_session_id=run.request.session_id,
+                profiles=[
+                    api_pb.CustomApiRuntimeProfileDescription(
+                        profile_id="api-1",
+                        state_version=3,
+                        name=CUSTOM_API_NAME,
+                        instructions=f"{CUSTOM_API_INSTRUCTIONS} {metadata_revision}",
+                        environment_names=[CUSTOM_API_ENV_NAME],
+                    )
+                ],
+            )
+        assert isinstance(request, api_pb.AcquireCustomApiEnvironmentRequest)
+        calls.append("acquire")
+        return api_pb.AcquireCustomApiEnvironmentResponse(
+            request_binding_sha256=binding.sha256,
+            run_id=run.request.run_id,
+            execution_session_id=run.request.session_id,
+            environment=[
+                api_pb.CustomApiRuntimeEnvironmentValue(
+                    name=CUSTOM_API_ENV_NAME, value=CUSTOM_API_SECRET.encode()
+                )
+            ],
+        )
+
+    platform = Mock(spec=WorkerPlatformRuntime)
+
+    def for_run(run: LeasedRun) -> PlatformCustomApiClient:
+        sender = Mock()
+        sender.send = AsyncMock(side_effect=partial(send, run=run))
+        return PlatformCustomApiClient(
+            sender=sender,
+            tenant_id=run.request.execution_identity.tenant_ref,
+            run_id=run.request.run_id,
+            execution_session_id=run.request.session_id,
+        )
+
+    platform.custom_api_for_run.side_effect = for_run
+    factory, repository = _factory(
+        monkeypatch,
+        RouteResolver(),
+        config=config,
+        platform=platform,
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    backend = AsyncMock(return_value=StateBackend())
+    monkeypatch.setattr(assembly, "make_backend_for_run", backend)
+
+    class CaptureModel(BaseCallbackHandler):
+        def on_chat_model_start(
+            self,
+            serialized: dict[str, Any],
+            messages: list[list[BaseMessage]],
+            **kwargs: Any,
+        ) -> None:
+            calls.append("model")
+            model_messages.extend(messages)
+
+    first = custom_api_selected("api-run-first")
+    lease = await repository.try_claim(first)
+    assert lease is not None
+    handle = await factory.build(
+        first, lease, await _r93_progress(repository, first, lease)
+    )
+    try:
+        assert calls == ["describe"] and model_messages == []
+        assert factory.backend_for(first) == kind
+        assert backend.await_count == 1 and backend.call_args.args[0] == kind
+        first_arguments = backend.call_args.kwargs
+        provider = first_arguments["environment_provider"]
+        assert isinstance(provider, CustomApiEnvironmentProvider)
+        assert [
+            (ref.profile_id, ref.expected_state_version) for ref in provider.profiles
+        ] == [("api-1", 3)]
+        assert provider.client.run_id == first.run_id
+        assert provider.client.execution_session_id == first.session_id
+        assert first_arguments["run_id"] == first.run_id
+        assert first_arguments["lease"] == lease
+        first_workspace = first_arguments["workspace"]
+        assert isinstance(first_workspace, str) and "/runs/" in first_workspace
+
+        stream = await handle.runnable.astream_events(
+            {"messages": [HumanMessage(content="hello")]},
+            version="v3",
+            config={
+                "configurable": {"thread_id": first.run_id},
+                "callbacks": [CaptureModel()],
+            },
+            transformers=[CustomTransformer],
+        )
+        async with stream:
+            await asyncio.gather(
+                _collect_messages(stream.messages),
+                _drain(stream.tool_calls),
+                _drain(stream.subagents),
+                _drain(stream.custom),
+            )
+            assert await stream.interrupted() is False
+        assert model_messages
+        assert calls[0] == "describe" and calls[1] == "model"
+        for messages in model_messages:
+            prompt = "\n".join(
+                message.text
+                for message in messages
+                if isinstance(message, SystemMessage)
+            )
+            assert (
+                CUSTOM_API_NAME in prompt
+                and CUSTOM_API_INSTRUCTIONS in prompt
+                and CUSTOM_API_ENV_NAME in prompt
+            )
+            assert "user-provided API documentation" in prompt
+            assert CUSTOM_API_SECRET not in prompt
+        assert calls.count("describe") == 1 and "acquire" not in calls
+    finally:
+        await handle.aclose()
+
+    # A different Run in the same session gets different metadata/workspace, not a
+    # new static recipe. This checks the persisted artifact, not prompt source text.
+    metadata_revision = "second"
+    second = custom_api_selected("api-run-second")
+    second_lease = await repository.try_claim(second)
+    assert second_lease is not None
+    second_handle = await factory.build(
+        second,
+        second_lease,
+        await _r93_progress(repository, second, second_lease),
+    )
+    try:
+        assert factory.backend_for(second) == backend.call_args.args[0] == kind
+        assert backend.call_args.kwargs["workspace"] != first_workspace
+        assert backend.call_args.kwargs["environment_provider"] is not provider
+        assert calls.count("describe") == 2 and "acquire" not in calls
+        assert len(requests) == 2
+        first_recipe = repository.static_recipes[first.run_id].canonical_bytes
+        second_recipe = repository.static_recipes[second.run_id].canonical_bytes
+        assert first_recipe == second_recipe
+        for forbidden in (
+            CUSTOM_API_NAME,
+            CUSTOM_API_INSTRUCTIONS,
+            CUSTOM_API_ENV_NAME,
+            CUSTOM_API_SECRET,
+            "fixture-e2b-key",
+        ):
+            assert forbidden.encode() not in first_recipe
+    finally:
+        await second_handle.aclose()
+
+
+@pytest.mark.parametrize(
+    "configuration", ["absent", "docker_without_root", "host_only"]
+)
+async def test_factory_fails_closed_before_owner_model_or_backend_io(
+    configuration: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env = (
+        {"KOKORO_DOCKER_IMAGE": "fixture-image"}
+        if configuration == "docker_without_root"
+        else {}
+    )
+    config = AppConfig.from_env(env)
+    feature = CHAT_FEATURE
+    if configuration == "host_only":
+        config = AppConfig.from_env({"KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path)})
+        feature = replace(
+            CHAT_FEATURE,
+            agents=(replace(CHAT_FEATURE.agents[0], backend="local_shell"),),
+        )
+    resolver = RouteResolver()
+    platform = Mock(spec=WorkerPlatformRuntime)
+    factory, repository = _factory(
+        monkeypatch,
+        resolver,
+        catalog=FeatureCatalog((feature,)),
+        config=config,
+        platform=platform,
+    )
+    backend = AsyncMock(side_effect=AssertionError("unexpected backend construction"))
+    monkeypatch.setattr(assembly, "make_backend_for_run", backend)
+    request = custom_api_selected("api-run-unavailable")
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    with pytest.raises(
+        CustomApiClientError,
+        match="CUSTOM_API_(SANDBOX_UNAVAILABLE|ISOLATED_SANDBOX_REQUIRED)",
+    ):
+        factory.backend_for(request)
+    with pytest.raises(
+        CustomApiClientError,
+        match="CUSTOM_API_(SANDBOX_UNAVAILABLE|ISOLATED_SANDBOX_REQUIRED)",
+    ):
+        await factory.build(
+            request, lease, await _r93_progress(repository, request, lease)
+        )
+    backend.assert_not_awaited()
+    platform.custom_api_for_run.assert_not_called()
+    assert resolver.calls == []
+    assert repository.static_recipes == {}

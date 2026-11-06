@@ -68,6 +68,31 @@ class DeliveryReceipt(BaseModel):
     replayed: bool = False
 
 
+class FinalArtifactReadRequest(BaseModel):
+    """Run-fenced request to read one finalized artifact selected for the run."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    request_id: str
+    run_id: str
+    identity: ExecutionIdentity
+    artifact_id: str
+    content_sha256: str | None = None
+    # Set by the claimed worker; reads are not admitted after lease loss.
+    lease: LeaseFence | None = None
+
+
+class FinalArtifactReadReceipt(BaseModel):
+    """Immutable final-artifact bytes returned only inside the claimed Run."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    artifact_id: str
+    asset_id: str
+    content_sha256: str
+    content: bytes
+
+
 class DeliveryClient(Protocol):
     """Storage Artifact public facade；不向 GA 暴露 bucket/key/签名 URL。"""
 
@@ -76,3 +101,11 @@ class DeliveryClient(Protocol):
     async def recover(
         self, request: DeliveryRecoveryRequest
     ) -> DeliveryReceipt | None: ...
+
+
+class FinalArtifactReadClient(Protocol):
+    """Narrow Run-scoped final-artifact read; no generic Asset access."""
+
+    async def read_final_artifact(
+        self, request: FinalArtifactReadRequest
+    ) -> FinalArtifactReadReceipt: ...

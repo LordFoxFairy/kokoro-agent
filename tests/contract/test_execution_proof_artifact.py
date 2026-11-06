@@ -47,6 +47,10 @@ OWNER_INVENTORY = [
     "src/kokoro_agent/distribution_assets.py",
     "src/kokoro_agent/system_consumer_contract.py",
     "src/kokoro_agent/usage_history_contract.py",
+    "contract/bff/internal-v1/openapi.yaml",
+    "src/kokoro_agent/bff_admission_contract.py",
+    "src/kokoro_agent/clients/bff_admission_generated.py",
+    "scripts/generate_bff_admission_models.py",
 ]
 HEADER_FIELDS = {"typ", "alg", "kid"}
 CLAIMS_OBJECT_PATH = ("properties", "claims")

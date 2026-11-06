@@ -17,6 +17,7 @@ from typing import Never
 from uuid import uuid4
 from collections.abc import Mapping
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentHandle
 
 from kokoro_agent.domain.chat.repositories import ChatRepository
@@ -41,6 +42,7 @@ from kokoro_agent.worker.supervisor_context import (
     ProcessFatal,
     SandboxTeardown,
     SourceResolver,
+    SteerCheckpointRecovery,
     TraceFactory,
 )
 from kokoro_agent.model.call_scope import (
@@ -85,6 +87,7 @@ class RunSupervisor(
         *,
         agent_builder: AgentBuilder,
         interaction_reader: InteractionReader,
+        recover_steers: SteerCheckpointRecovery | None = None,
         run_repository: RunRepository,
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,
@@ -109,6 +112,7 @@ class RunSupervisor(
         ):
             raise ValueError("model-call settle timeout must be positive and finite")
         self._interaction_reader = interaction_reader
+        self._recover_steers = recover_steers
         self._resume_attempts = {}
         self._boot_id = uuid4().hex
         self._drained_attempts = {}
@@ -229,6 +233,7 @@ class RunSupervisor(
         request: RunRequest,
         lease: LeaseFence,
         progress: SkillProgressSink,
+        action_observer: ActionObservationSink,
     ) -> AgentHandle:
         """Build under supervisor ownership until one caller receives the handle."""
         loop = asyncio.get_running_loop()
@@ -239,7 +244,7 @@ class RunSupervisor(
 
         async def assemble() -> None:
             try:
-                handle = await self._build(request, lease, progress)
+                handle = await self._build(request, lease, progress, action_observer)
             except BaseException as error:
                 ready.set_result((None, error))
                 claimed = await decision

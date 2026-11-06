@@ -9,8 +9,10 @@ from urllib.parse import urlsplit
 import httpx
 from pyqwest import Client, HTTPTransport
 
-from kokoro_agent.clients.platform_tokens import validate_owner_url
-from kokoro_agent.clients.platform_transport import BoundedConnectTransport
+from kokoro_agent.clients.platform_transport import (
+    BoundedConnectTransport,
+    validate_owner_url,
+)
 from kokoro_agent.clients.storage import StorageClientError
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.generated.kokoro.storage.v3.storage_connect import (
@@ -24,6 +26,8 @@ class DeliveryTransport(Protocol):
     ) -> object: ...
 
     async def put(self, reference: pb.TransferReference, content: bytes) -> str: ...
+
+    async def get(self, reference: pb.TransferReference) -> bytes: ...
 
 
 class StorageDeliveryTransport:
@@ -82,7 +86,7 @@ class StorageDeliveryTransport:
     async def call(
         self, method: str, request: object, headers: dict[str, str]
     ) -> object:
-        # Only the seven Agent-delivery RPCs are reachable through this dispatch.
+        # Delivery writes plus the one Run-fenced final-artifact read are reachable.
         metadata = {
             **headers,
             "x-kokoro-service": "kokoro-agent",
@@ -110,6 +114,14 @@ class StorageDeliveryTransport:
             request, pb.FinalizeArtifactRequest
         ):
             return await self._client.finalize_artifact(request, headers=metadata)
+        if method == "get_final_artifact_download_reference" and isinstance(
+            request, pb.GetFinalArtifactDownloadReferenceRequest
+        ):
+            if not request.run_id:
+                raise StorageClientError("STORAGE_READ_RUN_REQUIRED")
+            return await self._client.get_final_artifact_download_reference(
+                request, headers=metadata
+            )
         raise StorageClientError("STORAGE_OPERATION_FORBIDDEN")
 
     async def put(self, reference: pb.TransferReference, content: bytes) -> str:
@@ -152,6 +164,53 @@ class StorageDeliveryTransport:
                     "STORAGE_UPLOAD_VERSION_ID_INVALID", retryable=True
                 )
             return source_version_id
+
+    async def get(self, reference: pb.TransferReference) -> bytes:
+        """Fetch one Storage-owned immutable object through a short-lived GET ref."""
+        try:
+            transfer_origin = _origin(reference.url, allow_root_path=False)
+        except ValueError as exc:
+            raise StorageClientError("STORAGE_DOWNLOAD_REFERENCE_INVALID") from exc
+        expiry = reference.expires_at
+        now = datetime.now(timezone.utc)
+        if (
+            transfer_origin != self._object_origin
+            or reference.method != "GET"
+            or expiry is None
+            or expiry.to_datetime() <= now
+            or expiry.to_datetime() > now + timedelta(seconds=901)
+            or reference.required_headers
+        ):
+            raise StorageClientError("STORAGE_DOWNLOAD_REFERENCE_INVALID")
+        try:
+            async with self._put_client.stream(
+                "GET", reference.url, headers={}
+            ) as response:
+                if response.status_code // 100 != 2:
+                    raise StorageClientError(
+                        "STORAGE_DOWNLOAD_GET_FAILED", retryable=True
+                    )
+                content_length = response.headers.get("content-length")
+                if content_length is not None:
+                    try:
+                        if int(content_length) > 1_048_576:
+                            raise StorageClientError("STORAGE_DOWNLOAD_TOO_LARGE")
+                    except ValueError as exc:
+                        raise StorageClientError(
+                            "STORAGE_DOWNLOAD_RESPONSE_INVALID"
+                        ) from exc
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > 1_048_576:
+                        raise StorageClientError("STORAGE_DOWNLOAD_TOO_LARGE")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+        except (httpx.HTTPError, TimeoutError) as exc:
+            raise StorageClientError(
+                "STORAGE_DOWNLOAD_GET_FAILED", retryable=True
+            ) from exc
 
 
 def _origin(value: str, *, allow_root_path: bool) -> tuple[str, str, int]:

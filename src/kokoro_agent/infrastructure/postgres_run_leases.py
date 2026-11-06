@@ -43,6 +43,7 @@ from kokoro_agent.infrastructure.schema import (
     RUN_OUTBOX_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
     RUN_RECEIPTS_TABLE,
+    RUN_STEERS_TABLE,
 )
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     close_model_call_attempts_for_terminal,
@@ -516,17 +517,16 @@ class PostgresRunLeases:
                             isinstance(replay_payload, RunCompletedPayload)
                             and replay_payload.status == "completed"
                         ):
-                            replay_payload = RunCompletedPayload(
-                                status="completed",
-                                token_usage=(
-                                    TokenUsage(
+                            replay_payload = replay_payload.model_copy(
+                                update={
+                                    "token_usage": TokenUsage(
                                         input_tokens=int(row["usage_input_total"]),
                                         output_tokens=int(row["usage_output_total"]),
                                     )
                                     if row["usage_input_total"]
                                     or row["usage_output_total"]
-                                    else None
-                                ),
+                                    else None,
+                                }
                             )
                         replay_projection = project_chat_fact(
                             tenant_id=request.execution_identity.tenant_ref,
@@ -637,15 +637,17 @@ class PostgresRunLeases:
                         isinstance(payload, RunCompletedPayload)
                         and payload.status == "completed"
                     ):
-                        payload = RunCompletedPayload(
-                            status="completed",
-                            token_usage=(
-                                TokenUsage(
+                        payload = payload.model_copy(
+                            update={
+                                "token_usage": TokenUsage(
                                     input_tokens=total_in, output_tokens=total_out
                                 )
                                 if total_in or total_out
-                                else None
-                            ),
+                                else None,
+                            }
+                        )
+                        await events.validate_final_answer_on_cursor(
+                            cur, request, payload
                         )
                     seq, index = (
                         int(row["durable_counter"]),
@@ -769,6 +771,26 @@ class PostgresRunLeases:
                             ),
                             (now, run_id, authority.command_id),
                         )
+                    # This Run cannot consume further supplements. Preserve
+                    # confirmed receipts, and settle all remaining steer
+                    # commands under the same claim lock as terminal outcome.
+                    await execute_sql(
+                        cur,
+                        """UPDATE {} SET status='failed',error_code='control_superseded',
+                        updated_at=to_timestamp(%s/1000.0)
+                        WHERE run_id=%s AND status IN ('admitted','persisted')
+                        AND body::jsonb->>'kind'='run.steer'""".format(
+                            qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
+                        ),
+                        (now, run_id),
+                    )
+                    await execute_sql(
+                        cur,
+                        "DELETE FROM {} WHERE run_id=%s".format(
+                            qualified(self._context.schema, RUN_STEERS_TABLE)
+                        ),
+                        (run_id,),
+                    )
                     await execute_sql(
                         cur,
                         """UPDATE {} SET terminal=TRUE,terminal_at=to_timestamp(%s/1000.0),

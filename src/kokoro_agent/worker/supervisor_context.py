@@ -8,6 +8,7 @@ from typing import Never
 
 from langchain_core.runnables.config import RunnableConfig
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.infrastructure.checkpoint_interactions import InteractionReader
 from kokoro_agent.domain.run.interactions import StartedResume
@@ -43,7 +44,8 @@ SANDBOX_CLEANUP_RETRY_BASE_MS = 1_000
 SANDBOX_CLEANUP_RETRY_MAX_MS = 60_000
 
 AgentBuilder = Callable[
-    [RunRequest, LeaseFence, SkillProgressSink], Awaitable[AgentHandle]
+    [RunRequest, LeaseFence, SkillProgressSink, ActionObservationSink],
+    Awaitable[AgentHandle],
 ]
 ApprovalToolNames = Callable[[RunRequest], frozenset[str]]
 TraceFactory = Callable[[RunRequest], RunnableConfig | None]
@@ -51,6 +53,7 @@ SourceResolver = Callable[[str], SubagentSource]
 BackendResolver = Callable[[RunRequest], Backend]
 FeatureResolver = Callable[[str], Feature]
 SandboxTeardown = Callable[[SandboxBackendKind, str, str], Awaitable[None]]
+SteerCheckpointRecovery = Callable[[RunRequest, LeaseFence], Awaitable[None]]
 ProcessFatal = Callable[[int], Never]
 
 
@@ -60,6 +63,7 @@ class SupervisorContext:
     _boot_id: str
     _drained_attempts: dict[tuple[str, int, str], str]
     _interaction_reader: InteractionReader
+    _recover_steers: SteerCheckpointRecovery | None
     _resume_attempts: dict[str, tuple[str, StartedResume]]
     _build: AgentBuilder
     _run_repository: RunRepository
@@ -169,6 +173,7 @@ class SupervisorContext:
         request: RunRequest,
         lease: LeaseFence,
         progress: SkillProgressSink,
+        action_observer: ActionObservationSink,
     ) -> AgentHandle: ...
 
     async def _guarded(
@@ -186,10 +191,6 @@ class SupervisorContext:
     def _ensure_control_listener(self, bus: StreamProtocol, run_id: str) -> None: ...
 
     async def _control_loop(self, bus: StreamProtocol, run_id: str) -> None: ...
-
-    async def _guarded_control_apply(
-        self, bus: StreamProtocol, run_id: str, msg: InboundMessage
-    ) -> bool: ...
 
     async def _consume_control_frame(
         self,

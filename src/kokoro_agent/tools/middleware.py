@@ -391,7 +391,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             if mcp_token is not None:
                 _MCP_CALL.reset(mcp_token)
         if isinstance(result, ToolMessage):
-            if name in {"deliver", "mcp_call"} and result.text.startswith("error:"):
+            if name == "deliver" and result.text.startswith("error:"):
                 result = result.model_copy(update={"status": "error"})
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。
@@ -491,25 +491,21 @@ class SteeringMiddleware(AgentMiddleware):
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
-        # peek + 下一轮见证 ack（审计缺口：排空与 checkpoint 落盘非原子会窄窗丢插话）——
-        # 只有已出现在 state["messages"]（即已随 checkpoint 落定）的插话才从信箱删除；
-        # 未落定的每轮重注入，稳定 id 由 add_messages 去重，任意崩溃点收敛且绝不丢。
         await _require_current_lease(self._run_repository, self._run_id, self._lease)
-        steers = await self._run_repository.peek_steers(self._run_id)
+        try:
+            steers = await self._run_repository.peek_steers(self._run_id)
+        except Exception:
+            # A supplemental message does not decide the health of this Run.
+            _logger.exception("steer mailbox read deferred run_id=%s", self._run_id)
+            return None
         if not steers:
             return None
         for message_id, content in steers:
             if not content:
                 raise ValueError(f"empty steer content: message_id={message_id!r}")
         seen_ids = {message.id for message in state["messages"]}
-        landed = [message_id for message_id, _ in steers if message_id in seen_ids]
-        if landed:
-            if not await self._run_repository.ack_steers(
-                self._run_id, self._lease, landed
-            ):
-                raise RunSupersededError(
-                    f"run {self._run_id!r} lost its lease while acknowledging steering"
-                )
+        # In-memory state only deduplicates. The independently committed
+        # checkpoint settles the command and deletes the mailbox row.
         fresh = [(mid, content) for mid, content in steers if mid not in seen_ids]
         if not fresh:
             return None

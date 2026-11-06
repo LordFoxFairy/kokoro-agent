@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Callable, Protocol
 
@@ -38,6 +39,7 @@ from kokoro_agent.sandbox.e2b_backend import (
     connect_e2b_sandbox,
     kill_e2b_sandbox,
 )
+from kokoro_agent.sandbox.execution_environment import ExecutionEnvironmentProvider
 from kokoro_agent.domain.run.repository import (
     LeaseFence,
     SandboxBackendKind,
@@ -207,6 +209,8 @@ class SandboxContext:
     run_id: str
     # run_repository 既往记录（HITL resume 现场）：重连既往箱/容器而非新建。
     prior_sandbox_id: str | None
+    environment_provider: ExecutionEnvironmentProvider | None = None
+    environment_loop: asyncio.AbstractEventLoop | None = None
 
 
 class SandboxConnector(Protocol):
@@ -326,6 +330,9 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
         run_id=context.run_id,
         exec_timeout=settings.local_shell_timeout,
         max_output_bytes=settings.local_shell_max_output_bytes,
+        environment_provider=context.environment_provider,
+        environment_loop=context.environment_loop,
+        docker_cli_environment=dict(settings.docker.cli_environment),
     )
     # docker + s3 组合档：与 local_shell 同享写时归档（缺此即静默丢文件面）。
     if (
@@ -347,6 +354,9 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
                 prefix=context.workspace,
                 timeout=settings.local_shell_timeout,
                 max_output_bytes=settings.local_shell_max_output_bytes,
+                environment_provider=context.environment_provider,
+                environment_loop=context.environment_loop,
+                docker_cli_environment=dict(settings.docker.cli_environment),
             )
         except BaseException as primary:
             cleanup_errors: list[BaseException] = []
@@ -357,7 +367,10 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
                     cleanup_errors.append(error)
             if backend.container_id != context.prior_sandbox_id:
                 try:
-                    destroy_docker_sandbox(backend.container_id)
+                    destroy_docker_sandbox(
+                        backend.container_id,
+                        docker_cli_environment=dict(settings.docker.cli_environment),
+                    )
                 except BaseException as error:
                     cleanup_errors.append(error)
             for error in cleanup_errors:
@@ -381,7 +394,11 @@ def _connect_docker(context: SandboxContext) -> BackendProtocol | None:
 
 def _connect_e2b(context: SandboxContext) -> BackendProtocol | None:
     return connect_e2b_sandbox(
-        context.settings.e2b, sandbox_id=context.prior_sandbox_id
+        context.settings.e2b,
+        sandbox_id=context.prior_sandbox_id,
+        environment_provider=context.environment_provider,
+        environment_loop=context.environment_loop,
+        max_output_bytes=context.settings.local_shell_max_output_bytes,
     )
 
 
@@ -482,8 +499,11 @@ async def make_backend_for_run(
     run_id: str,
     lease: LeaseFence,
     sandbox_store: RunSandboxStore,
+    environment_provider: ExecutionEnvironmentProvider | None = None,
 ) -> BackendProtocol | None:
     """统一装配入口：每个 lease generation 只确认一个权威沙箱。"""
+    if environment_provider is not None and kind not in {"docker", "e2b"}:
+        raise ValueError("Custom API execution requires an isolated sandbox")
     connector = _CONNECTORS.get(kind)
     if connector is None:
         raise NotImplementedError(f"backend {kind!r} has no registered connector")
@@ -498,6 +518,10 @@ async def make_backend_for_run(
             workspace=workspace,
             run_id=run_id,
             prior_sandbox_id=prior,
+            environment_provider=environment_provider,
+            environment_loop=asyncio.get_running_loop()
+            if environment_provider
+            else None,
         )
         # 连接器一律 sync（docker CLI / SDK 网络调用秒级阻塞）。显式 task 在取消后仍由
         # 当前构造协程持有，直到真实 thread 返回并完成必要回收，绝不孤立 fire-and-forget。
@@ -635,7 +659,13 @@ async def teardown_backend_for_run(
         if kind == "docker":
             if teardown_ref not in {None, DOCKER_TEARDOWN_REF}:
                 raise ValueError("docker sandbox teardown identity is invalid")
-            await _to_thread_owned(destroy_docker_sandbox, sandbox_id)
+            await _to_thread_owned(
+                partial(
+                    destroy_docker_sandbox,
+                    docker_cli_environment=dict(settings.docker.cli_environment),
+                ),
+                sandbox_id,
+            )
         elif kind == "e2b":
             if teardown_ref not in {None, E2B_TEARDOWN_REF}:
                 raise ValueError("e2b sandbox teardown identity is invalid")

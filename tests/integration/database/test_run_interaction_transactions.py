@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from support.model_http_mechanism import synthetic_final_digest
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.protocol import SkillProgressSink
 
 import asyncio
@@ -1225,11 +1226,10 @@ async def test_r194_a3b_sealed_projection_drift_rolls_back_terminal(
                 (str(uuid4()), attempt_id),
             )
         else:
+            # The row remains admissible but its usage knowledge disagrees with the artifact.
             await execute_sql(
                 cursor,
-                f"""UPDATE {evidence} SET execution_outcome='completed',
-                    usage_state='normalized',totals_state='known_zero',
-                    classification_state='partial',sealed=TRUE WHERE attempt_id=%s""",
+                f"UPDATE {evidence} SET usage_state='normalized' WHERE attempt_id=%s",
                 (attempt_id,),
             )
     model_before = await _model_call_snapshot(
@@ -1652,8 +1652,11 @@ async def test_start_write_failure_rolls_back_attempt_without_dispatch_permissio
     assert await _facts(run_chat_database_url, run_chat_schema, run) == before
 
 
+@pytest.mark.parametrize("final_binding", [False, True])
 async def test_terminal_chat_failure_rolls_back_intent_head_and_original_terminal_outbox(
     run_repository: RunRepository,
+    chat_repository: PostgresChatRepository,
+    final_binding: bool,
     run_chat_database_url: str,
     run_chat_schema: str,
 ) -> None:
@@ -1666,6 +1669,29 @@ async def test_terminal_chat_failure_rolls_back_intent_head_and_original_termina
     run, accepted = await _accepted(
         run_repository, run_chat_database_url, run_chat_schema
     )
+    if final_binding:
+        from kokoro_agent.domain.chat.models import (
+            ChatMessageDraft,
+            assistant_message_id,
+        )
+
+        now = datetime.now(UTC)
+        await chat_repository.save_message(
+            ChatMessageDraft(
+                tenant_id=run.execution_identity.tenant_ref,
+                namespace=RunScope.of(run).namespace,
+                session_id=run.session_id,
+                run_id=run.run_id,
+                chat_message_id=assistant_message_id(
+                    RunScope.of(run).namespace, run.run_id, "final"
+                ),
+                role="assistant",
+                content="answer",
+                status="completed",
+                created_at=now,
+                updated_at=now,
+            )
+        )
     before = await _facts(run_chat_database_url, run_chat_schema, run)
     await _install_write_failure(
         run_chat_database_url, run_chat_schema, stage="chat", phase="terminal"
@@ -1675,7 +1701,11 @@ async def test_terminal_chat_failure_rolls_back_intent_head_and_original_termina
             run.run_id,
             ExecutionTerminalAuthority(lease=accepted.lease),
             RunTerminalOutcome(
-                payload=RunCompletedPayload(status="completed"), usage=None
+                payload=RunCompletedPayload(
+                    status="completed",
+                    final_segment_id="final" if final_binding else None,
+                ),
+                usage=None,
             ),
             (),
         )
@@ -2044,6 +2074,7 @@ async def _bridge_environment(
         CheckpointSettings,
         make_checkpointer,
     )
+    from kokoro_agent.protocol import SubagentSource
     from kokoro_agent.worker.supervisor import RunSupervisor
 
     capability = _bridge_capability(repository)
@@ -2193,6 +2224,7 @@ async def _bridge_environment(
             request_value: RunRequest,
             lease_value: LeaseFence,
             _progress: SkillProgressSink,
+            _action_observer: ActionObservationSink,
         ) -> AgentHandle:
             assert request_value.model_dump_json() == run.model_dump_json()
             assert lease_value.generation >= lease.generation
@@ -2206,11 +2238,10 @@ async def _bridge_environment(
         def trace(_request: RunRequest) -> None:
             return None
 
-        def source(_name: str) -> str:
+        def source(_name: str) -> SubagentSource:
             return "runtime-custom"
 
-        constructor: Any = RunSupervisor
-        supervisor = constructor(
+        supervisor = RunSupervisor(
             agent_builder=build,
             run_repository=repository,
             approval_tool_names=tool_names,
@@ -3026,7 +3057,10 @@ async def test_first_worker_dispatch_seals_usage_before_durable_initial_pause(
         handle = AgentHandle(runnable=graph, tool_descriptions={"input": "Input"})
 
         async def build(
-            run: RunRequest, lease: LeaseFence, _progress: SkillProgressSink
+            run: RunRequest,
+            lease: LeaseFence,
+            _progress: SkillProgressSink,
+            _action_observer: ActionObservationSink,
         ) -> AgentHandle:
             assert run.model_dump_json() == request_value.model_dump_json()
             assert lease.owner == "first-worker"

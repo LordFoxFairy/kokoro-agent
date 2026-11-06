@@ -40,8 +40,7 @@ Agent v1 `LaunchRunRequest(feature_key, message_id, content, ExecutionIdentity)`
   -> Agent Chat HTTP query boundary -> BFF Chat module
 ```
 
-调用方不提交 namespace、thread、Agent、Skill、MCP、工具或 graph 配方；本仓 API 允许的模型
-标签/trace 只作为旁路元数据。`RuntimeNamespace` 只在 GA 内部派生；Factory 把可信
+调用方可提交正式 Skill exact refs、HTTP7.4候选的MCP exact Connection IDs及业务模型标签；前两者是冻结选择而非配方或授权，trace从不启用能力。调用方不提交 namespace、thread、Agent、端点／凭据、工具或 graph 配方。`RuntimeNamespace` 只在 GA 内部派生；Factory 把可信
 `ExecutionIdentity` 和该 namespace 传给外部 Capability client 做本次解析，二者不进入 Agent/Feature
 声明。运行依赖由 worker 启动时组装为 `WorkerDependencies`，持有在 `AgentFactory` 实例中；不通过请求参数传播，
 也不伪装成业务 `Service`。数据访问通过 `domain/<context>/repositories.py` 的 repository port，技术实现通过

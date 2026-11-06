@@ -1,0 +1,52 @@
+{
+  "profile": "platform-agent-execution-service-auth",
+  "version": "1.0.0",
+  "owner": "kokoro-platform",
+  "visibility": "internal-owner",
+  "replaces": {
+    "owner_commit": "e23e566e3fb4595a0c8e908dfe4a5857328a1f0f",
+    "breaking": true,
+    "removed": ["agent_execution_workload_oauth"]
+  },
+  "caller": "kokoro-agent",
+  "surfaces": ["tenant_execution"],
+  "authentication": {
+    "scheme": "Bearer",
+    "credential": "opaque_owner_only_file",
+    "file_version": 1,
+    "entry_fields": [
+      "credential_id",
+      "caller",
+      "surfaces",
+      "tenant_id",
+      "secret"
+    ],
+    "purposes_per_credential": 1,
+    "tenant": "fixed_credential_binding",
+    "freshness": "reread_complete_current_file_per_request",
+    "fallback": "forbidden"
+  },
+  "human_authorization": "iam_verify_execution_authorization_direct_user_current",
+  "execution_binding": "current_proof_operation_request_digest_and_bff_run_binding",
+  "mcp_principal": {
+    "digest_version": 2,
+    "fields": [
+      "version",
+      "tenantId",
+      "runId",
+      "sessionId",
+      "callerService",
+      "callerCredentialId",
+      "actor",
+      "subject"
+    ],
+    "legacy_material": "reject_and_reauthorize_no_side_effect_replay"
+  },
+  "unchanged": [
+    "business_proto_and_descriptor",
+    "execution_operations",
+    "bff_control_plane_purposes",
+    "system_global_oauth",
+    "billing_authorization"
+  ]
+}

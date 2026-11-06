@@ -1,6 +1,11 @@
 {
   "profile": "mcp-runtime-material-v1",
-  "version": "1.1.0",
+  "version": "1.5.0",
+  "imported_platform_successor": {
+    "feature": "mcp-personal-sse-v1",
+    "parent": "contract/descriptor/platform-mcp-personal-sse-parent.runtime.profile.json.snapshot",
+    "sha256": "b8fb5d4682256e531594976004fec62968e1e5492864da53a0b0f4da2b9685a0"
+  },
   "owner": "Platform/MCP",
   "visibility": "internal-owner",
   "status": "prepared",
@@ -26,7 +31,7 @@
       "binding_version": "3.0.0"
     }
   ],
-  "transports": ["streamable_http", "stdio"],
+  "transports": ["streamable_http", "stdio", "sse_compat"],
   "credential_uses": ["discovery", "invocation"],
   "semantics": {
     "authority": "verified current caller/run/session/actor/tenant; no request-supplied identity",
@@ -54,18 +59,18 @@
   "inputs": [
     {
       "path": "contract/proto/kokoro/platform/v1/mcp_runtime.proto",
-      "bytes": 3952,
-      "sha256": "1c0e942b56c9b711207f9f4e1155c7b5d24ce2632e18adc98cf9884542ab0b17"
+      "bytes": 4216,
+      "sha256": "245ab6b081bf91207caf1d2ea51b453fafea6fbc07c040befbd06937ef9489d7"
     },
     {
       "path": "contract/descriptor/mcp-runtime-v1.binpb",
-      "bytes": 97709,
-      "sha256": "41fcab4fce74502e2a74e00a8c03d8d7ac913d5ee9e41adb764ef72f0620b955"
+      "bytes": 107301,
+      "sha256": "56388f48b7d2f563a7aa9f56e0b9d15e73b2a453d640b3c8297502354fee6dc2"
     },
     {
       "path": "src/generated/proto/kokoro/platform/v1/mcp_runtime_pb.ts",
-      "bytes": 20870,
-      "sha256": "0dad7af6d2d9d6b359f88d37fa113f7f53db9267356126f9f7fe7ff1c499136e"
+      "bytes": 22867,
+      "sha256": "5a4fda4a36b4924a1bd6836f7f28a8a9976d3f903e58ed331aff71a0608981ec"
     },
     {
       "path": "src/modules/mcp/runtime/mcp-runtime-request-binding.ts",

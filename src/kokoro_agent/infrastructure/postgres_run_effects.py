@@ -11,13 +11,17 @@ from kokoro_agent.domain.run.repository import LeaseFence, ToolJournalRecord
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.postgres_run_context import (
     PostgresRunRepositoryContext,
+    STEER_MAILBOX_FINGERPRINT,
 )
 from kokoro_agent.infrastructure.schema import (
+    RUN_CLAIMS_TABLE,
+    RUN_CONTROL_COMMANDS_TABLE,
     RUN_STEERS_TABLE,
     TOOL_JOURNAL_TABLE,
     TOOL_RESULTS_TABLE,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
+from kokoro_agent.protocol import RunSteer
 
 _INTENT = TypeAdapter(dict[str, JsonValue])
 _DELIVERY_BASE_KEYS = frozenset(
@@ -124,20 +128,69 @@ class PostgresRunEffects:
     def __init__(self, context: PostgresRunRepositoryContext) -> None:
         self._context = context
 
-    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
-        row = await self._context.get_claim_row(run_id)
-        if row is None or bool(row["terminal"]):
-            return
+    async def store_steer(self, command: RunSteer) -> None:
+        """Stage only the persisted command, serialized with Run termination."""
+        run_id = command.run_id
+        claims = qualified(self._context.schema, RUN_CLAIMS_TABLE)
+        commands = qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
+        steers = qualified(self._context.schema, RUN_STEERS_TABLE)
         async with connect_pg(self._context.database_url) as conn:
-            async with conn.cursor() as cur:
+            async with conn.transaction(), conn.cursor() as cur:
                 await execute_sql(
                     cur,
-                    """
-                    INSERT INTO {} (run_id, message_id, content, created_at)
-                    VALUES (%s, %s, %s, to_timestamp(%s / 1000.0))
-                    ON CONFLICT (run_id, message_id) DO NOTHING
-                    """.format(qualified(self._context.schema, RUN_STEERS_TABLE)),
-                    (run_id, message_id, content, self._context.clock()),
+                    f"SELECT terminal FROM {claims} WHERE run_id=%s FOR UPDATE",
+                    (run_id,),
+                )
+                run = await fetch_one(cur)
+                if run is None or run["terminal"]:
+                    return
+                await execute_sql(
+                    cur,
+                    f"SELECT request_digest, body, fingerprint FROM {commands} "
+                    "WHERE run_id=%s AND command_id=%s AND status='persisted'",
+                    (run_id, command.command_id),
+                )
+                row = await fetch_one(cur)
+                if (
+                    row is None
+                    or row["request_digest"] != command.request_digest
+                    or row["fingerprint"] == STEER_MAILBOX_FINGERPRINT
+                    or RunSteer.model_validate_json(row["body"]) != command
+                ):
+                    return
+                # Keep the first durable mailbox owner, even after confirmation
+                # removes its row. This marker is private to the steer kind.
+                await execute_sql(
+                    cur,
+                    f"""SELECT command_id FROM {commands}
+                    WHERE run_id=%s AND body::jsonb->>'kind'='run.steer'
+                    AND body::jsonb->>'message_id'=%s
+                    AND fingerprint=%s LIMIT 1""",
+                    (run_id, command.message_id, STEER_MAILBOX_FINGERPRINT),
+                )
+                winner = await fetch_one(cur)
+                if (
+                    winner is not None and winner["command_id"] != command.command_id
+                ) or command.message_id == f"native-input:{run_id}":
+                    await execute_sql(
+                        cur,
+                        f"""UPDATE {commands} SET status='failed',
+                        error_code='control_apply_failed', updated_at=clock_timestamp()
+                        WHERE run_id=%s AND command_id=%s AND status='persisted'""",
+                        (run_id, command.command_id),
+                    )
+                    return
+                await execute_sql(
+                    cur,
+                    f"""INSERT INTO {steers} (run_id, message_id, content)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (run_id, message_id) DO NOTHING""",
+                    (run_id, command.message_id, command.content),
+                )
+                await execute_sql(
+                    cur,
+                    f"UPDATE {commands} SET fingerprint=%s WHERE run_id=%s AND command_id=%s",
+                    (STEER_MAILBOX_FINGERPRINT, run_id, command.command_id),
                 )
 
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
@@ -156,24 +209,42 @@ class PostgresRunEffects:
                 rows = await fetch_all(cur)
         return [(str(row["message_id"]), str(row["content"])) for row in rows]
 
-    async def ack_steers(
-        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    async def confirm_steers(
+        self, run_id: str, lease: LeaseFence, messages: list[tuple[str, str]]
     ) -> bool:
-        if not message_ids:
-            return await self._context.is_lease_current(run_id, lease)
+        """Settle an exact checkpoint observation and its mailbox together."""
+        if not messages:
+            return False
+        commands = qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
+        steers = qualified(self._context.schema, RUN_STEERS_TABLE)
         async with connect_pg(self._context.database_url) as conn:
-            async with conn.transaction():
-                async with conn.cursor() as cur:
-                    if not await self._context.lock_active_lease(cur, run_id, lease):
-                        return False
-                    await execute_sql(
-                        cur,
-                        """
-                        DELETE FROM {}
-                        WHERE run_id = %s AND message_id = ANY(%s)
-                        """.format(qualified(self._context.schema, RUN_STEERS_TABLE)),
-                        (run_id, message_ids),
-                    )
+            async with conn.transaction(), conn.cursor() as cur:
+                if not await self._context.lock_active_lease(cur, run_id, lease):
+                    return False
+                await execute_sql(
+                    cur,
+                    f"""WITH observed AS (
+                        SELECT * FROM unnest(%s::text[], %s::text[]) AS m(message_id, content)
+                    ), settled AS (
+                        UPDATE {commands} AS c SET status='succeeded', updated_at=clock_timestamp()
+                        FROM {steers} AS s JOIN observed AS m USING (message_id, content)
+                        WHERE s.run_id=%s AND c.run_id=s.run_id AND c.status='persisted'
+                        AND c.fingerprint=%s
+                        AND c.body::jsonb->>'kind'='run.steer'
+                        AND c.body::jsonb->>'message_id'=s.message_id
+                        AND c.body::jsonb->>'content'=s.content
+                        AND c.body::jsonb->>'request_digest'=c.request_digest
+                        RETURNING s.message_id
+                    ) DELETE FROM {steers} WHERE run_id=%s
+                    AND message_id IN (SELECT message_id FROM settled)""",
+                    (
+                        [mid for mid, _ in messages],
+                        [content for _, content in messages],
+                        run_id,
+                        STEER_MAILBOX_FINGERPRINT,
+                        run_id,
+                    ),
+                )
         return True
 
     async def put_tool_result(

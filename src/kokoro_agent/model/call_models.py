@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Protocol
-
 from datetime import datetime
+from typing import Annotated, Literal, Protocol
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from kokoro_agent.domain.run.models import LeaseFence, StaticRecipeBinding
+from kokoro_agent.model.summary_result import (
+    SummaryCallBinding,
+    SummaryReplayReceipt,
+    SummarySealInput,
+)
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol.model_usage_v2_generated import (
+    ActualAttribution,
     Digest,
     IdentityRef,
     Lease,
     Opaque,
     Ordinal,
     PlannedBinding,
+    UsageObservation,
     Uuid,
 )
 
@@ -62,6 +68,17 @@ class PrepareModelCall(BaseModel):
     final_request_digest: Digest
 
 
+class ReadSummaryResult(BaseModel):
+    """Current execution authority for a read of an original summary attempt."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    request: RunRequest
+    lease: LeaseFence
+    planned: PlannedBinding
+    recipe: StaticRecipeBinding
+    binding: SummaryCallBinding
+
+
 class PreparedModelCall(BaseModel):
     """Immutable creation receipt; it is not the attempt's current-state view."""
 
@@ -83,6 +100,27 @@ class PreparedModelCall(BaseModel):
     initial_authorization_state: str = "not_requested"
     initial_status: str = "prepared"
     replayed: bool
+
+
+class PreparedModelCallSnapshot(BaseModel):
+    """Current read-only admission facts, never a dispatch permit or history receipt."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    binding_version: Literal["2.0.0"] = "2.0.0"
+    attempt_id: Uuid
+    status: Literal["prepared", "authorization_pending", "authorized"]
+    attempt_binding_bytes: bytes = Field(min_length=1, max_length=65_536)
+    attempt_binding_digest: Digest
+    planned_bytes: bytes = Field(min_length=1, max_length=65_536)
+    planned_digest: Digest
+    authorization_bytes: bytes = Field(min_length=1, max_length=65_536)
+    authorization_digest: Digest
+    final_request_binding_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    final_request_digest: Digest
+    prepared_at: datetime
+    observed_at: datetime
+    lease_expires_at: datetime
 
 
 class BeginModelCallAuthorization(BaseModel):
@@ -182,6 +220,26 @@ class AppendModelCallEvidence(BaseModel):
     evidence_bytes: bytes = Field(min_length=1, max_length=65_536)
 
 
+class SealModelCallObservation(BaseModel):
+    """Trusted source projection; the owner supplies immutable bindings and DB time."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    tenant_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    attempt_id: Uuid
+    lease: LeaseFence
+    attempt_binding_digest: Digest
+    planned_digest: Digest
+    authorization_digest: Digest
+    outcome: Literal["completed", "failed", "cancelled", "unknown"]
+    actual: ActualAttribution
+    usage: UsageObservation
+    summary: SummarySealInput | None = Field(default=None, repr=False)
+    provider_response_id: (
+        Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[!-~]+$")] | None
+    ) = Field(default=None, repr=False)
+
+
 class ModelCallEvidenceReceipt(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -196,7 +254,7 @@ class ModelCallEvidenceReceipt(BaseModel):
 
 
 class FinalModelCallEvidence(BaseModel):
-    """Exact immutable sealed head published to the Billing reader."""
+    """Exact immutable sealed event, including history, published to the Billing reader."""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -234,7 +292,19 @@ class ModelCallAuthorizationUnavailable(RuntimeError):
     """No published Billing admission consumer can authorize this attempt."""
 
 
+class ModelCallDeadlineExceeded(TimeoutError):
+    """Only this model handler's absolute budget expired; never a retry permit."""
+
+
+class ModelCallSettlementPending(ModelCallAuthorizationUnavailable):
+    """The exact sealed event has an authenticated pending financial ACK. Never retry dispatch."""
+
+
 class ModelCallRepository(Protocol):
+    async def read_summary_result(
+        self, command: ReadSummaryResult
+    ) -> SummaryReplayReceipt | None: ...
+
     async def prepare(self, command: PrepareModelCall) -> PreparedModelCall: ...
 
     async def begin_authorization(
@@ -251,6 +321,10 @@ class ModelCallRepository(Protocol):
 
     async def append_evidence(
         self, command: AppendModelCallEvidence
+    ) -> ModelCallEvidenceReceipt: ...
+
+    async def seal_observation(
+        self, command: SealModelCallObservation
     ) -> ModelCallEvidenceReceipt: ...
 
     async def read_final_evidence(
@@ -271,6 +345,7 @@ __all__ = [
     "ModelCallOrdinalExhausted",
     "ModelCallAuthorizationReceipt",
     "ModelCallAuthorizationUnavailable",
+    "ModelCallSettlementPending",
     "ModelCallDispatchPermit",
     "ModelCallEvidenceReceipt",
     "ModelCallEvidenceInvariantFailed",
@@ -278,4 +353,5 @@ __all__ = [
     "PrepareModelCall",
     "PreparedModelCall",
     "StartModelCallDispatch",
+    "SealModelCallObservation",
 ]

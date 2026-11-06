@@ -27,6 +27,13 @@ from pydantic import SecretStr, TypeAdapter
 
 from kokoro_agent.application.chat.dto import ChatQueryRequest, ChatSessionListRequest
 from kokoro_agent.application.chat.service import ChatService
+from kokoro_agent.application.run_display import RunDisplay
+from kokoro_agent.infrastructure.checkpoint_display import read_run_display
+from kokoro_agent.interfaces.http.run_display import (
+    display_resource,
+    validate_display_transport,
+)
+from kokoro_agent.protocol import RunRequest
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef, REQUESTS_STREAM
 from kokoro_agent.protocol.control import IdentityKind
 from kokoro_agent.interfaces.http.ingress import AgentIngress, IngressError
@@ -42,13 +49,18 @@ from kokoro_agent.infrastructure.postgres_chat_repository import (
 from kokoro_agent.infrastructure.postgres_model_call_repository import (
     PostgresModelCallRepository,
 )
-from kokoro_agent.model.call_models import ModelCallEvidenceInvariantFailed
+from kokoro_agent.model.call_models import (
+    ModelCallEvidenceInvariantFailed,
+    ModelCallAuthorityLost,
+)
+from kokoro_agent.interfaces.http.model_call_prepared import prepared_snapshot_payload
 from kokoro_agent.streams.factory import StreamSettings, make_stream
 
 LOGGER = logging.getLogger(__name__)
 _Request = socket.socket | tuple[bytes, socket.socket]
 _ClientAddress = tuple[str, int] | str | bytes
 _RUN_CONTROL = re.compile(r"^/v1/runs/([^/]+)/control$")
+_RUN_DISPLAY = re.compile(r"^/v1/runs/([^/]+)/display$")
 _RUN_EVENTS = re.compile(r"^/v1/runs/([^/]+)/events$")
 _SESSION_MESSAGES = re.compile(r"^/v1/sessions/([^/]+)/messages$")
 _SESSION_EVENTS = re.compile(r"^/v1/sessions/([^/]+)/events$")
@@ -66,6 +78,7 @@ _JWKS_IDENTITY_HEADERS = (
 _MODEL_EVIDENCE = re.compile(
     r"^/v1/model-call-attempts/([^/]+)/usage-evidence/([^/]+)$"
 )
+_MODEL_PREPARED = re.compile(r"^/v1/model-call-attempts/([^/]+)/prepared$")
 _BILLING_FORBIDDEN_HEADERS = tuple(
     name for name in _JWKS_IDENTITY_HEADERS if name != "x-kokoro-tenant-ref"
 ) + ("x-kokoro-service",)
@@ -76,10 +89,16 @@ def _known_business_route(method: str, path: str) -> bool:
     if method == "GET":
         return (
             _MODEL_EVIDENCE.fullmatch(path) is not None
+            or _MODEL_PREPARED.fullmatch(path) is not None
             or path in {"/healthz", "/readyz", "/v1/sessions"}
             or any(
                 pattern.fullmatch(path) is not None
-                for pattern in (_RUN_EVENTS, _SESSION_MESSAGES, _SESSION_EVENTS)
+                for pattern in (
+                    _RUN_DISPLAY,
+                    _RUN_EVENTS,
+                    _SESSION_MESSAGES,
+                    _SESSION_EVENTS,
+                )
             )
         )
     if method == "POST":
@@ -291,13 +310,62 @@ async def dispatch_request(
     if method == "GET" and path == "/healthz":
         return 200, {"status": "ok", "service": "kokoro-agent"}
     evidence_match = _MODEL_EVIDENCE.fullmatch(path) if method == "GET" else None
+    prepared_match = _MODEL_PREPARED.fullmatch(path) if method == "GET" else None
     auth_failure = (
         _billing_reader_auth_failure(config, headers, request_id)
-        if evidence_match is not None
+        if evidence_match is not None or prepared_match is not None
         else _service_auth_failure(config, headers, request_id)
     )
     if auth_failure is not None:
         return auth_failure
+    if prepared_match is not None:
+        tenant = headers.get("x-kokoro-tenant-ref", "").strip()
+        if (
+            _TENANT_REF.fullmatch(tenant) is None
+            or any(headers.get(name, "").strip() for name in _BILLING_FORBIDDEN_HEADERS)
+            or body is not None
+            or headers.get("content-length", "").strip() not in {"", "0"}
+            or bool(headers.get("transfer-encoding", "").strip())
+        ):
+            return 403, _error(
+                "billing_model_call_reader_identity_forbidden",
+                "Billing model-call reader identity context is invalid",
+                request_id,
+            )
+        try:
+            attempt_id = str(UUID(prepared_match.group(1)))
+            if attempt_id != prepared_match.group(1) or query:
+                raise ValueError
+        except ValueError:
+            return 400, _error(
+                "invalid_model_call_prepared_request",
+                "Model-call prepared request is invalid",
+                request_id,
+            )
+        repository = PostgresModelCallRepository(
+            config.database_url, config.database_schema, total_timeout_seconds=10.0
+        )
+        try:
+            snapshot = await repository.read_prepared(tenant, attempt_id)
+        except ModelCallAuthorityLost:
+            return 409, _error(
+                "model_call_prepared_unavailable",
+                "Model-call preparation is not available for admission",
+                request_id,
+            )
+        except ModelCallEvidenceInvariantFailed:
+            return 500, _error(
+                "model_call_prepared_invariant_failed",
+                "Persisted model-call preparation is invalid",
+                request_id,
+            )
+        if snapshot is None:
+            return 404, _error(
+                "model_call_prepared_not_found",
+                "Model-call preparation was not found",
+                request_id,
+            )
+        return 200, _envelope(prepared_snapshot_payload(snapshot), request_id)
     if evidence_match is not None:
         tenant = headers.get("x-kokoro-tenant-ref", "").strip()
         content_length = headers.get("content-length", "").strip()
@@ -390,6 +458,34 @@ async def dispatch_request(
         return error.status, _error(error.code, error.message, request_id)
     if not _known_business_route(method, path):
         return 404, _error("route_not_found", "Agent route was not found", request_id)
+    display_match = _RUN_DISPLAY.fullmatch(path) if method == "GET" else None
+    if display_match is not None:
+
+        async def read_display(request: RunRequest) -> RunDisplay:
+            return await read_run_display(
+                config.database_url, config.database_schema, request
+            )
+
+        try:
+            validate_display_transport(headers, query, body)
+            async with asyncio.timeout(5):
+                async with make_run_repository(config.run_repository) as repository:
+                    result = await display_resource(
+                        display_match.group(1),
+                        execution_identity or _identity(headers),
+                        headers,
+                        query,
+                        body,
+                        repository,
+                        read_display,
+                    )
+                    return 200, _envelope(result, request_id)
+        except IngressError as error:
+            return error.status, _error(error.code, error.message, request_id)
+        except Exception:
+            return 503, _error(
+                "agent_unavailable", "Run display facts are unavailable", request_id
+            )
     bus = make_stream(config.stream)
     try:
         async with (
@@ -561,6 +657,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 "x-kokoro-service",
                 *_JWKS_IDENTITY_HEADERS,
             )
+            if name in self.headers
         }
 
     def _send_representation(
@@ -671,9 +768,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             is_health_request = self.command == "GET" and split.path == "/healthz"
             config = None if is_health_request else self._config()
             if config is not None:
-                evidence_target = (
-                    self.command == "GET"
-                    and _MODEL_EVIDENCE.fullmatch(split.path) is not None
+                evidence_target = self.command == "GET" and (
+                    _MODEL_EVIDENCE.fullmatch(split.path) is not None
+                    or _MODEL_PREPARED.fullmatch(split.path) is not None
                 )
                 auth_failure = (
                     _billing_reader_auth_failure(config, headers, request_id)

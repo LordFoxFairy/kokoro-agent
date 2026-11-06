@@ -6,6 +6,7 @@ import hashlib
 import asyncio
 import json
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -13,10 +14,12 @@ import pytest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from deepagents.backends.local_shell import LocalShellBackend
+from protobuf.wkt import Timestamp
 
 from kokoro_agent.clients.storage import (
     DeliveryRecoveryRequest,
     DeliveryRequest,
+    FinalArtifactReadRequest,
     StorageClientError,
 )
 from kokoro_agent.clients.storage_delivery import StorageDeliveryClient
@@ -107,6 +110,7 @@ class FakeTransport:
         self.fail_complete_once = False
         self.pending_source_version: str | None = None
         self.put_version = "version-A"
+        self.read_content = _CONTENT
 
     async def call(self, method: str, request: object, headers: dict[str, str]):
         self.calls.append((method, request, headers))
@@ -180,6 +184,21 @@ class FakeTransport:
                 content_sha256=_HASH,
                 state=pb.ArtifactState.FINAL,
             )
+        if method == "get_final_artifact_download_reference":
+            assert isinstance(request, pb.GetFinalArtifactDownloadReferenceRequest)
+            assert request.run_id == "run-1"
+            return pb.GetFinalArtifactDownloadReferenceResponse(
+                artifact_id="artifact-1",
+                asset_id="asset-1",
+                content_sha256=_HASH,
+                download_reference=pb.TransferReference(
+                    url="http://127.0.0.1:9000/final-1",
+                    method="GET",
+                    expires_at=Timestamp.from_datetime(
+                        datetime.now(timezone.utc) + timedelta(minutes=5)
+                    ),
+                ),
+            )
         raise AssertionError(method)
 
     async def put(self, reference: pb.TransferReference, content: bytes) -> str:
@@ -190,6 +209,10 @@ class FakeTransport:
         if self.after_put is not None:
             self.after_put()
         return self.put_version
+
+    async def get(self, reference: pb.TransferReference) -> bytes:
+        assert reference.method == "GET"
+        return self.read_content
 
 
 def _request() -> DeliveryRequest:
@@ -207,6 +230,44 @@ def _request() -> DeliveryRequest:
         lease=_LEASE,
         tool_call_id="tool-1",
     )
+
+
+def _read_request(*, digest: str | None = _HASH) -> FinalArtifactReadRequest:
+    return FinalArtifactReadRequest(
+        request_id="trace-read-1",
+        run_id="run-1",
+        identity=_IDENTITY,
+        artifact_id="artifact-1",
+        content_sha256=digest,
+        lease=_LEASE,
+    )
+
+
+async def test_read_final_artifact_is_run_fenced_and_digest_checked() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    receipt = await StorageDeliveryClient(runs, transport).read_final_artifact(
+        _read_request()
+    )
+    assert receipt.content == _CONTENT
+    assert receipt.content_sha256 == _HASH
+    method, request, headers = transport.calls[-1]
+    assert method == "get_final_artifact_download_reference"
+    assert isinstance(request, pb.GetFinalArtifactDownloadReferenceRequest)
+    assert request.run_id == "run-1"
+    assert request.artifact_id == "artifact-1"
+    assert headers["x-kokoro-scope-id"] == "conversation-1"
+
+
+async def test_read_final_artifact_rejects_stale_lease_and_digest_mismatch() -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.current = False
+    with pytest.raises(StorageClientError, match="LEASE_STALE"):
+        await StorageDeliveryClient(runs, transport).read_final_artifact(_read_request())
+    runs.current = True
+    with pytest.raises(StorageClientError, match="DIGEST_INVALID"):
+        await StorageDeliveryClient(runs, transport).read_final_artifact(
+            _read_request(digest="bad")
+        )
 
 
 async def test_publish_uses_canonical_conversation_scope_and_stable_commands() -> None:

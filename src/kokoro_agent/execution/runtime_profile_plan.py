@@ -308,6 +308,12 @@ def prepare_feature(
             {
                 "key": agent.key,
                 "prompt": agent.prompt,
+                "public_action_intent": {
+                    "field": "_kokoro_action",
+                    "max_utf8_bytes": 256,
+                    "scope": "main-tool-calls",
+                    "binding": "run-call-preapproval-v1",
+                },
                 "tools": selected_tools,
                 "mcp": tuple({"connection_id": ref.connection_id} for ref in agent.mcp),
                 "subagents": (

@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
+from kokoro_agent.domain.run.models import LeasedRun
+from kokoro_agent.model.execution import ModelCallExecution
 from kokoro_agent.worker.platform import WorkerPlatformRuntime
 from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
 from kokoro_agent.execution.runtime_profile_sources import SourceManifest
@@ -48,6 +51,7 @@ class WorkerDependencies:
     checkpointer: BaseCheckpointSaver[str]
     run_repository: RunRepository
     model_call_repository: ModelCallRepository
+    model_execution: Callable[[LeasedRun], ModelCallExecution]
     memory_store: BaseStore
     platform: WorkerPlatformRuntime | None = None
     # Storage Artifact public facade；缺省时不装配 deliver，Agent 基础循环不受影响。

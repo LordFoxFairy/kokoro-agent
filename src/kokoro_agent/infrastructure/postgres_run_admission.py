@@ -15,6 +15,7 @@ from kokoro_agent.domain.run.repository import (
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.postgres_run_context import (
     PostgresRunRepositoryContext,
+    STEER_MAILBOX_FINGERPRINT,
 )
 from kokoro_agent.infrastructure.schema import (
     RUN_CLAIMS_TABLE,
@@ -110,6 +111,9 @@ class PostgresRunAdmission:
                 run = await fetch_one(cur)
                 if run is None:
                     raise InteractionRunMissing("Run was not found")
+                terminal = bool(run["terminal"])
+                status = "failed" if terminal else "admitted"
+                error_code = "control_superseded" if terminal else None
                 now = int((await self._context.database_now(cur)).timestamp() * 1000)
                 await execute_sql(
                     cur,
@@ -117,14 +121,23 @@ class PostgresRunAdmission:
                     INSERT INTO {} (
                         run_id, command_id, request_digest, status, body,
                         error_code, created_at, updated_at
-                    ) VALUES (%s, %s, %s, 'admitted', %s, NULL,
+                    ) VALUES (%s, %s, %s, %s, %s, %s,
                               to_timestamp(%s / 1000.0), to_timestamp(%s / 1000.0))
                     ON CONFLICT (run_id, command_id) DO NOTHING
                     RETURNING command_id
                     """.format(
                         qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
                     ),
-                    (run_id, command_id, request_digest, body, now, now),
+                    (
+                        run_id,
+                        command_id,
+                        request_digest,
+                        status,
+                        body,
+                        error_code,
+                        now,
+                        now,
+                    ),
                 )
                 if await fetch_one(cur) is not None:
                     return ControlAdmission(
@@ -132,15 +145,16 @@ class PostgresRunAdmission:
                             run_id=run_id,
                             command_id=command_id,
                             request_digest=request_digest,
-                            status="pending",
+                            status=_receipt_status(status),
+                            error_code=error_code,
                         ),
                         replayed=False,
-                        publish_required=True,
+                        publish_required=not terminal,
                     )
                 await execute_sql(
                     cur,
                     """
-                    SELECT run_id, command_id, request_digest, status, error_code
+                    SELECT run_id, command_id, request_digest, status, error_code, fingerprint
                     FROM {}
                     WHERE run_id = %s AND command_id = %s
                     """.format(
@@ -172,8 +186,10 @@ class PostgresRunAdmission:
                 return ControlAdmission(
                     receipt=receipt,
                     replayed=True,
-                    publish_required=str(row_data["status"])
-                    in {"admitted", "persisted"},
+                    # Terminal teardown owns the stream; replay the receipt, not the frame.
+                    publish_required=not terminal
+                    and row_data["fingerprint"] != STEER_MAILBOX_FINGERPRINT
+                    and str(row_data["status"]) in {"admitted", "persisted"},
                 )
 
     async def mark_control_succeeded(self, run_id: str, command_id: str) -> None:
@@ -267,11 +283,13 @@ class PostgresRunAdmission:
                     FROM {} i
                     JOIN {} r ON r.run_id = i.run_id
                     WHERE i.status = 'persisted' AND r.terminal = FALSE
+                      AND i.fingerprint IS DISTINCT FROM %s
                     ORDER BY i.run_id ASC, i.command_id ASC
                     """.format(
                         qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE),
                         qualified(self._context.schema, RUN_CLAIMS_TABLE),
                     ),
+                    (STEER_MAILBOX_FINGERPRINT,),
                 )
                 rows = await fetch_all(cur)
         return [RunControlCommandRecord(**dict(row)) for row in rows]

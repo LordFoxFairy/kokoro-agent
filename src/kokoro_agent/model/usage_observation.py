@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from io import BytesIO
 import json
@@ -13,7 +13,7 @@ import codecs
 import math
 from threading import RLock, get_ident
 from types import MappingProxyType, TracebackType
-from typing import Literal, NoReturn, Self
+from typing import Literal, NoReturn, Self, TypeGuard
 import zlib
 
 import httpx
@@ -51,7 +51,7 @@ def _empty_counts() -> Mapping[str, ObservedCount]:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalUsageObservation:
-    """Only a bounded semantic projection; no body, credential, or provider identity."""
+    """Only bounded source facts and a lookup reference; no body or credential."""
 
     status: Status
     reason: str | None
@@ -61,6 +61,8 @@ class PhysicalUsageObservation:
     projection_digest: str | None = None
     service_tier: Literal["absent", "null", "default", "unsupported"] = "absent"
     unsupported_usage_category: bool = False
+    reported_model: str | None = None
+    provider_response_id: str | None = field(default=None, repr=False)
 
 
 class _ObservationError(Exception):
@@ -75,6 +77,10 @@ def _fail(reason: str) -> NoReturn:
 
 class _JsonObject(dict[str, object]):
     """A JSON object actually built by the duplicate-checking decoder hook."""
+
+
+def _object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
 
 
 def _object(pairs: list[tuple[str, object]]) -> _JsonObject:
@@ -139,7 +145,55 @@ def _count(source: dict[str, object], name: str) -> ObservedCount:
     return ObservedCount("reported", value)
 
 
-def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
+def _reported_model(document: dict[str, object]) -> str | None:
+    value = document.get("model")
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 512
+        and not any(ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        value.encode("utf-8", errors="strict")
+        return value
+    return None
+
+
+def _response_id(document: dict[str, object]) -> str | None:
+    value = document.get("id")
+    if (
+        isinstance(value, str)
+        and 1 <= len(value) <= 256
+        and all(33 <= ord(character) <= 126 for character in value)
+    ):
+        return value
+    return None
+
+
+def _unsupported_cost_metadata(usage: dict[str, object]) -> bool:
+    """Documented monetary metadata is not a token category or our pricing input."""
+    details = usage.get("cost_details")
+    if details is not None and not isinstance(details, _JsonObject):
+        return True
+    if isinstance(details, _JsonObject) and details.keys() - {
+        "upstream_inference_cost"
+    }:
+        return True
+    amounts = [usage.get("cost")]
+    if isinstance(details, _JsonObject):
+        amounts.append(details.get("upstream_inference_cost"))
+    return any(
+        amount is not None
+        and (
+            not isinstance(amount, (int, float))
+            or isinstance(amount, bool)
+            or amount < 0
+        )
+        for amount in amounts
+    )
+
+
+def _projection(
+    document: dict[str, object], *, litellm: bool = False
+) -> PhysicalUsageObservation:
     raw = document.get("usage")
     presence: Literal["missing", "null", "object"] = (
         "missing" if "usage" not in document else "null" if raw is None else "object"
@@ -150,8 +204,14 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
     counts = {name: _count(usage, name) for name in _NAMES[:3]}
     unknown = bool(
         usage.keys()
-        - {*_NAMES[:3], "prompt_tokens_details", "completion_tokens_details"}
-    )
+        - {
+            *_NAMES[:3],
+            "prompt_tokens_details",
+            "completion_tokens_details",
+            "cost",
+            "cost_details",
+        }
+    ) or _unsupported_cost_metadata(usage)
     for container, member in (
         ("prompt_tokens_details", "cached_tokens"),
         ("completion_tokens_details", "reasoning_tokens"),
@@ -160,8 +220,19 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
         if details is not None and not isinstance(details, _JsonObject):
             _fail("invalid_usage")
         detail_object = details if isinstance(details, _JsonObject) else _JsonObject()
-        unknown |= bool(detail_object.keys() - {member})
         counts[member] = _count(detail_object, member)
+        allowed = {member}
+        if (
+            litellm
+            and member == "reasoning_tokens"
+            and counts[member].presence == "reported"
+            and counts[member].value == 0
+            and counts["completion_tokens"].presence == "reported"
+            and type(detail_object.get("text_tokens")) is int
+            and detail_object.get("text_tokens") == counts["completion_tokens"].value
+        ):
+            allowed.add("text_tokens")
+        unknown |= bool(detail_object.keys() - allowed)
     input_count, output_count, total = (counts[name].value for name in _NAMES[:3])
     if input_count is not None and output_count is not None and total is not None:
         if input_count + output_count != total:
@@ -209,12 +280,16 @@ def _projection(document: dict[str, object]) -> PhysicalUsageObservation:
         sha256(_DOMAIN + canonical).hexdigest(),
         tier,
         unknown,
+        _reported_model(document),
+        _response_id(document),
     )
 
 
 class _Parser:
-    def __init__(self, streaming: bool) -> None:
+    def __init__(self, streaming: bool, *, litellm: bool = False) -> None:
         self.streaming = streaming
+        self._litellm = litellm
+        self._litellm_tail = False
         self.utf8 = codecs.getincrementaldecoder("utf-8")()
         self.scratch = bytearray()
         self.data: list[bytes] = []
@@ -222,6 +297,10 @@ class _Parser:
         self.events = 0
         self.done = False
         self.projection: PhysicalUsageObservation | None = None
+        self._seen_model: str | None = None
+        self._model_conflict = False
+        self._seen_response_id: str | None = None
+        self._response_id_conflict = False
 
     def feed(self, chunk: bytes) -> None:
         if not self.streaming:
@@ -262,25 +341,74 @@ class _Parser:
             self.done = True
             return
         document = _document(data)
-        if document.get("choices") != [] or document.get("usage") is None:
+        if "id" in document:
+            response_id = _response_id(document)
+            if response_id is None or (
+                self._seen_response_id is not None
+                and self._seen_response_id != response_id
+            ):
+                self._response_id_conflict = True
+            if response_id is not None:
+                self._seen_response_id = response_id
+        if "model" in document:
+            reported = _reported_model(document)
+            if reported is None or (
+                self._seen_model is not None and self._seen_model != reported
+            ):
+                self._model_conflict = True
+            if reported is not None:
+                self._seen_model = reported
+        has_usage = document.get("usage") is not None
+        empty_tail = self._is_litellm_empty_tail(document) and has_usage
+        candidate_frame = has_usage and (document.get("choices") == [] or empty_tail)
+        if self._litellm_tail and not candidate_frame:
+            _fail("nonterminal_usage")
+        if not candidate_frame:
             return
-        candidate = _projection(document)
+        candidate = _projection(document, litellm=self._litellm)
         if (
             self.projection is not None
             and self.projection.projection_digest != candidate.projection_digest
         ):
             _fail("conflicting_usage")
         self.projection = candidate
+        if empty_tail:
+            self._litellm_tail = True
+
+    def _is_litellm_empty_tail(self, document: _JsonObject) -> bool:
+        if not self._litellm or document.get("object") != "chat.completion.chunk":
+            return False
+        choices = document.get("choices")
+        if not _object_list(choices) or len(choices) != 1:
+            return False
+        choice: object = choices[0]
+        return (
+            isinstance(choice, _JsonObject)
+            and set(choice) <= {"index", "delta", "finish_reason"}
+            and type(choice.get("index")) is int
+            and choice.get("index") == 0
+            and choice.get("delta") == {}
+            and choice.get("finish_reason") is None
+        )
 
     def finish(self) -> PhysicalUsageObservation:
         if not self.streaming:
-            return _projection(_document(bytes(self.scratch)))
+            return _projection(_document(bytes(self.scratch)), litellm=self._litellm)
         self.utf8.decode(b"", final=True)
         if not self.done:
             _fail("missing_done")
-        if self.projection is None:
-            _fail("missing_final")
-        return self.projection
+        # A completed stream can omit final usage. Retain its lookup facts without
+        # inventing a usage object, counts or a digest of nonexistent usage.
+        projection = self.projection or PhysicalUsageObservation(
+            "complete", None, "pending", reported_model=self._seen_model
+        )
+        return replace(
+            projection,
+            reported_model=None if self._model_conflict else projection.reported_model,
+            provider_response_id=None
+            if self._response_id_conflict
+            else self._seen_response_id,
+        )
 
     def clear(self) -> None:
         self.scratch.clear()
@@ -369,9 +497,14 @@ def _zlib_decode(raw: bytes, parser: _Parser, encoding: str) -> bool:
 
 
 def _observe(
-    raw: bytes, encoding: str, streaming: bool, body_ended: bool
+    raw: bytes,
+    encoding: str,
+    streaming: bool,
+    body_ended: bool,
+    *,
+    litellm: bool = False,
 ) -> PhysicalUsageObservation:
-    parser = _Parser(streaming)
+    parser = _Parser(streaming, litellm=litellm)
     try:
         if encoding == "zstd":
             proof = _zstd_first(raw, parser)
@@ -403,6 +536,8 @@ def _observe(
             projection.projection_digest,
             projection.service_tier,
             projection.unsupported_usage_category,
+            projection.reported_model,
+            projection.provider_response_id if integrity == "validated" else None,
         )
     finally:
         parser.clear()
@@ -474,7 +609,11 @@ class _UsageCapture:
                 raw = bytes(self._buffer)
                 self._buffer.clear()
                 self._result = _observe(
-                    raw, self._encoding, self._streaming, self._ended
+                    raw,
+                    self._encoding,
+                    self._streaming,
+                    self._ended,
+                    litellm=self._route.connection.connection_type == "litellm",
                 )
             except _ObservationError as failure:
                 self._result = PhysicalUsageObservation(

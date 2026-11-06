@@ -46,6 +46,8 @@ PROFILE_PATH = (
     ROOT / "src" / "kokoro_agent" / "execution" / "execution_proof_profile.py"
 )
 WORKER_PLATFORM_PATH = ROOT / "src" / "kokoro_agent" / "worker" / "platform.py"
+WORKER_MAIN_PATH = ROOT / "src" / "kokoro_agent" / "worker" / "main.py"
+WORKER_FINANCIAL_PATH = ROOT / "src" / "kokoro_agent" / "worker" / "model_financial.py"
 PRODUCTION_ROOT = ROOT / "src"
 SIGNER_MODULE = "kokoro_agent.execution.execution_proof_signer"
 SUPPLIER_MODULE = "kokoro_agent.execution.execution_proof_supplier"
@@ -189,17 +191,32 @@ def _production_source_violations(path: Path, source: str) -> tuple[list[str], i
                 KEYS_PATH,
                 SUPPLIER_PATH,
                 WORKER_PLATFORM_PATH,
+                WORKER_MAIN_PATH,
+                WORKER_FINANCIAL_PATH,
             }:
                 violations.append("signer import outside approved modules")
-            if path == WORKER_PLATFORM_PATH and SIGNER_MODULE in resolved:
+            if (
+                path in {WORKER_PLATFORM_PATH, WORKER_MAIN_PATH, WORKER_FINANCIAL_PATH}
+                and SIGNER_MODULE in resolved
+            ):
                 if {alias.name for alias in node.names} != {"ExecutionProofSigner"}:
                     violations.append("worker signer import shape is invalid")
-            if path == WORKER_PLATFORM_PATH and SUPPLIER_MODULE in resolved:
+            if (
+                path in {WORKER_PLATFORM_PATH, WORKER_FINANCIAL_PATH}
+                and SUPPLIER_MODULE in resolved
+            ):
                 if {alias.name for alias in node.names} != {
                     "ExecutionProofLeaseReadPort",
                     "create_execution_proof_supplier",
                 }:
                     violations.append("worker supplier import shape is invalid")
+            if path == WORKER_MAIN_PATH and SUPPLIER_MODULE in resolved:
+                if {alias.name for alias in node.names} != {
+                    "ExecutionProofLeaseReadPort"
+                }:
+                    violations.append(
+                        "worker composition may only import the lease port"
+                    )
             if path == KEYS_PATH and SIGNER_MODULE in resolved:
                 if {alias.name for alias in node.names} != {
                     "ExecutionProofSigner",
@@ -210,6 +227,8 @@ def _production_source_violations(path: Path, source: str) -> tuple[list[str], i
                 SUPPLIER_PATH,
                 LEASE_READER_PATH,
                 WORKER_PLATFORM_PATH,
+                WORKER_MAIN_PATH,
+                WORKER_FINANCIAL_PATH,
             }:
                 violations.append("supplier import outside approved modules")
             if path == LEASE_READER_PATH and SUPPLIER_MODULE in resolved:
@@ -771,3 +790,20 @@ def test_worker_composition_is_narrow_and_cannot_sign_directly() -> None:
     ):
         violations, _ = _production_source_violations(WORKER_PLATFORM_PATH, source)
         assert violations
+
+
+def test_worker_proof_composition_keeps_narrow_import_and_issue_boundaries() -> None:
+    for path in (WORKER_MAIN_PATH, WORKER_FINANCIAL_PATH):
+        violations, _ = _production_source_violations(path, path.read_text())
+        assert violations == []
+        for source in (
+            "from kokoro_agent.execution.execution_proof_signer import ExecutionProofSignerConfig",
+            "from kokoro_agent.execution.execution_proof_signer import ExecutionProofSigner\nExecutionProofSigner(config)",
+            "signer.issue_execution_proof(value)",
+            "from kokoro_agent.execution.execution_proof_supplier import ExecutionProofSupplier\nExecutionProofSupplier(config)",
+        ):
+            assert _production_source_violations(path, source)[0]
+    assert _production_source_violations(
+        WORKER_MAIN_PATH,
+        "from kokoro_agent.execution.execution_proof_supplier import create_execution_proof_supplier",
+    )[0]

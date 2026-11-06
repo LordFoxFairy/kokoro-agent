@@ -41,12 +41,23 @@ from kokoro_agent.protocol import (
     agent_event_adapter,
     run_events_stream,
 )
+from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
 
 from kokoro_agent import metrics
 from kokoro_agent.application.chat.mappers import wire_epoch_millis_to_utc
-from kokoro_agent.domain.chat.projection import project_chat_fact
-from kokoro_agent.domain.chat.models import ChatEventRecord
+from kokoro_agent.domain.chat.projection import (
+    project_chat_fact,
+    ToolDisplayCode,
+    ToolDisplaySource,
+    ToolDisplayDetail,
+    SkillDisplay,
+    read_tool_activity,
+    safe_progress_id,
+)
+from kokoro_agent.domain.chat.action_intent import ActionObservation
+from kokoro_agent.domain.chat.display_text import public_action_title
+from kokoro_agent.domain.chat.models import ChatEventRecord, assistant_message_id
 from kokoro_agent.domain.chat.repositories import ChatFenceMode, ChatRepository
 from kokoro_agent.execution.protocols import SubagentInfo, ToolCallInfo
 from kokoro_agent.domain.run.repository import (
@@ -58,6 +69,7 @@ from kokoro_agent.streams.protocol import StreamProtocol
 from kokoro_agent.tools.deliver import DELIVER_TOOL_NAME, DeliverResult
 
 SourceResolver = Callable[[str], SubagentSource]
+_TOOL_DISPLAY_ADAPTER: TypeAdapter[ToolDisplayCode] = TypeAdapter(ToolDisplayCode)
 LOGGER = logging.getLogger(__name__)
 
 # R4 critical 集（V1）：这些 kind 走 durable outbox（分配 durable_seq/event_id、可补发）；
@@ -133,9 +145,16 @@ class ProgressPersistenceError(RuntimeError):
 
 
 async def confirm_skill_progress(
-    progress: SkillProgressSink, phase: SkillPhase
+    progress: SkillProgressSink,
+    phase: SkillPhase,
+    *,
+    display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
 ) -> None:
-    confirmation = await progress(phase)
+    confirmation = (
+        await progress(phase)
+        if display_skills is None
+        else await progress(phase, display_skills=display_skills)
+    )
     try:
         SkillProgressCommitted.model_validate(confirmation)
     except ValueError as error:
@@ -199,6 +218,87 @@ class RunEmitter:
         self._namespace = namespace
         self._session_id = session_id
         self._chat_repository = chat_repository
+        self._tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] | None = None
+        self._tool_display_calls: dict[
+            tuple[str, str],
+            tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str, str | None],
+        ] = {}
+        self._tool_display_sources: tuple[ToolDisplaySource, ...] | None = None
+        self._tool_actions: dict[str, ActionObservation | None] = {}
+
+    async def proven_final_segment(self, segment_id: str) -> str | None:
+        """Require the same Run's persisted public completion, including replay."""
+        if (
+            self._chat_repository is None
+            or self._tenant_id is None
+            or self._namespace is None
+            or self._session_id is None
+        ):
+            return None
+        try:
+            async with asyncio.timeout(2):
+                exists = await self._chat_repository.completed_message_exists(
+                    self._tenant_id,
+                    self._namespace,
+                    self._session_id,
+                    self._run_id,
+                    assistant_message_id(self._namespace, self._run_id, segment_id),
+                )
+        except Exception as error:
+            raise ProgressPersistenceError("final answer proof read failed") from error
+        return segment_id if exists else None
+
+    def observe_tool_action(self, observation: ActionObservation) -> None:
+        """Transient exact-call evidence; the original Chat activity owns history."""
+        if public_action_title(observation.title) is None:
+            return
+        previous = self._tool_actions.get(observation.call_id)
+        if observation.call_id not in self._tool_actions:
+            self._tool_actions[observation.call_id] = observation
+        elif previous != observation:
+            # Conflicting evidence never gets arbitrarily selected.
+            self._tool_actions[observation.call_id] = None
+
+    def bind_tool_display_codes(
+        self, bindings: tuple[tuple[str, ToolDisplayCode], ...]
+    ) -> None:
+        """Bind only factory-observed definitions; no authority from event payloads."""
+        validated: tuple[tuple[str, ToolDisplayCode], ...] = tuple(
+            sorted(
+                (name, _TOOL_DISPLAY_ADAPTER.validate_python(code, strict=True))
+                for name, code in bindings
+            )
+        )
+        if len(dict(validated)) != len(validated):
+            raise ValueError("duplicate tool display binding")
+        if (
+            self._tool_display_codes is not None
+            and self._tool_display_codes != validated
+        ):
+            raise ValueError("tool display binding changed within the Run")
+        if any(
+            dict(validated).get(name, "tool.execution") != code
+            for name, code, _, origin, _ in self._tool_display_calls.values()
+            if not origin.startswith("history:")
+        ):
+            raise ValueError("tool display classification changed after observation")
+        self._tool_display_codes = validated
+
+    def bind_tool_display_sources(self, sources: tuple[ToolDisplaySource, ...]) -> None:
+        validated = tuple(sorted(sources, key=lambda source: source.name))
+        if len({source.name for source in validated}) != len(validated) or any(
+            dict(self._tool_display_codes or ()).get(source.name) != source.code
+            for source in validated
+        ):
+            raise ValueError("display source differs from its bound category")
+        if (
+            self._tool_display_sources is not None
+            and self._tool_display_sources != validated
+        ):
+            raise ValueError("tool display source changed within the Run")
+        if self._tool_display_calls and (self._tool_display_sources or ()) != validated:
+            raise ValueError("tool display source changed after observation")
+        self._tool_display_sources = validated
 
     @property
     def run_id(self) -> str:
@@ -294,8 +394,13 @@ class RunEmitter:
         """One real build round; committed anchor is never borrowed from old ready."""
         refs = list(source_refs)
         anchor: int | None = None
+        known_display: dict[str, SkillDisplay] = {}
 
-        async def report(observation: SkillPhase) -> SkillProgressCommitted:
+        async def report(
+            observation: SkillPhase,
+            *,
+            display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
+        ) -> SkillProgressCommitted:
             nonlocal anchor
             if self._chat_repository is None or self._outbox is None:
                 raise ProgressPersistenceError(
@@ -306,6 +411,18 @@ class RunEmitter:
                     raise ValueError("a Skill round must begin with resolving")
                 if anchor is not None and observation.phase == "resolving":
                     raise ValueError("a new resolving phase requires a new round")
+                next_display = dict(known_display)
+                if display_skills is not None:
+                    if observation.phase != "ready":
+                        raise ValueError("Skill display binding requires ready")
+                    for value in display_skills:
+                        fact = SkillDisplay.model_validate(value)
+                        if fact.source_ref not in refs or (
+                            fact.source_ref in next_display
+                            and next_display[fact.source_ref] != fact
+                        ):
+                            raise ValueError("Skill display binding changed")
+                        next_display[fact.source_ref] = fact
                 await self._require_progress_lease("skill.progress")
                 index = await self._reserve_index()
                 payload = SkillProgressPayload(
@@ -313,7 +430,19 @@ class RunEmitter:
                     anchor_source_index=index if anchor is None else anchor,
                     source_refs=refs,
                 )
-                await self._emit_ordinary(payload, index, _now_ms())
+                await self._emit_ordinary(
+                    payload,
+                    index,
+                    _now_ms(),
+                    skill_display_skills=tuple(
+                        next_display[ref].model_dump(mode="json", exclude_none=True)
+                        for ref in refs
+                        if ref in next_display
+                    )
+                    if display_skills is not None
+                    else None,
+                )
+                known_display.update(next_display)
                 if anchor is None:
                     anchor = index
                 return SkillProgressCommitted(source_index=index)
@@ -435,7 +564,12 @@ class RunEmitter:
         await self._emit_ordinary(payload, index, timestamp)
 
     async def _emit_ordinary(
-        self, payload: AgentEventPayload, index: int, timestamp: int
+        self,
+        payload: AgentEventPayload,
+        index: int,
+        timestamp: int,
+        *,
+        skill_display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
     ) -> None:
         kind = _KIND_BY_PAYLOAD[type(payload)]
         event = agent_event_adapter.validate_python(
@@ -448,7 +582,13 @@ class RunEmitter:
             }
         )
         chat_mode: ChatFenceMode | None = "active" if self._outbox is not None else None
-        if not await self._persist_chat(payload, index, timestamp, mode=chat_mode):
+        if not await self._persist_chat(
+            payload,
+            index,
+            timestamp,
+            mode=chat_mode,
+            skill_display_skills=skill_display_skills,
+        ):
             raise ProgressAuthorityLost("original progress append fence lost")
         self._next_index = max(self._next_index, index + 1)
         try:
@@ -477,6 +617,7 @@ class RunEmitter:
         timestamp: int,
         *,
         mode: ChatFenceMode | None,
+        skill_display_skills: tuple[Mapping[str, JsonValue], ...] | None = None,
     ) -> bool:
         if (
             self._chat_repository is None
@@ -485,6 +626,16 @@ class RunEmitter:
             or self._namespace is None
         ):
             return True
+        tool_code: ToolDisplayCode = "tool.execution"
+        tool_detail: ToolDisplayDetail | None = None
+        action_title: str | None = None
+        if isinstance(payload, ToolInvokedPayload | ToolReturnedPayload):
+            observation = await self._tool_display_observation(payload)
+            tool_code, tool_detail, action_title = (
+                observation[1],
+                observation[2],
+                observation[4],
+            )
         projection = project_chat_fact(
             tenant_id=self._tenant_id,
             namespace=self._namespace,
@@ -493,6 +644,10 @@ class RunEmitter:
             source_index=index,
             created_at=wire_epoch_millis_to_utc(timestamp),
             payload=payload,
+            tool_display_code=tool_code,
+            tool_display_detail=tool_detail,
+            tool_action_title=action_title,
+            skill_display_skills=skill_display_skills,
         )
         if projection is None:
             return True
@@ -511,6 +666,129 @@ class RunEmitter:
             raise
         except Exception as error:
             raise ProgressPersistenceError("Chat progress write unconfirmed") from error
+
+    async def _tool_display_observation(
+        self, payload: ToolInvokedPayload | ToolReturnedPayload
+    ) -> tuple[str, ToolDisplayCode, ToolDisplayDetail | None, str, str | None]:
+        key = (payload.segment_id, payload.tool_id)
+        previous = self._tool_display_calls.get(key)
+        if previous is not None:
+            if previous[0] != payload.name:
+                raise ProgressPersistenceError("tool display call identity changed")
+            return previous
+        source = next(
+            (
+                item
+                for item in self._tool_display_sources or ()
+                if item.name == payload.name
+            ),
+            None,
+        )
+        code = dict(self._tool_display_codes or ()).get(payload.name, "tool.execution")
+        detail = None
+        action_title = None
+        action = self._tool_actions.get(payload.tool_id)
+        if (
+            isinstance(payload, ToolInvokedPayload)
+            and action is not None
+            and action.matches(payload.tool_id, payload.name, payload.args)
+        ):
+            action_title = action.title
+        if isinstance(payload, ToolInvokedPayload) and source is not None:
+            detail = source.detail(payload.args)
+        assert (
+            self._tenant_id is not None
+            and self._namespace is not None
+            and self._session_id is not None
+            and self._chat_repository is not None
+        )
+        activity_id = "act_" + safe_progress_id(
+            "tool-activity",
+            self._tenant_id,
+            self._namespace,
+            self._session_id,
+            self._run_id,
+            payload.segment_id,
+            payload.tool_id,
+        )
+        recovered = False
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 2
+        task = asyncio.current_task()
+        cancelling = 0 if task is None else task.cancelling()
+        try:
+            # Includes connection acquisition, query, complete row and payload validation.
+            async with asyncio.timeout_at(deadline):
+                record = await self._chat_repository.first_tool_activity(
+                    self._tenant_id,
+                    self._namespace,
+                    self._session_id,
+                    self._run_id,
+                    activity_id,
+                )
+                if task is not None and task.cancelling() > cancelling:
+                    raise asyncio.CancelledError
+                if record is not None:
+                    record = ChatEventRecord.model_validate(
+                        record.model_dump(), strict=True
+                    )
+                    if (
+                        record.tenant_id,
+                        record.namespace,
+                        record.session_id,
+                        record.run_id,
+                        record.event_type,
+                    ) != (
+                        self._tenant_id,
+                        self._namespace,
+                        self._session_id,
+                        self._run_id,
+                        "activity",
+                    ):
+                        raise ValueError("tool display history scope differs")
+                    original = read_tool_activity(record.payload_json)
+                    if (
+                        original.activity_id != activity_id
+                        or original.segment_id
+                        != "seg_"
+                        + safe_progress_id(
+                            "segment",
+                            self._tenant_id,
+                            self._namespace,
+                            self._session_id,
+                            self._run_id,
+                            payload.segment_id,
+                        )
+                    ):
+                        raise ValueError("tool display history identity differs")
+                    code, detail, action_title = (
+                        original.display_code,
+                        original.display_detail,
+                        original.action_title,
+                    )
+                    recovered = True
+                if loop.time() >= deadline:
+                    raise TimeoutError("tool display history deadline elapsed")
+        except TimeoutError:
+            # Keep the timeout category without retaining peer/row text in its cause.
+            raise ProgressPersistenceError(
+                "tool display history read unconfirmed"
+            ) from TimeoutError("tool display history read timed out")
+        except Exception:
+            # Pydantic includes input_value in ValidationError: never chain stored bytes.
+            raise ProgressPersistenceError(
+                "tool display history read unconfirmed"
+            ) from None
+        observation = (
+            payload.name,
+            code,
+            detail,
+            ("history:" if recovered else "")
+            + (source.origin if source is not None else "unbound"),
+            action_title,
+        )
+        self._tool_display_calls[key] = observation
+        return observation
 
     async def _publish_event(self, event: Mapping[str, JsonValue]) -> None:
         # Redis is a bounded live transport. Critical recovery comes from the
@@ -652,6 +930,13 @@ def _interrupted(tc: ToolCallInfo) -> bool:
     return error is not None and error.startswith(_INTERRUPT_REPR_PREFIXES)
 
 
+def _tool_failed(tc: ToolCallInfo) -> bool:
+    # Handled ToolException uses on_tool_end with a typed error ToolMessage, not on_tool_error.
+    return tc.error is not None or (
+        isinstance(tc.output, ToolMessage) and tc.output.status == "error"
+    )
+
+
 def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload | None:
     # 经 v3 projection 浮现的工具=真实执行过（approve/edit/无门控）：rejected 缺省。
     if _interrupted(tc):
@@ -662,7 +947,7 @@ def tool_returned_payload(tc: ToolCallInfo) -> ToolReturnedPayload | None:
         tool_id=tc.tool_call_id,
         name=tc.tool_name,
         result=result,
-        is_error=tc.error is not None,
+        is_error=_tool_failed(tc),
         truncated=True if truncated else None,
     )
 
@@ -689,7 +974,7 @@ def subagent_tool_returned_payload(
         tool_id=tc.tool_call_id,
         name=tc.tool_name,
         result=result,
-        is_error=tc.error is not None,
+        is_error=_tool_failed(tc),
         truncated=True if truncated else None,
     )
 

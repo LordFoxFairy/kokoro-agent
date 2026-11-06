@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kokoro_agent.application.chat.dto import (
     ChatHistoryPage,
@@ -42,7 +42,12 @@ from kokoro_agent.protocol import (
     run_events_stream,
 )
 from kokoro_agent.domain.run.scope import runtime_namespace
-from kokoro_agent.protocol.control import control_request_digest
+from kokoro_agent.protocol.control import (
+    CustomApiProfileSelection,
+    PersonalContext,
+    SelectedResourceRef,
+    control_request_digest,
+)
 from kokoro_agent.domain.run.interactions import InteractionRunMissing
 from kokoro_agent.domain.run.models import ControlAdmissionReceipt
 from kokoro_agent.domain.run.repository import (
@@ -66,7 +71,7 @@ class IngressError(RuntimeError):
 
 
 class LaunchBody(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
 
     request_id: str
     run_id: str
@@ -78,6 +83,15 @@ class LaunchBody(BaseModel):
     content: str
     requested_model_label: str | None = None
     trace: dict[str, Any] | None = None
+    personal_context: PersonalContext | None = Field(default=None, repr=False)
+    project_instruction: str | None = Field(default=None, repr=False)
+    selected_mcp_connection_ids: list[str] = Field(default_factory=list)
+    selected_custom_api_profiles: list[CustomApiProfileSelection] = Field(
+        default_factory=lambda: list[CustomApiProfileSelection](), max_length=32
+    )
+    selected_resource_refs: list[SelectedResourceRef] = Field(
+        default_factory=lambda: list[SelectedResourceRef](), max_length=16
+    )
 
 
 class ControlBody(BaseModel):
@@ -112,6 +126,8 @@ def _parse_launch(
 ) -> RunRequest:
     try:
         launch = LaunchBody.model_validate(dict(body))
+        if launch.project_instruction is None and "project_instruction" in body:
+            raise ValueError("project instruction must be omitted or text")
         return RunRequest(
             kind="run.request",
             request_id=launch.request_id,
@@ -120,10 +136,15 @@ def _parse_launch(
             feature_key=launch.feature_key,
             project_ref=launch.project_ref,
             selected_skill_source_refs=tuple(launch.selected_skill_source_refs),
+            selected_mcp_connection_ids=tuple(launch.selected_mcp_connection_ids),
+            selected_custom_api_profiles=tuple(launch.selected_custom_api_profiles),
+            selected_resource_refs=tuple(launch.selected_resource_refs),
             execution_identity=execution_identity,
             input=RunInput(message_id=launch.message_id, content=launch.content),
             requested_model_label=launch.requested_model_label,
             trace=launch.trace,
+            personal_context=launch.personal_context,
+            project_instruction=launch.project_instruction,
         )
     except (ValidationError, TypeError, ValueError) as error:
         raise IngressError(

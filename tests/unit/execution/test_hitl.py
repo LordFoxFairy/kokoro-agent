@@ -35,7 +35,13 @@ from kokoro_agent.infrastructure.checkpoint_interactions import (
     PreparedNativeResume,
     make_interaction_checkpointer,
 )
-from kokoro_agent.infrastructure.postgres_run_interactions import decode_pause_snapshot
+from kokoro_agent.infrastructure.postgres_run_interactions import (
+    # The owner witness is internal; exercise corruption guards without exporting it.
+    _Observation,  # pyright: ignore[reportPrivateUsage]
+    _require_swarm_root_handoff,  # pyright: ignore[reportPrivateUsage]
+    canonical_interaction_bytes,
+    decode_pause_snapshot,
+)
 from kokoro_agent.protocol import RunRequest, RunResume
 from kokoro_agent.protocol.control import control_request_digest
 from support.fakes import FakeRunRepository, request
@@ -58,14 +64,18 @@ class _NativeFixture:
     effects: list[JsonValue]
 
 
-def _approval(names: tuple[str, ...] = ("danger", "danger")) -> dict[str, JsonValue]:
+def _approval(
+    names: tuple[str, ...] = ("danger", "danger"),
+    *,
+    allowed: tuple[str, ...] = ("approve", "edit", "reject"),
+) -> dict[str, JsonValue]:
     return {
         "action_requests": [
             {"name": name, "args": {"secret": "private"}, "description": "sdk-template"}
             for name in names
         ],
         "review_configs": [
-            {"action_name": name, "allowed_decisions": ["approve", "edit", "reject"]}
+            {"action_name": name, "allowed_decisions": list(allowed)}
             for name in dict.fromkeys(names)
         ],
     }
@@ -311,12 +321,22 @@ async def test_full_collection_rejects_entire_invalid_batch_before_native(
             {"type": "edit", "edited_action": {"name": "danger", "args": {"x": 2}}},
         ),
         ("reject", {"reason": "no"}, {"type": "reject", "message": "no"}),
+        (
+            "respond",
+            {"response": "蓝色 / blue"},
+            {"type": "respond", "message": "蓝色 / blue"},
+        ),
     ],
 )
 async def test_native_approval_mapping_preserves_actual_decisions(
     kind: str, payload: dict[str, JsonValue], expected: dict[str, JsonValue]
 ) -> None:
-    fx = await _fixture((_approval(("danger",)),))
+    native = (
+        _approval(("ask_user_question",), allowed=("respond",))
+        if kind == "respond"
+        else _approval(("danger",))
+    )
+    fx = await _fixture((native,))
     item = decode_pause_snapshot(fx.paused.pause).groups[0].items[0]
     prepared = await _prepare(fx, [{"item_id": item.item_id, "type": kind, **payload}])
     mapping = _JSON.validate_python(prepared.command.resume)
@@ -599,3 +619,86 @@ async def _r70_invoke_native_batch(
         },
     }
     await graph.ainvoke(prepared.command, config)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [None, "unrelated_leaf", "duplicate_root", "undeclared", "multiple_leaves"],
+)
+def test_swarm_root_witness_never_overrides_unproven_leaf(defect: str | None) -> None:
+    run = request("swarm-witness").model_copy(update={"feature_key": "music_chat"})
+    source_task = "music-task"
+    leaf = {
+        "group_id": "pause-group",
+        "thread_id": RunScope.of(run).scoped_thread_id,
+        "checkpoint_ns": f"music:{source_task}",
+        "checkpoint_id": "peer-original",
+        "parent_checkpoint_id": None,
+        "tasks": [
+            {
+                "task_id": "paused-task",
+                "interrupt_id": "original-interrupt",
+                "item_ids": ["item"],
+                "resume_length": 1,
+                "resume_digest": "a" * 64,
+                "error": False,
+                "interrupt_digest": "b" * 64,
+            }
+        ],
+        "successors": [
+            {
+                "checkpoint_id": "peer-retired",
+                "parent_checkpoint_id": "peer-original",
+                "current_task_ids": ["retired-peer-node"],
+                "current_interrupt_ids": [],
+            }
+        ],
+    }
+    root_ids = ["root-routed", "root-complete"]
+    if defect == "duplicate_root":
+        root_ids[1] = root_ids[0]
+    facts = (
+        [leaf, {**leaf, "group_id": "unrelated-pause-group"}]
+        if defect == "multiple_leaves"
+        else [leaf]
+    )
+    observation = _Observation.model_validate(
+        {
+            "format": "kokoro-agent:checkpoint-observation:1",
+            "run_id": run.run_id,
+            "generation": 2,
+            "command_id": "command",
+            "attempt_id": "attempt",
+            "kind": "resume",
+            "probe_read_id": None,
+            "facts": facts,
+            "pause_ref": "pause",
+            "pause_revision": 1,
+            "collection_digest": "c" * 64,
+            "swarm_root_handoff": {
+                "group_id": "pause-group",
+                "leaf_checkpoint_id": "foreign"
+                if defect == "unrelated_leaf"
+                else "peer-retired",
+                "source_peer": "music",
+                "source_task_id": source_task,
+                "destination_peer": "general",
+                "root_anchor_id": "root-anchor",
+                "root_successor_ids": root_ids,
+            },
+        }
+    )
+    recipe = canonical_interaction_bytes(
+        {
+            "feature": {
+                "key": "music_chat",
+                "agents": [{"key": "music"}, {"key": "general"}],
+                "handoffs": [] if defect == "undeclared" else [["music", "general"]],
+            }
+        }
+    )
+    if defect is None:
+        _require_swarm_root_handoff(observation, run, recipe)
+    else:
+        with pytest.raises(InteractionCorrupt):
+            _require_swarm_root_handoff(observation, run, recipe)

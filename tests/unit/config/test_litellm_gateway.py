@@ -149,15 +149,17 @@ def _base_url(server: _GatewayServer) -> str:
 
 
 def _config() -> AppConfig:
-    return AppConfig(
-        model_allow_loopback_http=True,
-        model_credentials=(
-            ModelCredential(
-                provider_id="22222222-2222-4222-8222-222222222222",
-                secret_handle_ref="gateway-key",
-                api_key=SecretStr(GATEWAY_KEY),
-            ),
-        ),
+    return AppConfig(model_allow_loopback_http=True)
+
+
+def _credential(
+    provider: str = "22222222-2222-4222-8222-222222222222",
+    reference: str = "gateway-key",
+) -> ModelCredential:
+    return ModelCredential(
+        provider_id=provider,
+        secret_handle_ref=reference,
+        api_key=SecretStr(GATEWAY_KEY),
     )
 
 
@@ -197,7 +199,7 @@ def _owned_clients(
     connection_type: Literal["direct", "litellm"] = "litellm",
 ) -> Generator[ModelHttpClients]:
     clients = (ModelHttpMechanismClients if mechanism else ModelHttpClients)(
-        config.model, _route(base_url, connection_type)
+        config.model, _route(base_url, connection_type), _credential()
     )
     try:
         yield clients
@@ -259,27 +261,21 @@ def test_retired_global_gateway_configuration_is_rejected(name: str) -> None:
         AppConfig.from_env({name: ""})
 
 
-@pytest.mark.parametrize("configured_provider", [None, "different-provider"])
+@pytest.mark.parametrize("mismatch", ["provider", "handle"])
 def test_model_connection_requires_its_exact_provider_credential(
-    gateway: _GatewayServer, configured_provider: str | None
+    gateway: _GatewayServer, mismatch: str
 ) -> None:
     config = AppConfig(
         model_allow_loopback_http=True,
-        model_credentials=(
-            ()
-            if configured_provider is None
-            else (
-                ModelCredential(
-                    provider_id=configured_provider,
-                    secret_handle_ref="gateway-key",
-                    api_key=SecretStr(GATEWAY_KEY),
-                ),
-            )
-        ),
         openai_api_key=SecretStr("unrelated-native-openai-key"),
     )
+    credential = (
+        _credential("different-provider")
+        if mismatch == "provider"
+        else _credential(reference="different-handle")
+    )
     with pytest.raises(ValueError, match="model credentials unavailable"):
-        ModelHttpClients(config.model, _route(_base_url(gateway)))
+        ModelHttpClients(config.model, _route(_base_url(gateway)), credential)
     with pytest.raises(ValueError, match="routed protocol requires owned"):
         make_chat_model(
             config.model,
@@ -293,7 +289,7 @@ def test_http_loopback_model_connection_requires_explicit_deployment_permission(
 ) -> None:
     config = _config().model_copy(update={"model_allow_loopback_http": False})
     with pytest.raises(ValueError, match="explicit deployment permission"):
-        ModelHttpClients(config.model, _route(_base_url(gateway)))
+        ModelHttpClients(config.model, _route(_base_url(gateway)), _credential())
     assert gateway.captured == []
 
 
@@ -340,90 +336,17 @@ def test_litellm_streaming_over_gateway(gateway: _GatewayServer) -> None:
         assert call.max_completion_tokens == clients.route.max_output_tokens
 
 
-@pytest.mark.parametrize(
-    "invalid", ["missing", "malformed", "unsafe_mode", "wrong_version"]
-)
-def test_model_credentials_mount_is_validated_at_worker_configuration(
-    tmp_path: Path, invalid: str
-) -> None:
-    path = tmp_path / "model-secrets.json"
-    if invalid != "missing":
-        payload: dict[str, object] = {
-            "version": "9.0.0" if invalid == "wrong_version" else "1.0.0",
-            "credentials": [],
-        }
-        path.write_text("{" if invalid == "malformed" else json.dumps(payload))
-        path.chmod(0o644 if invalid == "unsafe_mode" else 0o600)
-    with pytest.raises(ValueError, match="model credentials unavailable"):
-        AppConfig.from_env({"KOKORO_MODEL_CREDENTIALS_FILE": str(path)})
+@pytest.mark.parametrize("value", ["", "/missing/private.json"])
+def test_retired_local_model_file_configuration_is_rejected(value: str) -> None:
+    with pytest.raises(
+        ValueError, match="retired local model credential file"
+    ) as caught:
+        AppConfig.from_env({"KOKORO_MODEL_CREDENTIALS_FILE": value})
+    assert value == "" or value not in str(caught.value)
 
 
-def test_private_model_snapshot_loads_exact_provider_handle_without_repr_leak(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "private-model.json"
-    path.write_text(
-        json.dumps(
-            {
-                "version": "1.0.0",
-                "credentials": [
-                    {
-                        "provider_id": "provider-one",
-                        "secret_handle_ref": "private-ref",
-                        "api_key": "private-test-key-not-real",
-                    }
-                ],
-            }
-        )
-    )
-    path.chmod(0o400)
-    config = AppConfig.from_env({"KOKORO_MODEL_CREDENTIALS_FILE": str(path)})
-    assert len(config.model_credentials) == 1
-    item = config.model_credentials[0]
-    assert item.provider_id == "provider-one"
-    assert item.secret_handle_ref == "private-ref"
-    assert item.api_key.get_secret_value() == "private-test-key-not-real"
-    assert "private-test-key-not-real" not in repr(config)
-    assert "private-ref" not in repr(config)
-    assert "private-model.json" not in repr(config)
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    ["duplicate_json", "duplicate_ref", "symlink", "hardlink", "non_ascii_key"],
-)
-def test_private_model_snapshot_rejects_ambiguous_or_unprotected_input_without_leak(
-    tmp_path: Path, mutation: str
-) -> None:
-    path = tmp_path / "private-model.json"
-    entry = {
-        "provider_id": "provider-one",
-        "secret_handle_ref": "private-ref",
-        "api_key": "private-test-key-not-real",
-    }
-    entries = (
-        [entry, dict(entry, provider_id="provider-two")]
-        if mutation == "duplicate_ref"
-        else [entry]
-    )
-    if mutation == "non_ascii_key":
-        entry["api_key"] = "private-test-key-秘密"
-    raw = json.dumps({"version": "1.0.0", "credentials": entries})
-    if mutation == "duplicate_json":
-        raw = raw.replace(
-            '"version": "1.0.0"', '"version": "1.0.0", "version": "1.0.0"'
-        )
-    path.write_text(raw)
-    path.chmod(0o600)
-    if mutation in {"symlink", "hardlink"}:
-        alias = tmp_path / "alias.json"
-        if mutation == "symlink":
-            alias.symlink_to(path)
-        else:
-            alias.hardlink_to(path)
-        path = alias
-    with pytest.raises(ValueError, match="model credentials unavailable") as caught:
-        AppConfig.from_env({"KOKORO_MODEL_CREDENTIALS_FILE": str(path)})
-    assert caught.value.__context__ is None
-    assert "private-test-key" not in str(caught.value)
-    assert str(path) not in str(caught.value)
+def test_retired_model_file_yaml_is_not_silently_ignored(tmp_path: Path) -> None:
+    path = tmp_path / "agent.yaml"
+    path.write_text("model:\n  credentials_file: /private/former-key.json\n")
+    with pytest.raises(KeyError, match="unknown config key"):
+        AppConfig.from_env({"KOKORO_AGENT_CONFIG": str(path)})

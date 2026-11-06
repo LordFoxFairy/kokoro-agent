@@ -67,7 +67,7 @@ from kokoro_agent.infrastructure.postgres_run_interactions import (
     PostgresRunInteractions,
 )
 from kokoro_agent.infrastructure.postgres_run_sandbox import PostgresRunSandbox
-from kokoro_agent.protocol import RunRequest
+from kokoro_agent.protocol import RunRequest, RunSteer
 
 DEFAULT_LEASE_TTL_S = 90
 
@@ -350,16 +350,16 @@ class PostgresRunRepository:
     async def is_terminal(self, run_id: str) -> bool:
         return await self._leases.is_terminal(run_id)
 
-    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
-        return await self._effects.add_steer(run_id, message_id, content)
+    async def store_steer(self, command: RunSteer) -> None:
+        await self._effects.store_steer(command)
 
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
         return await self._effects.peek_steers(run_id)
 
-    async def ack_steers(
-        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    async def confirm_steers(
+        self, run_id: str, lease: LeaseFence, messages: list[tuple[str, str]]
     ) -> bool:
-        return await self._effects.ack_steers(run_id, lease, message_ids)
+        return await self._effects.confirm_steers(run_id, lease, messages)
 
     async def put_tool_result(
         self, run_id: str, lease: LeaseFence, tool_id: str, result: str, is_error: bool

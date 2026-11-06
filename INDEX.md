@@ -1,3 +1,9 @@
+## 2026-11-02 E2B 受保护文件发现（候选）
+
+- `sandbox/e2b_metadata.py`：SDK正式Stat/ListDir unary、总期限/单响应与批次预算、原名字和类型检查，无shell/进程。
+- `sandbox/file_egress.py`：共享有限snapshot发现/搜索投影；Docker原dirfd发现保持，E2B复用完整内容检查。
+- 原sandbox三测试文件：恢复RED、正式protobuf/HTTP容量/取消与原秘密边界；真实云箱未验。
+
 # kokoro-agent 仓库索引
 
 ## 运行入口
@@ -52,3 +58,10 @@ Redis `127.0.0.1:56380` 的 logical DB `9`；运行入口不负责创建重复�
 ## 配置参考
 
 - `agent.example.full.yaml`：与 `.env`/secret 注入边界并列的完整非 secret 配置树参考；由 `KOKORO_AGENT_CONFIG` 读取。
+
+## Custom API 文件出口
+
+- `sandbox/file_egress.py`：每次 fresh Acquire、完整有界原字节检查、分页/二进制展示与归档同快照；Docker元数据发现/有限glob/literal grep共用同guard，不保存秘密缓存。
+- `sandbox/docker_backend.py` / `e2b_backend.py`：受保护 read/download 接线；Docker安全grep/ls/glob已接线候选，E2B目录类仍OPEN并拒绝，普通backend保持原行为。
+- `sandbox/archive.py`：受保护归档只提交已检查的 bytes，持有取消线程并停止后续上传；Storage Artifact 仍由原 deliver client 发布。
+- `tests/support/file_egress.py`、`tests/unit/sandbox/test_file_egress.py`、`tests/unit/tools/test_deliver.py`：边界、SDK 替身与发布联动回归。

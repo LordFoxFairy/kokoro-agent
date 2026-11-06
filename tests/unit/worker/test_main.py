@@ -16,6 +16,7 @@ from support.fakes import (
     text_run,
 )
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.protocol import RunRequest, SkillProgressSink, SubagentSource
@@ -84,7 +85,10 @@ async def test_worker_shutdown_budget_owns_cancelled_construction_until_cleanup(
     agent = FakeAgent(run=text_run("must-not-start"))
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         construction_started.set()
         while not construction_release.is_set():
@@ -139,7 +143,10 @@ async def test_worker_shutdown_observes_late_construction_failure(
     primary = RuntimeError("late-construction-private-detail")
 
     async def build(
-        _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+        _request: RunRequest,
+        _lease: LeaseFence,
+        _progress: SkillProgressSink,
+        _action_observer: ActionObservationSink,
     ) -> AgentHandle:
         construction_started.set()
         await construction_release.wait()

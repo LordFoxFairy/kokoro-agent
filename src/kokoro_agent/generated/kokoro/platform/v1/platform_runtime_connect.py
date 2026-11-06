@@ -14,7 +14,7 @@ from connectrpc.errors import ConnectError
 from connectrpc.method import IdempotencyLevel, MethodInfo
 from connectrpc.server import ConnectASGIApplication, Endpoint
 
-from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginLocalSkillImportRequest, BeginLocalSkillImportResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse, BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse, CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse, CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse, CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse, CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse, CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse, DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse, DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse, DiscardSkillDraftRequest, DiscardSkillDraftResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse, GetAdminSkillRequest, GetAdminSkillResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetCurrentSkillRequest, GetCurrentSkillResponse, GetLocalSkillImportRequest, GetLocalSkillImportResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse, GetMcpServerRequest, GetMcpServerResponse, GetPersonalCustomApiRequest, GetPersonalCustomApiResponse, GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse, GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse, GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse, GetPersonalMcpServerRequest, GetPersonalMcpServerResponse, GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse, GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse, GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse, GetSkillCoverUploadRequest, GetSkillCoverUploadResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, GetSkillRevisionRequest, GetSkillRevisionResponse, ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse, InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse, InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse, InspectSkillPackageRequest, InspectSkillPackageResponse, InstallPersonalSkillRequest, InstallPersonalSkillResponse, InstallProjectSkillRequest, InstallProjectSkillResponse, InstallSkillRequest, InstallSkillResponse, ListAdminSkillsRequest, ListAdminSkillsResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListPersonalCustomApisRequest, ListPersonalCustomApisResponse, ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse, ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse, ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse, ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse, ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse, PublishOfficialSkillRequest, PublishOfficialSkillResponse, PublishSkillRequest, PublishSkillResponse, QuarantineSkillRequest, QuarantineSkillResponse, ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse, RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse, RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse, RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse, RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RestoreSkillRequest, RestoreSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse, SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse, SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse, SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse, SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse, SetSkillStatusRequest, SetSkillStatusResponse, UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse, UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse, UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse, UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse, UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse, UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse, UpdateSkillDraftRequest, UpdateSkillDraftResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawAdminSkillRequest, WithdrawAdminSkillResponse, WithdrawSkillRequest, WithdrawSkillResponse
+from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginLocalSkillImportRequest, BeginLocalSkillImportResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse, BeginPersonalMcpIconUploadRequest, BeginPersonalMcpIconUploadResponse, BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CancelPersonalMcpIconIntentRequest, CancelPersonalMcpIconIntentResponse, CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse, CompletePersonalMcpIconUploadRequest, CompletePersonalMcpIconUploadResponse, CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse, CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse, CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse, CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse, CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse, DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse, DeletePersonalSkillSeriesRequest, DeletePersonalSkillSeriesResponse, DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse, DiscardSkillDraftRequest, DiscardSkillDraftResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse, GetAdminSkillRequest, GetAdminSkillResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetCurrentSkillRequest, GetCurrentSkillResponse, GetLocalSkillImportRequest, GetLocalSkillImportResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse, GetMcpServerRequest, GetMcpServerResponse, GetPersonalCustomApiRequest, GetPersonalCustomApiResponse, GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse, GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse, GetPersonalMcpIconIntentRequest, GetPersonalMcpIconIntentResponse, GetPersonalMcpPrepareReceiptRequest, GetPersonalMcpPrepareReceiptResponse, GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse, GetPersonalMcpServerRequest, GetPersonalMcpServerResponse, GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse, GetProjectSkillInstallationPackageDownloadRequest, GetProjectSkillInstallationPackageDownloadResponse, GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse, GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse, GetSkillCoverUploadRequest, GetSkillCoverUploadResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, GetSkillRevisionRequest, GetSkillRevisionResponse, ImportPersonalMcpIconUrlRequest, ImportPersonalMcpIconUrlResponse, ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse, InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse, InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse, InspectProjectSkillInstallationPackageRequest, InspectProjectSkillInstallationPackageResponse, InspectSkillPackageRequest, InspectSkillPackageResponse, InstallPersonalSkillRequest, InstallPersonalSkillResponse, InstallProjectSkillRequest, InstallProjectSkillResponse, InstallSkillRequest, InstallSkillResponse, ListAdminSkillsRequest, ListAdminSkillsResponse, ListAppSkillBindingsRequest, ListAppSkillBindingsResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListPersonalCustomApisRequest, ListPersonalCustomApisResponse, ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse, ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse, ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse, ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse, ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse, PublishOfficialSkillRequest, PublishOfficialSkillResponse, PublishSkillRequest, PublishSkillResponse, PutAppSkillBindingRequest, PutAppSkillBindingResponse, QuarantineSkillRequest, QuarantineSkillResponse, ReauthorizePersonalMcpServerRequest, ReauthorizePersonalMcpServerResponse, ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse, RemoveAppSkillBindingRequest, RemoveAppSkillBindingResponse, RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse, RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse, RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse, RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RestoreSkillRequest, RestoreSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse, SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse, SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse, SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse, SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse, SetSkillStatusRequest, SetSkillStatusResponse, UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse, UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse, UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse, UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse, UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse, UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse, UpdateSkillDraftRequest, UpdateSkillDraftResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawAdminSkillRequest, WithdrawAdminSkillResponse, WithdrawSkillRequest, WithdrawSkillResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -26,6 +26,15 @@ if TYPE_CHECKING:
 
 
 class SkillCatalogService(Protocol):
+    async def put_app_skill_binding(self, request: PutAppSkillBindingRequest, ctx: RequestContext[PutAppSkillBindingRequest, PutAppSkillBindingResponse]) -> PutAppSkillBindingResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def remove_app_skill_binding(self, request: RemoveAppSkillBindingRequest, ctx: RequestContext[RemoveAppSkillBindingRequest, RemoveAppSkillBindingResponse]) -> RemoveAppSkillBindingResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def delete_personal_skill_series(self, request: DeletePersonalSkillSeriesRequest, ctx: RequestContext[DeletePersonalSkillSeriesRequest, DeletePersonalSkillSeriesResponse]) -> DeletePersonalSkillSeriesResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def begin_local_skill_import(self, request: BeginLocalSkillImportRequest, ctx: RequestContext[BeginLocalSkillImportRequest, BeginLocalSkillImportResponse]) -> BeginLocalSkillImportResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -97,6 +106,36 @@ class SkillCatalogServiceASGIApplication(ConnectASGIApplication[SkillCatalogServ
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/kokoro.platform.v1.SkillCatalogService/PutAppSkillBinding": Endpoint.unary(
+                    method=MethodInfo(
+                        name="PutAppSkillBinding",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=PutAppSkillBindingRequest,
+                        output=PutAppSkillBindingResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.put_app_skill_binding,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/RemoveAppSkillBinding": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RemoveAppSkillBinding",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=RemoveAppSkillBindingRequest,
+                        output=RemoveAppSkillBindingResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.remove_app_skill_binding,
+                ),
+                "/kokoro.platform.v1.SkillCatalogService/DeletePersonalSkillSeries": Endpoint.unary(
+                    method=MethodInfo(
+                        name="DeletePersonalSkillSeries",
+                        service_name="kokoro.platform.v1.SkillCatalogService",
+                        input=DeletePersonalSkillSeriesRequest,
+                        output=DeletePersonalSkillSeriesResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.delete_personal_skill_series,
+                ),
                 "/kokoro.platform.v1.SkillCatalogService/BeginLocalSkillImport": Endpoint.unary(
                     method=MethodInfo(
                         name="BeginLocalSkillImport",
@@ -301,6 +340,66 @@ class SkillCatalogServiceASGIApplication(ConnectASGIApplication[SkillCatalogServ
 
 
 class SkillCatalogServiceClient(ConnectClient):
+    async def put_app_skill_binding(
+        self,
+        request: PutAppSkillBindingRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> PutAppSkillBindingResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="PutAppSkillBinding",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=PutAppSkillBindingRequest,
+                output=PutAppSkillBindingResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def remove_app_skill_binding(
+        self,
+        request: RemoveAppSkillBindingRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RemoveAppSkillBindingResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RemoveAppSkillBinding",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=RemoveAppSkillBindingRequest,
+                output=RemoveAppSkillBindingResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def delete_personal_skill_series(
+        self,
+        request: DeletePersonalSkillSeriesRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DeletePersonalSkillSeriesResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DeletePersonalSkillSeries",
+                service_name="kokoro.platform.v1.SkillCatalogService",
+                input=DeletePersonalSkillSeriesRequest,
+                output=DeletePersonalSkillSeriesResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def begin_local_skill_import(
         self,
         request: BeginLocalSkillImportRequest,
@@ -1937,6 +2036,24 @@ class ProductSkillInstallationServiceClient(ConnectClient):
         )
 
 class ProductMcpPersonalService(Protocol):
+    async def reauthorize_personal_mcp_server(self, request: ReauthorizePersonalMcpServerRequest, ctx: RequestContext[ReauthorizePersonalMcpServerRequest, ReauthorizePersonalMcpServerResponse]) -> ReauthorizePersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def begin_personal_mcp_icon_upload(self, request: BeginPersonalMcpIconUploadRequest, ctx: RequestContext[BeginPersonalMcpIconUploadRequest, BeginPersonalMcpIconUploadResponse]) -> BeginPersonalMcpIconUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def complete_personal_mcp_icon_upload(self, request: CompletePersonalMcpIconUploadRequest, ctx: RequestContext[CompletePersonalMcpIconUploadRequest, CompletePersonalMcpIconUploadResponse]) -> CompletePersonalMcpIconUploadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_mcp_icon_intent(self, request: GetPersonalMcpIconIntentRequest, ctx: RequestContext[GetPersonalMcpIconIntentRequest, GetPersonalMcpIconIntentResponse]) -> GetPersonalMcpIconIntentResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def cancel_personal_mcp_icon_intent(self, request: CancelPersonalMcpIconIntentRequest, ctx: RequestContext[CancelPersonalMcpIconIntentRequest, CancelPersonalMcpIconIntentResponse]) -> CancelPersonalMcpIconIntentResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def import_personal_mcp_icon_url(self, request: ImportPersonalMcpIconUrlRequest, ctx: RequestContext[ImportPersonalMcpIconUrlRequest, ImportPersonalMcpIconUrlResponse]) -> ImportPersonalMcpIconUrlResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def register_personal_mcp_server(self, request: RegisterPersonalMcpServerRequest, ctx: RequestContext[RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse]) -> RegisterPersonalMcpServerResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -1944,6 +2061,9 @@ class ProductMcpPersonalService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def get_personal_mcp_server(self, request: GetPersonalMcpServerRequest, ctx: RequestContext[GetPersonalMcpServerRequest, GetPersonalMcpServerResponse]) -> GetPersonalMcpServerResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_personal_mcp_prepare_receipt(self, request: GetPersonalMcpPrepareReceiptRequest, ctx: RequestContext[GetPersonalMcpPrepareReceiptRequest, GetPersonalMcpPrepareReceiptResponse]) -> GetPersonalMcpPrepareReceiptResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def prepare_personal_mcp_server(self, request: PreparePersonalMcpServerRequest, ctx: RequestContext[PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse]) -> PreparePersonalMcpServerResponse:
@@ -2011,6 +2131,66 @@ class ProductMcpPersonalServiceASGIApplication(ConnectASGIApplication[ProductMcp
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductMcpPersonalService/ReauthorizePersonalMcpServer": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ReauthorizePersonalMcpServer",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ReauthorizePersonalMcpServerRequest,
+                        output=ReauthorizePersonalMcpServerResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.reauthorize_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/BeginPersonalMcpIconUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="BeginPersonalMcpIconUpload",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=BeginPersonalMcpIconUploadRequest,
+                        output=BeginPersonalMcpIconUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.begin_personal_mcp_icon_upload,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/CompletePersonalMcpIconUpload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CompletePersonalMcpIconUpload",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=CompletePersonalMcpIconUploadRequest,
+                        output=CompletePersonalMcpIconUploadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.complete_personal_mcp_icon_upload,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/GetPersonalMcpIconIntent": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalMcpIconIntent",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=GetPersonalMcpIconIntentRequest,
+                        output=GetPersonalMcpIconIntentResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_mcp_icon_intent,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/CancelPersonalMcpIconIntent": Endpoint.unary(
+                    method=MethodInfo(
+                        name="CancelPersonalMcpIconIntent",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=CancelPersonalMcpIconIntentRequest,
+                        output=CancelPersonalMcpIconIntentResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.cancel_personal_mcp_icon_intent,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/ImportPersonalMcpIconUrl": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ImportPersonalMcpIconUrl",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=ImportPersonalMcpIconUrlRequest,
+                        output=ImportPersonalMcpIconUrlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.import_personal_mcp_icon_url,
+                ),
                 "/kokoro.platform.v1.ProductMcpPersonalService/RegisterPersonalMcpServer": Endpoint.unary(
                     method=MethodInfo(
                         name="RegisterPersonalMcpServer",
@@ -2040,6 +2220,16 @@ class ProductMcpPersonalServiceASGIApplication(ConnectASGIApplication[ProductMcp
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.get_personal_mcp_server,
+                ),
+                "/kokoro.platform.v1.ProductMcpPersonalService/GetPersonalMcpPrepareReceipt": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetPersonalMcpPrepareReceipt",
+                        service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                        input=GetPersonalMcpPrepareReceiptRequest,
+                        output=GetPersonalMcpPrepareReceiptResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_personal_mcp_prepare_receipt,
                 ),
                 "/kokoro.platform.v1.ProductMcpPersonalService/PreparePersonalMcpServer": Endpoint.unary(
                     method=MethodInfo(
@@ -2225,6 +2415,126 @@ class ProductMcpPersonalServiceASGIApplication(ConnectASGIApplication[ProductMcp
 
 
 class ProductMcpPersonalServiceClient(ConnectClient):
+    async def reauthorize_personal_mcp_server(
+        self,
+        request: ReauthorizePersonalMcpServerRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReauthorizePersonalMcpServerResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReauthorizePersonalMcpServer",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ReauthorizePersonalMcpServerRequest,
+                output=ReauthorizePersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def begin_personal_mcp_icon_upload(
+        self,
+        request: BeginPersonalMcpIconUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> BeginPersonalMcpIconUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="BeginPersonalMcpIconUpload",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=BeginPersonalMcpIconUploadRequest,
+                output=BeginPersonalMcpIconUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def complete_personal_mcp_icon_upload(
+        self,
+        request: CompletePersonalMcpIconUploadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CompletePersonalMcpIconUploadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CompletePersonalMcpIconUpload",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=CompletePersonalMcpIconUploadRequest,
+                output=CompletePersonalMcpIconUploadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_mcp_icon_intent(
+        self,
+        request: GetPersonalMcpIconIntentRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalMcpIconIntentResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalMcpIconIntent",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=GetPersonalMcpIconIntentRequest,
+                output=GetPersonalMcpIconIntentResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def cancel_personal_mcp_icon_intent(
+        self,
+        request: CancelPersonalMcpIconIntentRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> CancelPersonalMcpIconIntentResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="CancelPersonalMcpIconIntent",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=CancelPersonalMcpIconIntentRequest,
+                output=CancelPersonalMcpIconIntentResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def import_personal_mcp_icon_url(
+        self,
+        request: ImportPersonalMcpIconUrlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ImportPersonalMcpIconUrlResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ImportPersonalMcpIconUrl",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=ImportPersonalMcpIconUrlRequest,
+                output=ImportPersonalMcpIconUrlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def register_personal_mcp_server(
         self,
         request: RegisterPersonalMcpServerRequest,
@@ -2279,6 +2589,26 @@ class ProductMcpPersonalServiceClient(ConnectClient):
                 service_name="kokoro.platform.v1.ProductMcpPersonalService",
                 input=GetPersonalMcpServerRequest,
                 output=GetPersonalMcpServerResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_personal_mcp_prepare_receipt(
+        self,
+        request: GetPersonalMcpPrepareReceiptRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetPersonalMcpPrepareReceiptResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetPersonalMcpPrepareReceipt",
+                service_name="kokoro.platform.v1.ProductMcpPersonalService",
+                input=GetPersonalMcpPrepareReceiptRequest,
+                output=GetPersonalMcpPrepareReceiptResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -3303,6 +3633,9 @@ class SkillAdminServiceClient(ConnectClient):
         )
 
 class ProductSkillReadService(Protocol):
+    async def list_app_skill_bindings(self, request: ListAppSkillBindingsRequest, ctx: RequestContext[ListAppSkillBindingsRequest, ListAppSkillBindingsResponse]) -> ListAppSkillBindingsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def get_skill_revision(self, request: GetSkillRevisionRequest, ctx: RequestContext[GetSkillRevisionRequest, GetSkillRevisionResponse]) -> GetSkillRevisionResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -3332,6 +3665,16 @@ class ProductSkillReadServiceASGIApplication(ConnectASGIApplication[ProductSkill
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductSkillReadService/ListAppSkillBindings": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListAppSkillBindings",
+                        service_name="kokoro.platform.v1.ProductSkillReadService",
+                        input=ListAppSkillBindingsRequest,
+                        output=ListAppSkillBindingsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_app_skill_bindings,
+                ),
                 "/kokoro.platform.v1.ProductSkillReadService/GetSkillRevision": Endpoint.unary(
                     method=MethodInfo(
                         name="GetSkillRevision",
@@ -3396,6 +3739,26 @@ class ProductSkillReadServiceASGIApplication(ConnectASGIApplication[ProductSkill
 
 
 class ProductSkillReadServiceClient(ConnectClient):
+    async def list_app_skill_bindings(
+        self,
+        request: ListAppSkillBindingsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListAppSkillBindingsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListAppSkillBindings",
+                service_name="kokoro.platform.v1.ProductSkillReadService",
+                input=ListAppSkillBindingsRequest,
+                output=ListAppSkillBindingsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def get_skill_revision(
         self,
         request: GetSkillRevisionRequest,
@@ -3944,6 +4307,101 @@ class ProductProjectSkillInstallationServiceClient(ConnectClient):
                 service_name="kokoro.platform.v1.ProductProjectSkillInstallationService",
                 input=ListProjectSkillInstallationsRequest,
                 output=ListProjectSkillInstallationsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class ProductProjectSkillInstallationContentService(Protocol):
+    async def inspect_project_skill_installation_package(self, request: InspectProjectSkillInstallationPackageRequest, ctx: RequestContext[InspectProjectSkillInstallationPackageRequest, InspectProjectSkillInstallationPackageResponse]) -> InspectProjectSkillInstallationPackageResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_project_skill_installation_package_download(self, request: GetProjectSkillInstallationPackageDownloadRequest, ctx: RequestContext[GetProjectSkillInstallationPackageDownloadRequest, GetProjectSkillInstallationPackageDownloadResponse]) -> GetProjectSkillInstallationPackageDownloadResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class ProductProjectSkillInstallationContentServiceASGIApplication(ConnectASGIApplication[ProductProjectSkillInstallationContentService]):
+    def __init__(
+        self,
+        service: ProductProjectSkillInstallationContentService | AsyncGenerator[ProductProjectSkillInstallationContentService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.ProductProjectSkillInstallationContentService/InspectProjectSkillInstallationPackage": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InspectProjectSkillInstallationPackage",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                        input=InspectProjectSkillInstallationPackageRequest,
+                        output=InspectProjectSkillInstallationPackageResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.inspect_project_skill_installation_package,
+                ),
+                "/kokoro.platform.v1.ProductProjectSkillInstallationContentService/GetProjectSkillInstallationPackageDownload": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetProjectSkillInstallationPackageDownload",
+                        service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                        input=GetProjectSkillInstallationPackageDownloadRequest,
+                        output=GetProjectSkillInstallationPackageDownloadResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_project_skill_installation_package_download,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.ProductProjectSkillInstallationContentService"
+
+
+class ProductProjectSkillInstallationContentServiceClient(ConnectClient):
+    async def inspect_project_skill_installation_package(
+        self,
+        request: InspectProjectSkillInstallationPackageRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InspectProjectSkillInstallationPackageResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InspectProjectSkillInstallationPackage",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                input=InspectProjectSkillInstallationPackageRequest,
+                output=InspectProjectSkillInstallationPackageResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_project_skill_installation_package_download(
+        self,
+        request: GetProjectSkillInstallationPackageDownloadRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetProjectSkillInstallationPackageDownloadResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetProjectSkillInstallationPackageDownload",
+                service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
+                input=GetProjectSkillInstallationPackageDownloadRequest,
+                output=GetProjectSkillInstallationPackageDownloadResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

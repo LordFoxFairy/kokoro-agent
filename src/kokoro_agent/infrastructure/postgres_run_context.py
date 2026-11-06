@@ -37,6 +37,9 @@ from kokoro_agent.infrastructure.schema import (
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 
+# A persisted steer has a mailbox owner but no success receipt yet.
+STEER_MAILBOX_FINGERPRINT = "steer-mailbox:v1"
+
 
 class OutboxFilter(Enum):
     """Supported semantic filters for the shared outbox read primitive."""

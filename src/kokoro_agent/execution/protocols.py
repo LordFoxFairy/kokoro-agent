@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 from langchain_core.messages import AIMessage
@@ -14,17 +15,23 @@ from langgraph.stream import StreamTransformer
 from langgraph.types import Interrupt
 
 
+class TextProjection(AsyncIterable[str], Awaitable[str], Protocol):
+    """SDK text projection: deltas while iterating, authoritative text when awaited."""
+
+
 @runtime_checkable
 class ModelStream(Protocol):
     """单次模型调用的 v3 流（AsyncChatModelStream）：原生 .text/.reasoning projection。"""
 
-    namespace: list[str]
-    node: str | None
+    @property
+    def namespace(self) -> list[str]: ...
+    @property
+    def node(self) -> str | None: ...
 
     @property
     def message_id(self) -> str | None: ...
     @property
-    def text(self) -> AsyncIterable[str]: ...
+    def text(self) -> TextProjection: ...
     @property
     def reasoning(self) -> AsyncIterable[str]: ...
     @property
@@ -78,11 +85,37 @@ class SubagentRunStream(SubagentInfo, _RunProjections, Protocol):
     """递归子代理 run 流（AsyncSubagentRunStream）：身份 + 自带递归投影。"""
 
 
+SWARM_SCOPE_EXTENSION = "kokoro_swarm_scope"
+
+
+@dataclass(frozen=True)
+class SwarmPeerScope:
+    """Compile-time declaration, never inferred from model text or graph state."""
+
+    root_scope: tuple[str, ...]
+    peer_names: frozenset[str]
+
+
+class PeerRunStream(_RunProjections, Protocol):
+    """Official direct subgraph handle; native task children are not peers."""
+
+    @property
+    def path(self) -> tuple[str, ...]: ...
+    @property
+    def graph_name(self) -> str: ...
+
+
 @runtime_checkable
 class AgentRunStream(_RunProjections, Protocol):
     """顶层 v3 run 流（AsyncGraphRunStream）：投影 + 暂停查询 + async 上下文清退。"""
 
+    @property
+    def extensions(self) -> Mapping[str, object]: ...
+    @property
+    def subgraphs(self) -> AsyncIterable[PeerRunStream]: ...
+
     async def interrupted(self) -> bool: ...
+    async def output(self) -> dict[str, Any] | None: ...
     async def __aenter__(self) -> AgentRunStream: ...
     async def __aexit__(
         self, exc_type: object, exc: object, tb: object

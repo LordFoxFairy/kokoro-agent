@@ -27,7 +27,6 @@ from pydantic import (
 from kokoro_agent.config_file import load_config_file
 from kokoro_agent.model.call_scope import DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S
 from kokoro_agent.model.factory import ChatModelSettings
-from kokoro_agent.model.credentials import ModelCredential, read_model_credentials
 from kokoro_agent.observability import ObservabilitySettings
 from kokoro_agent.sandbox import SandboxSettings, load_workspace_config
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
@@ -67,7 +66,9 @@ class AppConfig(BaseModel):
     模型、工具、Skill 和权限属于 worker-local Agent/Feature 声明与进程配置，不在 public
     LaunchRunRequest 中，也不由每次请求重写。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore", frozen=True)
+    model_config = ConfigDict(
+        populate_by_name=True, extra="ignore", frozen=True, hide_input_in_errors=True
+    )
 
     # --- model 域 ---
     disable_streaming: bool = Field(
@@ -83,12 +84,6 @@ class AppConfig(BaseModel):
     )
     anthropic_base_url: OptStr = Field(
         default=None, validation_alias="ANTHROPIC_BASE_URL"
-    )
-    model_credentials_file: OptStr = Field(
-        default=None, validation_alias="KOKORO_MODEL_CREDENTIALS_FILE", repr=False
-    )
-    model_credentials: tuple[ModelCredential, ...] = Field(
-        default=(), exclude=True, repr=False
     )
     model_allow_loopback_http: bool = Field(
         default=False, validation_alias="KOKORO_MODEL_ALLOW_LOOPBACK_HTTP"
@@ -150,6 +145,16 @@ class AppConfig(BaseModel):
     e2b_timeout: int = Field(default=1800, gt=0, validation_alias="KOKORO_E2B_TIMEOUT")
     docker_image: OptStr = Field(default=None, validation_alias="KOKORO_DOCKER_IMAGE")
     docker_ttl: int = Field(default=1800, gt=0, validation_alias="KOKORO_DOCKER_TTL")
+    docker_cli_home: OptStr = Field(default=None, validation_alias="HOME")
+    docker_cli_host: OptStr = Field(default=None, validation_alias="DOCKER_HOST")
+    docker_cli_context: OptStr = Field(default=None, validation_alias="DOCKER_CONTEXT")
+    docker_cli_config: OptStr = Field(default=None, validation_alias="DOCKER_CONFIG")
+    docker_cli_tls_verify: OptStr = Field(
+        default=None, validation_alias="DOCKER_TLS_VERIFY"
+    )
+    docker_cli_cert_path: OptStr = Field(
+        default=None, validation_alias="DOCKER_CERT_PATH"
+    )
     custom_backend_ref: OptStr = Field(
         default=None, validation_alias="KOKORO_CUSTOM_BACKEND"
     )
@@ -170,6 +175,10 @@ class AppConfig(BaseModel):
     system_timeout_s: float = Field(
         default=5, gt=0, le=60, validation_alias="KOKORO_SYSTEM_TIMEOUT_S"
     )
+    bff_base_url: OptStr = Field(default=None, validation_alias="KOKORO_BFF_BASE_URL")
+    bff_model_admission_secrets: OptSecret = Field(
+        default=None, repr=False, validation_alias="KOKORO_BFF_MODEL_ADMISSION_SECRETS"
+    )
     storage_base_url: OptStr = Field(
         default=None, validation_alias="KOKORO_STORAGE_BASE_URL"
     )
@@ -183,16 +192,13 @@ class AppConfig(BaseModel):
         default="strict", validation_alias="KOKORO_MCP_EGRESS_MODE"
     )
 
-    iam_base_url: OptStr = Field(
-        default=None, repr=False, validation_alias="KOKORO_AGENT_IAM_BASE_URL"
-    )
     platform_base_url: OptStr = Field(
         default=None, repr=False, validation_alias="KOKORO_PLATFORM_BASE_URL"
     )
-    platform_credentials_file: OptStr = Field(
+    platform_service_credentials_file: OptStr = Field(
         default=None,
         repr=False,
-        validation_alias="KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE",
+        validation_alias="KOKORO_AGENT_PLATFORM_SERVICE_CREDENTIALS_FILE",
     )
     execution_proof_issuer: OptStr = Field(
         default=None, repr=False, validation_alias="KOKORO_AGENT_EXECUTION_PROOF_ISSUER"
@@ -277,17 +283,29 @@ class AppConfig(BaseModel):
             raise ValueError(
                 "Storage writes require URL, service credential and object origin"
             )
-        values = (
-            self.iam_base_url,
+        if (self.bff_base_url is None) != (self.bff_model_admission_secrets is None):
+            raise ValueError(
+                "BFF model billing configuration requires origin and workload secrets"
+            )
+        transport = (
             self.platform_base_url,
-            self.platform_credentials_file,
+            self.platform_service_credentials_file,
+        )
+        signing = (
             self.execution_proof_issuer,
             self.execution_proof_private_key_file,
             self.execution_proof_active_kid,
             self.execution_proof_thumbprint,
         )
-        if any(value is not None for value in values) and not all(
-            value is not None for value in values
+        if any(value is not None for value in signing) and not all(
+            value is not None for value in signing
+        ):
+            raise ValueError(
+                "Worker execution proof signing descriptors must be complete"
+            )
+        if any(value is not None for value in transport) and (
+            not all(value is not None for value in transport)
+            or not all(value is not None for value in signing)
         ):
             raise ValueError(
                 "Platform transport requires all worker credential and signing descriptors"
@@ -306,18 +324,19 @@ class AppConfig(BaseModel):
             )
         ):
             raise ValueError("retired global model gateway configuration")
+        if "KOKORO_MODEL_CREDENTIALS_FILE" in source:
+            raise ValueError("retired local model credential file configuration")
         file_layer = load_config_file(source.get("KOKORO_AGENT_CONFIG"))
         merged: dict[str, object] = {**file_layer, **dict(source)}
-        config = cls.model_validate(merged)
-        if config.model_credentials_file is not None:
-            config = config.model_copy(
-                update={
-                    "model_credentials": read_model_credentials(
-                        config.model_credentials_file
-                    )
-                }
+        if any(
+            name in merged
+            for name in (
+                "KOKORO_AGENT_IAM_BASE_URL",
+                "KOKORO_AGENT_PLATFORM_CLIENT_CREDENTIALS_FILE",
             )
-        return config
+        ):
+            raise ValueError("retired Platform OAuth configuration")
+        return cls.model_validate(merged)
 
     # --- 域视图（消费方 API 不变）：由扁平叶子装配既有子 Settings 类型 ---
 
@@ -330,7 +349,6 @@ class AppConfig(BaseModel):
             openai_reasoning=self.openai_reasoning,
             anthropic_api_key=self.anthropic_api_key,
             anthropic_base_url=self.anthropic_base_url,
-            model_credentials=self.model_credentials,
             model_allow_loopback_http=self.model_allow_loopback_http,
         )
 
@@ -376,7 +394,22 @@ class AppConfig(BaseModel):
                     "template": self.e2b_template,
                     "timeout": self.e2b_timeout,
                 },
-                "docker": {"image": self.docker_image, "ttl": self.docker_ttl},
+                "docker": {
+                    "image": self.docker_image,
+                    "ttl": self.docker_ttl,
+                    "cli_environment": tuple(
+                        (name, value)
+                        for name, value in (
+                            ("HOME", self.docker_cli_home),
+                            ("DOCKER_HOST", self.docker_cli_host),
+                            ("DOCKER_CONTEXT", self.docker_cli_context),
+                            ("DOCKER_CONFIG", self.docker_cli_config),
+                            ("DOCKER_TLS_VERIFY", self.docker_cli_tls_verify),
+                            ("DOCKER_CERT_PATH", self.docker_cli_cert_path),
+                        )
+                        if value is not None
+                    ),
+                },
                 "custom": {
                     "factory_ref": self.custom_backend_ref,
                     "config_path": self.custom_backend_config,
@@ -415,7 +448,6 @@ def log_config_summary(config: AppConfig, logger: logging.Logger) -> None:
             "drain_timeout_s": config.drain_timeout_s,
             "service_auth_configured": config.internal_secret_agent is not None,
             "system_endpoint_configured": config.system_base_url is not None,
-            "model_connections_configured": bool(config.model_credentials),
             "search_provider_configured": config.search_provider is not None,
         },
     )

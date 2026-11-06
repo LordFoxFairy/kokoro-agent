@@ -2,7 +2,7 @@
   "authority": "local contract/proto",
   "source": "contract/proto",
   "files": ["kokoro/common/v1/common.proto", "kokoro/storage/v3/storage.proto"],
-  "combinedSha256": "c8e9c5c975b2f2c0035b486dd1295c36603e1ad12fa6bc22dc26b94264becd78",
+  "combinedSha256": "6f6bfb8893d28aa2ea366a7cdbafdaae6f0694004f662da3be382a0613232ba5",
   "mcpPackageProfile": {
     "path": "contract/profiles/mcp-package-v2.json",
     "version": "2.0.0",

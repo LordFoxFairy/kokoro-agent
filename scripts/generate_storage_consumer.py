@@ -26,7 +26,7 @@ def _file_hash(path: Path) -> str:
 
 def _verify_pin() -> dict[str, object]:
     pin = json.loads(PIN.read_text(encoding="utf-8"))
-    if pin["owner_commit"] != "4a990617ffe36d739b5a3e622132c304d4d48d41":
+    if pin["owner_commit"] != "b07405c464e98dd2c596f22115d1186511cf00cb":
         raise SystemExit("Storage owner commit drift")
     for source in pin["sources"]:
         if _file_hash(ROOT / source["path"]) != source["sha256"]:

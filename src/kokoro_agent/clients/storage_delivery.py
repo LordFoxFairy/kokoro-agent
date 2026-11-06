@@ -22,6 +22,8 @@ from kokoro_agent.clients.storage import (
     DeliveryReceipt,
     DeliveryRecoveryRequest,
     DeliveryRequest,
+    FinalArtifactReadReceipt,
+    FinalArtifactReadRequest,
     StorageClientError,
 )
 from kokoro_agent.domain.run.models import LeaseFence, ToolJournalRecord
@@ -375,6 +377,104 @@ class StorageDeliveryClient:
             raise StorageClientError(
                 f"STORAGE_{method.upper()}_{exc.code.name}", retryable=retryable
             ) from None
+
+    async def _read_canonical(self, request: FinalArtifactReadRequest) -> RunRequest:
+        if request.lease is None or not await self._runs.is_lease_current(
+            request.run_id, request.lease
+        ):
+            raise StorageClientError("DELIVERY_LEASE_STALE")
+        run = await self._runs.get_request(request.run_id)
+        if run is None or run.execution_identity != request.identity:
+            raise StorageClientError("DELIVERY_RUN_MISMATCH")
+        if (
+            request.identity.subject.kind != "user"
+            or not request.identity.subject.opaque_ref
+            or not run.session_id
+            or not request.artifact_id
+        ):
+            raise StorageClientError("DELIVERY_READ_CONTEXT_INVALID")
+        if request.content_sha256 is not None and (
+            len(request.content_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in request.content_sha256)
+        ):
+            raise StorageClientError("DELIVERY_READ_DIGEST_INVALID")
+        return run
+
+    async def _read_call(
+        self, request: FinalArtifactReadRequest, method: str, message: object
+    ) -> object:
+        run = await self._read_canonical(request)
+        headers = {
+            "x-kokoro-tenant-id": run.execution_identity.tenant_ref,
+            "x-kokoro-subject-id": run.execution_identity.subject.opaque_ref,
+            "x-kokoro-request-id": request.request_id,
+            "x-kokoro-scope-kind": "conversation",
+            "x-kokoro-scope-id": run.session_id,
+        }
+        try:
+            return await self._transport.call(method, message, headers)
+        except ConnectError as exc:
+            if exc.code == Code.CANCELED:
+                raise asyncio.CancelledError from None
+            retryable = exc.code in {
+                Code.UNKNOWN,
+                Code.DEADLINE_EXCEEDED,
+                Code.RESOURCE_EXHAUSTED,
+                Code.ABORTED,
+                Code.INTERNAL,
+                Code.UNAVAILABLE,
+            }
+            raise StorageClientError(
+                f"STORAGE_{method.upper()}_{exc.code.name}", retryable=retryable
+            ) from None
+
+    async def read_final_artifact(
+        self, request: FinalArtifactReadRequest
+    ) -> FinalArtifactReadReceipt:
+        """Read exactly one final artifact, fenced to the current Run identity."""
+        run = await self._read_canonical(request)
+        response = _expect(
+            await self._read_call(
+                request,
+                "get_final_artifact_download_reference",
+                pb.GetFinalArtifactDownloadReferenceRequest(
+                    command=_command(
+                        request.run_id,
+                        "get_final_artifact_download_reference",
+                        [request.artifact_id, request.content_sha256],
+                    ),
+                    artifact_id=request.artifact_id,
+                    run_id=run.run_id,
+                ),
+            ),
+            pb.GetFinalArtifactDownloadReferenceResponse,
+        )
+        if (
+            response.artifact_id != request.artifact_id
+            or not response.asset_id
+            or len(response.content_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in response.content_sha256)
+            or (
+                request.content_sha256 is not None
+                and response.content_sha256 != request.content_sha256
+            )
+            or response.download_reference is None
+        ):
+            raise StorageClientError("DELIVERY_READ_RESPONSE_INVALID")
+        try:
+            content = await self._transport.get(response.download_reference)
+        except (httpx.HTTPError, TimeoutError) as exc:
+            raise StorageClientError(
+                "STORAGE_DOWNLOAD_GET_FAILED", retryable=True
+            ) from exc
+        if hashlib.sha256(content).hexdigest() != response.content_sha256:
+            raise StorageClientError("DELIVERY_READ_DIGEST_MISMATCH")
+        return FinalArtifactReadReceipt(
+            artifact_id=response.artifact_id,
+            asset_id=response.asset_id,
+            content_sha256=response.content_sha256,
+            content=content,
+        )
 
     async def _put(
         self, request: DeliveryRequest, reference: pb.TransferReference

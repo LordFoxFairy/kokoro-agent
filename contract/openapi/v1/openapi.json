@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.12.0"
+    "version": "8.13.0"
   },
   "servers": [
     {
@@ -430,6 +430,42 @@
                   "format": "int32",
                   "minimum": 1,
                   "maximum": 2147483647
+                }
+              }
+            }
+          },
+          "selected_resource_refs": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "x-kokoro-json-byte-limit": 4096,
+            "description": "Opaque owner references selected for this Run. Only asset/artifact IDs and an optional version ID are accepted; URLs, content, identities and digests are forbidden. Omission or [] selects none.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "resource_id"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "asset",
+                    "artifact"
+                  ]
+                },
+                "resource_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 191,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+                },
+                "version_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 191,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
                 }
               }
             }

@@ -104,8 +104,8 @@
     }
   },
   "http_contract": {
-    "version": "8.12.0",
+    "version": "8.13.0",
     "path": "contract/openapi/v1/openapi.json",
-    "sha256": "94c497ea815eaccc545429756af9b8826d82c7f82a896d3a1fda972e03c71596"
+    "sha256": "873da626bd2924c494a1c885d7bdad248f85498b639439d9852e5f24dfa084ba"
   }
 }

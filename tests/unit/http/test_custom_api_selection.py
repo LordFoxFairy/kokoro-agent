@@ -11,7 +11,7 @@ from kokoro_agent.interfaces.http.ingress import (
 )
 from kokoro_agent.application.chat.service import ChatService
 from kokoro_agent.protocol import RunRequest, inbound_adapter
-from kokoro_agent.protocol.control import CustomApiProfileSelection
+from kokoro_agent.protocol.control import CustomApiProfileSelection, SelectedResourceRef
 from support.chat import FakeChatRepository
 from support.fakes import FakeBus, FakeRunRepository
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
@@ -233,3 +233,42 @@ async def test_pending_dispatch_retry_republishes_original_safe_refs() -> None:
     assert restored.selected_custom_api_profiles == (
         CustomApiProfileSelection(profile_id="p", expected_state_version=4),
     )
+
+
+async def test_resource_refs_roundtrip_as_opaque_run_intent() -> None:
+    body = {
+        **_body(),
+        "selected_resource_refs": [
+            {"kind": "asset", "resource_id": "asset-1", "version_id": "v1"},
+            {"kind": "artifact", "resource_id": "artifact-1"},
+        ],
+    }
+    request, fence = await _admit(body)
+    assert request.selected_resource_refs == (
+        SelectedResourceRef(kind="asset", resource_id="asset-1", version_id="v1"),
+        SelectedResourceRef(kind="artifact", resource_id="artifact-1"),
+    )
+    assert json.loads(request.model_dump_json())["selected_resource_refs"] == body[
+        "selected_resource_refs"
+    ]
+    assert inbound_adapter.validate_json(request.model_dump_json()) == request
+    assert fence != LEGACY_FENCE
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "asset-1",
+        [{"kind": "url", "resource_id": "asset-1"}],
+        [{"kind": "asset", "resource_id": "asset-1", "url": "https://x"}],
+        [{"kind": "asset", "resource_id": "asset-1", "content": "secret"}],
+        [{"kind": "asset", "resource_id": "asset-1", "content_sha256": "a" * 64}],
+        [{"kind": "asset", "resource_id": "asset-1"}, {"kind": "asset", "resource_id": "asset-1"}],
+        [{"kind": "asset", "resource_id": "a\n"}],
+    ],
+)
+async def test_malformed_resource_refs_fail_at_admission(value: object) -> None:
+    with pytest.raises(IngressError) as error:
+        await _admit({**_body(), "selected_resource_refs": value})
+    assert (error.value.status, error.value.code) == (400, "invalid_launch_request")

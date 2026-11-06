@@ -193,6 +193,31 @@ class CustomApiProfileSelection(StrictModel):
         return value
 
 
+class SelectedResourceRef(StrictModel):
+    """Opaque owner reference selected for one Run; never a URL or content blob."""
+
+    model_config = ConfigDict(
+        strict=True, extra="forbid", frozen=True, revalidate_instances="always"
+    )
+    kind: Literal["asset", "artifact"]
+    resource_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+    version_id: Annotated[str, StringConstraints(min_length=1, max_length=191)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("resource_id", "version_id")
+    @classmethod
+    def _validate_resource_id(cls, value: str | None) -> str | None:
+        if value is not None and _MCP_CONNECTION_ID.fullmatch(value) is None:
+            raise ValueError("invalid selected resource reference")
+        return value
+
+
+_RESOURCE_REFS_ADAPTER: TypeAdapter[
+    list[SelectedResourceRef] | tuple[SelectedResourceRef, ...]
+] = TypeAdapter(list[SelectedResourceRef] | tuple[SelectedResourceRef, ...])
+
+
 _CUSTOM_API_SELECTIONS_ADAPTER: TypeAdapter[
     list[CustomApiProfileSelection] | tuple[CustomApiProfileSelection, ...]
 ] = TypeAdapter(list[CustomApiProfileSelection] | tuple[CustomApiProfileSelection, ...])
@@ -227,6 +252,11 @@ class RunRequest(StrictModel):
     # Preserve pre-8.10 persisted bytes/fences when omitted or explicitly empty.
     selected_custom_api_profiles: tuple[CustomApiProfileSelection, ...] = Field(
         default=(), max_length=32, exclude_if=lambda refs: not refs
+    )
+
+    # Opaque owner references only; nonempty choices participate in the Run fence.
+    selected_resource_refs: tuple[SelectedResourceRef, ...] = Field(
+        default=(), max_length=16, exclude_if=lambda refs: not refs
     )
 
     # None is omitted so pre-8.11 durable JSON and idempotency fences stay exact.
@@ -292,6 +322,30 @@ class RunRequest(StrictModel):
     ) -> tuple[CustomApiProfileSelection, ...]:
         if len({ref.profile_id for ref in refs}) != len(refs):
             raise ValueError("duplicate selected_custom_api_profiles profile_id")
+        return refs
+
+    @field_validator("selected_resource_refs", mode="before")
+    @classmethod
+    def _parse_resource_refs(
+        cls, value: object
+    ) -> tuple[SelectedResourceRef, ...]:
+        return tuple(_RESOURCE_REFS_ADAPTER.validate_python(value, strict=True))
+
+    @field_validator("selected_resource_refs")
+    @classmethod
+    def _validate_resource_refs(
+        cls, refs: tuple[SelectedResourceRef, ...]
+    ) -> tuple[SelectedResourceRef, ...]:
+        identities = {(ref.kind, ref.resource_id, ref.version_id) for ref in refs}
+        if len(identities) != len(refs):
+            raise ValueError("duplicate selected_resource_refs")
+        encoded = json.dumps(
+            [ref.model_dump(mode="json", exclude_none=True) for ref in refs],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode()
+        if len(encoded) > 4096:
+            raise ValueError("selected_resource_refs exceeds byte limit")
         return refs
 
     @field_validator("selected_mcp_connection_ids", mode="before")

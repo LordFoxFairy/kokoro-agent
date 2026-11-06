@@ -6,7 +6,9 @@
 // Platform-owned resource ID; skill_cover and connector_icon use exact owner bindings.
 // Storage does not decide Skill authorization; Platform must freshly admit every read.
 // Scope is asserted by an authenticated, permitted business owner; body identity is forbidden.
-// kokoro-agent has only conversation/artifact-purpose delivery operations;
+// kokoro-agent has only conversation/artifact-purpose delivery operations and
+// may read a final artifact only when the request includes the exact source
+// Run identity; it never receives generic personal/project Asset access.
 // web-bff retains ordinary personal/project Asset operations and conversation
 // final-Artifact reads, not Artifact writes or package access. kokoro-platform
 // has only six package operations in skill_package scope: CreateUpload,
@@ -313,6 +315,9 @@ message GetFinalArtifactResponse {
 message GetFinalArtifactDownloadReferenceRequest {
   kokoro.common.v1.CommandIdentity command = 1;
   string artifact_id = 2;
+  // Required for kokoro-agent and must match the finalized artifact source run.
+  // BFF callers omit this field and remain conversation-scope readers.
+  string run_id = 3;
 }
 
 message GetFinalArtifactDownloadReferenceResponse {

@@ -1,4 +1,8 @@
-## 2026-11-09 A-08 canonical manifest（无Schema增量）
+## 2026-11-09 A-08 只读运行接线（无 Schema 增量）
+
+选中输入继续只从原持久 Run request 的 canonical manifest 读取，下载前后核对当前 lease；每项命令身份绑定 consumer Run 与完整引用。没有输入表、授权缓存、正文副本或恢复 alias。原生文件工具收到的内容沿原私有 Run/checkpoint 生命周期处理，不作为 Message、AG-UI 或 trace 正文发布。源 Artifact Run 与当前执行 Run 分开保存，读取不改 source owner 数据。真实组合验收仍待。
+
+## 2026-11-09 A-08 canonical manifest（历史阶段，无Schema增量）
 
 唯一内部 `selected_resource_refs` 的canonical元数据沿原Run request JSON、dispatch fence/outbox持久保存，恢复保留原顺序、源conversation/run和asset/hash/size；不新增表列、grant、第二份resolved列表或正文缓存。consumer Run仍是原顶层run_id，source_run_id不是执行身份；source scope来自BFF冻结的owner关系。未新增runtime挂载或实际读取记录，本片不证明历史附件正文已进入模型。
 

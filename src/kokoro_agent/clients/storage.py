@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity
+from kokoro_agent.protocol.control import SelectedResourceRef
 
 
 class StorageClientError(RuntimeError):
@@ -68,26 +69,24 @@ class DeliveryReceipt(BaseModel):
     replayed: bool = False
 
 
-class FinalArtifactReadRequest(BaseModel):
-    """Run-fenced request to read one finalized artifact selected for the run."""
+class InputResourceReadRequest(BaseModel):
+    """Worker-selected canonical input, bound to its consuming Run and lease."""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     request_id: str
     run_id: str
     identity: ExecutionIdentity
-    artifact_id: str
-    content_sha256: str | None = None
-    # Set by the claimed worker; reads are not admitted after lease loss.
-    lease: LeaseFence | None = None
+    reference: SelectedResourceRef
+    lease: LeaseFence
 
 
-class FinalArtifactReadReceipt(BaseModel):
-    """Immutable final-artifact bytes returned only inside the claimed Run."""
+class InputResourceReadReceipt(BaseModel):
+    """Verified immutable input bytes; never a public message or URL."""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    artifact_id: str
+    resource_id: str
     asset_id: str
     content_sha256: str
     content: bytes
@@ -103,9 +102,9 @@ class DeliveryClient(Protocol):
     ) -> DeliveryReceipt | None: ...
 
 
-class FinalArtifactReadClient(Protocol):
-    """Narrow Run-scoped final-artifact read; no generic Asset access."""
+class InputResourceReadClient(Protocol):
+    """Read exactly one selected input through the existing owner transport."""
 
-    async def read_final_artifact(
-        self, request: FinalArtifactReadRequest
-    ) -> FinalArtifactReadReceipt: ...
+    async def read_input(
+        self, request: InputResourceReadRequest
+    ) -> InputResourceReadReceipt: ...

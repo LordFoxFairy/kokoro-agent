@@ -22,8 +22,8 @@ from kokoro_agent.clients.storage import (
     DeliveryReceipt,
     DeliveryRecoveryRequest,
     DeliveryRequest,
-    FinalArtifactReadReceipt,
-    FinalArtifactReadRequest,
+    InputResourceReadReceipt,
+    InputResourceReadRequest,
     StorageClientError,
 )
 from kokoro_agent.domain.run.models import LeaseFence, ToolJournalRecord
@@ -31,6 +31,7 @@ from kokoro_agent.generated.kokoro.common.v1.common_pb import CommandIdentity
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.clients.storage_transport import DeliveryTransport
 from kokoro_agent.protocol import ArtifactKind, RunRequest
+from kokoro_agent.protocol.control import SelectedResourceRef
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _Response = TypeVar("_Response")
@@ -378,101 +379,127 @@ class StorageDeliveryClient:
                 f"STORAGE_{method.upper()}_{exc.code.name}", retryable=retryable
             ) from None
 
-    async def _read_canonical(self, request: FinalArtifactReadRequest) -> RunRequest:
-        if request.lease is None or not await self._runs.is_lease_current(
-            request.run_id, request.lease
-        ):
-            raise StorageClientError("DELIVERY_LEASE_STALE")
+    async def _read_canonical(
+        self, request: InputResourceReadRequest
+    ) -> tuple[RunRequest, SelectedResourceRef]:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
         run = await self._runs.get_request(request.run_id)
-        if run is None or run.execution_identity != request.identity:
-            raise StorageClientError("DELIVERY_RUN_MISMATCH")
         if (
-            request.identity.subject.kind != "user"
-            or not request.identity.subject.opaque_ref
-            or not run.session_id
-            or not request.artifact_id
+            run is None
+            or run.run_id != request.run_id
+            or run.execution_identity != request.identity
         ):
-            raise StorageClientError("DELIVERY_READ_CONTEXT_INVALID")
-        if request.content_sha256 is not None and (
-            len(request.content_sha256) != 64
-            or any(char not in "0123456789abcdef" for char in request.content_sha256)
-        ):
-            raise StorageClientError("DELIVERY_READ_DIGEST_INVALID")
-        return run
+            raise StorageClientError("INPUT_RUN_MISMATCH")
+        if run.execution_identity.subject.kind != "user":
+            raise StorageClientError("INPUT_READ_CONTEXT_INVALID")
+        reference = next(
+            (ref for ref in run.selected_resource_refs if ref == request.reference),
+            None,
+        )
+        if reference is None:
+            raise StorageClientError("INPUT_RESOURCE_NOT_SELECTED")
+        if not await self._runs.is_lease_current(request.run_id, request.lease):
+            raise StorageClientError("INPUT_LEASE_STALE")
+        return run, reference
 
     async def _read_call(
-        self, request: FinalArtifactReadRequest, method: str, message: object
+        self,
+        request: InputResourceReadRequest,
+        run: RunRequest,
+        reference: SelectedResourceRef,
+        method: str,
+        message: object,
     ) -> object:
-        run = await self._read_canonical(request)
         headers = {
             "x-kokoro-tenant-id": run.execution_identity.tenant_ref,
             "x-kokoro-subject-id": run.execution_identity.subject.opaque_ref,
             "x-kokoro-request-id": request.request_id,
-            "x-kokoro-scope-kind": "conversation",
-            "x-kokoro-scope-id": run.session_id,
+            "x-kokoro-scope-kind": reference.source_scope.kind,
+            "x-kokoro-scope-id": reference.source_scope.id,
         }
         try:
             return await self._transport.call(method, message, headers)
         except ConnectError as exc:
             if exc.code == Code.CANCELED:
                 raise asyncio.CancelledError from None
-            retryable = exc.code in {
-                Code.UNKNOWN,
-                Code.DEADLINE_EXCEEDED,
-                Code.RESOURCE_EXHAUSTED,
-                Code.ABORTED,
-                Code.INTERNAL,
-                Code.UNAVAILABLE,
-            }
             raise StorageClientError(
-                f"STORAGE_{method.upper()}_{exc.code.name}", retryable=retryable
+                f"STORAGE_{method.upper()}_{exc.code.name}",
+                retryable=exc.code
+                in {
+                    Code.UNKNOWN,
+                    Code.DEADLINE_EXCEEDED,
+                    Code.RESOURCE_EXHAUSTED,
+                    Code.ABORTED,
+                    Code.INTERNAL,
+                    Code.UNAVAILABLE,
+                },
             ) from None
 
-    async def read_final_artifact(
-        self, request: FinalArtifactReadRequest
-    ) -> FinalArtifactReadReceipt:
-        """Read exactly one final artifact, fenced to the current Run identity."""
-        run = await self._read_canonical(request)
-        response = _expect(
-            await self._read_call(
-                request,
-                "get_final_artifact_download_reference",
-                pb.GetFinalArtifactDownloadReferenceRequest(
-                    command=_command(
-                        request.run_id,
-                        "get_final_artifact_download_reference",
-                        [request.artifact_id, request.content_sha256],
-                    ),
-                    artifact_id=request.artifact_id,
-                    run_id=run.run_id,
-                ),
-            ),
-            pb.GetFinalArtifactDownloadReferenceResponse,
-        )
-        if (
-            response.artifact_id != request.artifact_id
-            or not response.asset_id
-            or len(response.content_sha256) != 64
-            or any(char not in "0123456789abcdef" for char in response.content_sha256)
-            or (
-                request.content_sha256 is not None
-                and response.content_sha256 != request.content_sha256
+    async def read_input(
+        self, request: InputResourceReadRequest
+    ) -> InputResourceReadReceipt:
+        """Read only the exact frozen input, rechecking its consumer lease after I/O."""
+        run, reference = await self._read_canonical(request)
+        manifest = reference.model_dump(mode="json")
+        seed = _digest([run.run_id, "selected-input", manifest])
+        if reference.kind == "artifact":
+            method = "get_final_artifact_download_reference"
+            message = pb.GetFinalArtifactDownloadReferenceRequest(
+                command=_command(seed, method, [run.run_id, manifest]),
+                artifact_id=reference.resource_id,
+                asset_id=reference.asset_id,
+                content_sha256=reference.content_sha256,
+                run_id=reference.source_run_id,
+                consumer_run_id=run.run_id,
             )
+        else:
+            method = "get_download_reference"
+            message = pb.GetDownloadReferenceRequest(
+                command=_command(seed, method, [run.run_id, manifest]),
+                asset_id=reference.asset_id,
+                content_sha256=reference.content_sha256,
+                consumer_run_id=run.run_id,
+            )
+        response = await self._read_call(request, run, reference, method, message)
+        await self._read_canonical(request)
+        if reference.kind == "artifact":
+            final = _expect(response, pb.GetFinalArtifactDownloadReferenceResponse)
+            if final.artifact_id != reference.resource_id:
+                raise StorageClientError("INPUT_READ_RESPONSE_MISMATCH")
+            response = final
+        else:
+            asset = _expect(response, pb.GetDownloadReferenceResponse)
+            if (
+                asset.size_bytes != int(reference.size_bytes)
+                or asset.mime_type != reference.mime_type
+                or asset.scan_state != pb.ScanState.CLEAN
+            ):
+                raise StorageClientError("INPUT_READ_RESPONSE_MISMATCH")
+            response = asset
+        if (
+            response.asset_id != reference.asset_id
+            or response.content_sha256 != reference.content_sha256
             or response.download_reference is None
         ):
-            raise StorageClientError("DELIVERY_READ_RESPONSE_INVALID")
+            raise StorageClientError("INPUT_READ_RESPONSE_MISMATCH")
         try:
             content = await self._transport.get(response.download_reference)
         except (httpx.HTTPError, TimeoutError) as exc:
             raise StorageClientError(
                 "STORAGE_DOWNLOAD_GET_FAILED", retryable=True
             ) from exc
-        if hashlib.sha256(content).hexdigest() != response.content_sha256:
-            raise StorageClientError("DELIVERY_READ_DIGEST_MISMATCH")
-        return FinalArtifactReadReceipt(
-            artifact_id=response.artifact_id,
-            asset_id=response.asset_id,
-            content_sha256=response.content_sha256,
+        await self._read_canonical(request)
+        if (
+            len(content) != int(reference.size_bytes)
+            or hashlib.sha256(content).hexdigest() != reference.content_sha256
+        ):
+            raise StorageClientError("INPUT_READ_CONTENT_MISMATCH")
+        return InputResourceReadReceipt(
+            resource_id=reference.resource_id,
+            asset_id=reference.asset_id,
+            content_sha256=reference.content_sha256,
             content=content,
         )
 

@@ -31,7 +31,15 @@ class _Stub:
     ) -> pb.GetFinalArtifactDownloadReferenceResponse:
         assert request.run_id == "run-1"
         self.headers = headers
-        return pb.GetFinalArtifactDownloadReferenceResponse(artifact_id=request.artifact_id)
+        return pb.GetFinalArtifactDownloadReferenceResponse(
+            artifact_id=request.artifact_id, asset_id=request.asset_id
+        )
+
+    async def get_download_reference(
+        self, request: pb.GetDownloadReferenceRequest, *, headers: dict[str, str]
+    ) -> pb.GetDownloadReferenceResponse:
+        self.headers = headers
+        return pb.GetDownloadReferenceResponse(asset_id=request.asset_id)
 
     async def close(self) -> None:
         pass
@@ -60,33 +68,55 @@ async def test_generated_rpc_gets_only_trusted_worker_metadata(
             await transport.call("list_final_artifacts", object(), {})
 
 
-async def test_generated_rpc_allows_only_run_fenced_final_artifact_read(
+@pytest.mark.parametrize("kind", ["asset", "artifact"])
+async def test_generated_rpc_allows_only_exact_run_fenced_input_reads(
     monkeypatch: pytest.MonkeyPatch,
+    kind: str,
 ) -> None:
     async with StorageDeliveryTransport(
         "http://127.0.0.1:4010", "http://127.0.0.1:9000", "secret"
     ) as transport:
         stub = _Stub()
         monkeypatch.setattr(transport, "_client", stub)
-        response = await transport.call(
-            "get_final_artifact_download_reference",
-            pb.GetFinalArtifactDownloadReferenceRequest(
-                artifact_id="artifact-1", run_id="run-1"
+        if kind == "artifact":
+            method = "get_final_artifact_download_reference"
+            request = pb.GetFinalArtifactDownloadReferenceRequest(
+                artifact_id="artifact-1",
+                run_id="run-1",
+                consumer_run_id="consumer-run",
+                asset_id="asset-1",
+                content_sha256="a" * 64,
+            )
+            scope = "conversation"
+        else:
+            method = "get_download_reference"
+            request = pb.GetDownloadReferenceRequest(
+                consumer_run_id="consumer-run",
+                asset_id="asset-1",
+                content_sha256="a" * 64,
+            )
+            scope = "personal"
+        response = await transport.call(method, request, {"x-kokoro-scope-kind": scope})
+        assert isinstance(
+            response,
+            (
+                pb.GetDownloadReferenceResponse,
+                pb.GetFinalArtifactDownloadReferenceResponse,
             ),
-            {"x-kokoro-scope-kind": "conversation"},
         )
-        assert isinstance(response, pb.GetFinalArtifactDownloadReferenceResponse)
+        assert response.asset_id == "asset-1"
         assert stub.headers == {
-            "x-kokoro-scope-kind": "conversation",
+            "x-kokoro-scope-kind": scope,
             "x-kokoro-service": "kokoro-agent",
             "x-kokoro-internal-secret": "secret",
         }
+        request.consumer_run_id = ""
         with pytest.raises(StorageClientError, match="RUN_REQUIRED"):
-            await transport.call(
-                "get_final_artifact_download_reference",
-                pb.GetFinalArtifactDownloadReferenceRequest(artifact_id="artifact-1"),
-                {},
-            )
+            await transport.call(method, request, {})
+        request.consumer_run_id = "consumer-run"
+        request.content_sha256 = ""
+        with pytest.raises(StorageClientError, match="SELECTOR_REQUIRED"):
+            await transport.call(method, request, {})
         with pytest.raises(StorageClientError, match="FORBIDDEN"):
             await transport.call("get_final_artifact", object(), {})
 

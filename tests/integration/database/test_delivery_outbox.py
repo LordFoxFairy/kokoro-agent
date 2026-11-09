@@ -183,6 +183,9 @@ class _BarrierStorageTransport:
         await self.release_put.wait()
         return self.source_version_id
 
+    async def get(self, reference: pb.TransferReference) -> bytes:
+        raise AssertionError("delivery outbox does not read selected inputs")
+
 
 def _tool_request() -> ToolCallRequest:
     runtime: ToolRuntime[Any, Any] = ToolRuntime(

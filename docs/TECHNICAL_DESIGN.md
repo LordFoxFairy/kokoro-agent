@@ -1,4 +1,10 @@
-## 2026-11-09 A-08 canonical launch 切片（HTTP8.14，运行挂载尚未实现）
+## 2026-11-09 A-08 只读输入运行接线（HTTP8.14，待真实组合验收）
+
+Worker 复用一个 Storage transport/client 同时处理交付与选中输入，不增加服务、令牌或数据表。`InputResourceReadClient.read_input` 只接受持久 Run 中完全相同的 canonical 引用及当前 consumer lease；source Run 只用于 FINAL 来源。每项下载命令绑定 consumer Run 和完整引用，同项重放稳定、多项互不冲突。RPC 后及 GET 后重新核对 manifest/lease，并核对实际长度和 SHA；Asset 响应另核 CLEAN、MIME 和长度。
+
+现有 CompositeBackend 将 `/.inputs/0` 等稳定索引接入只读 backend；文件名仅作不可信元数据，不能成为路径。每次读取 fresh owner 数据、不缓存正文或权限。Storage 失败直接终止原生图，无附件静默丢弃或正常终稿；非 UTF-8 文本读取明确返回格式错误，GET 保持既有 1 MiB 有界预算。非空选择缺 reader 时构建失败。正规 Storage 来源固定 `c31a065708ce3a0f2713efd29f064f63eb9d44c9`；真实 PG/S3/扫描/浏览器组合仍待主控验收。
+
+## 2026-11-09 A-08 canonical launch 切片（历史阶段）
 
 内部 `selected_resource_refs` 现为唯一 canonical union，替换 opaque 引用，不保留第二份 resolved 列表。BFF 负责从当前 owner 元数据及本人源关联解析并冻结；Agent 仅校验严格 immutable manifest，消费者 Run 取顶层 `run_id`，历史 `source_run_id`/conversation 只表来源。personal scope 必须匹配可信 user subject，project scope 必须等于 launch `project_ref`，Artifact scope 仅 conversation。tenant 来自原可信 ExecutionIdentity，不接受引用内自报身份。本切片尚未装配 Storage 读取或 runtime backend，不代表附件可读或产品链已验。
 

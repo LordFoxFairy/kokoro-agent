@@ -19,7 +19,7 @@ from langgraph.store.base import BaseStore
 from kokoro_agent.clients.system import ModelResolver
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.model.call_models import ModelCallRepository
-from kokoro_agent.clients.storage import DeliveryClient
+from kokoro_agent.clients.storage import DeliveryClient, InputResourceReadClient
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.agents.subagent_catalog import SubagentCatalog
@@ -31,6 +31,7 @@ class WorkerClients:
     """Optional owner clients selected once by the deployment entrypoint."""
 
     delivery: DeliveryClient | None = None
+    input_reader: InputResourceReadClient | None = None
     model_resolver: ModelResolver | None = None
 
 
@@ -56,6 +57,7 @@ class WorkerDependencies:
     platform: WorkerPlatformRuntime | None = None
     # Storage Artifact public facade；缺省时不装配 deliver，Agent 基础循环不受影响。
     delivery: DeliveryClient | None = None
+    input_reader: InputResourceReadClient | None = None
     model_resolver: ModelResolver | None = None
 
     def __post_init__(self) -> None:

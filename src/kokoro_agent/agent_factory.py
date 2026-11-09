@@ -68,6 +68,12 @@ from kokoro_agent.execution.events import (
 )
 from kokoro_agent.policy import Backend
 from kokoro_agent.clients.skills import ResolvedSkill, SkillClient, SkillClientError
+from kokoro_agent.clients.storage import StorageClientError
+from kokoro_agent.execution.input_backend import (
+    InputResourceBackend,
+    INPUTS_ROOT,
+    input_resource_prompt,
+)
 from kokoro_agent.execution.protocols import AgentRunnable, require_agent_runnable
 from kokoro_agent.model.factory import (
     ModelHttpClients,
@@ -183,6 +189,8 @@ async def _preflight(
     progress: SkillProgressSink,
     before_load: Callable[[], Awaitable[None]],
 ) -> _ResolvedCapabilities:
+    if request.selected_resource_refs and dependencies.input_reader is None:
+        raise StorageClientError("INPUT_READER_UNAVAILABLE")
     skills: tuple[ResolvedSkill, ...] = ()
     reader: SkillClient | None = None
     if request.selected_skill_source_refs:
@@ -237,6 +245,7 @@ async def build_deep_agent(
 
     def system_material(prompt: str) -> str:
         prompt = append_personal_context(prompt, request.personal_context)
+        prompt += input_resource_prompt(request.selected_resource_refs)
         if request.project_instruction is None:
             return prompt
         return (
@@ -319,7 +328,14 @@ async def build_deep_agent(
         resources = () if resource is None else (resource,)
         resolved_skills = capabilities.skills
         skill_backend = TypedSkillBackend(resolved_skills, capabilities.skill_reader)
-        native_backend = _with_native_skills(backend, skill_backend)
+        input_backend = None
+        if request.selected_resource_refs:
+            if dependencies.input_reader is None:
+                raise StorageClientError("INPUT_READER_UNAVAILABLE")
+            input_backend = InputResourceBackend(
+                request, lease, dependencies.input_reader
+            )
+        native_backend = _with_native_routes(backend, skill_backend, input_backend)
         toolset = await build_toolset(
             request,
             agent=agent,
@@ -462,7 +478,7 @@ async def build_deep_agent(
                     discovery_backends=tuple(
                         (
                             f"{SKILLS_ROOT}{skill.path_segment}/SKILL.md",
-                            _with_native_skills(
+                            _with_native_routes(
                                 None,
                                 SkillDiscoveryBackend(
                                     (skill,), capabilities.skill_reader
@@ -507,14 +523,19 @@ async def build_deep_agent(
         raise
 
 
-def _with_native_skills(
-    backend: BackendProtocol | None, skill_backend: TypedSkillBackend
+def _with_native_routes(
+    backend: BackendProtocol | None,
+    skill_backend: TypedSkillBackend,
+    input_backend: InputResourceBackend | None = None,
 ) -> CompositeBackend:
-    """Route ``/.skills/`` into DeepAgents without copying Skill packages."""
+    """Route typed Skills and selected inputs without copying into the sandbox."""
 
     return CompositeBackend(
         default=backend or StateBackend(),
-        routes={SKILLS_ROOT: skill_backend},
+        routes={
+            SKILLS_ROOT: skill_backend,
+            **({INPUTS_ROOT: input_backend} if input_backend is not None else {}),
+        },
     )
 
 

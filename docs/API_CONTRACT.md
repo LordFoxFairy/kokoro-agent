@@ -1,4 +1,8 @@
-## 2026-11-09 HTTP8.14 canonical resource inputs（运行挂载尚未实现）
+## 2026-11-09 选中输入读取（HTTP8.14，无新增公开入口）
+
+Worker 现将唯一 canonical manifest 接入原生只读文件工具 `/.inputs/{index}`；通过现两个 Storage 下载请求分别读取 Asset 与 FINAL Artifact，固定 Storage `c31a065708ce3a0f2713efd29f064f63eb9d44c9`。consumer Run 来自当前持久 Run，source Run 保留来源语义；exact asset/hash、当前 manifest/lease 和实际内容均核对，不接受 URL、浏览器 scope 或自报身份。不新增 HTTP/RPC 路由、token 或兼容读取接口；旧 `FinalArtifactRead*` 已替换为统一 `InputResourceRead*`。GET 仍受现有 1 MiB 预算约束，非 UTF-8 文本工具明确报告格式边界，未新增文档解析能力。真实组合验收待主控记录。
+
+## 2026-11-09 HTTP8.14 canonical resource inputs（历史阶段）
 
 `LaunchRequest.selected_resource_refs` 替换为严格 asset/artifact union：共同必填 `kind/resource_id/asset_id/content_sha256/size_bytes/mime_type/filename/source_scope`；SHA 为64位小写hex，大小为uint64范围0～18446744073709551615的规范十进制字符串，MIME遵循owner ASCII type/subtype且最多191字符、文件名最多255字符并拒控制字符、路径分隔符、./..及非法Unicode。source_scope严格 `kind/id`，ID沿现191位ASCII域。asset 的两ID必须相等、scope限 personal/project；artifact必有 `source_run_id` 且scope限conversation。拒绝version_id、URL、正文和额外身份字段。最多16项，按kind/resource_id去重、保序，canonical ASCII JSON预算32768字节。省略/空数组保旧Run JSON和fence，非空元数据参与冻结/幂等；public选择仍由BFF解释，不能透传为本内部wire。
 

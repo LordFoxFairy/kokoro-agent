@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig, log_config_summary
 from kokoro_agent.clients.system import ModelResolver, SystemModelClient
-from kokoro_agent.clients.storage import DeliveryClient
 from kokoro_agent.clients.storage_delivery import StorageDeliveryClient
 from kokoro_agent.clients.storage_transport import StorageDeliveryTransport
 from kokoro_agent.application.schema import (
@@ -202,28 +201,31 @@ async def worker_model_resolver(
 
 
 @asynccontextmanager
-async def worker_storage_delivery(
+async def worker_storage_clients(
     config: AppConfig,
-    injected: DeliveryClient | None,
+    injected: WorkerClients,
     run_repository: RunRepository,
-) -> AsyncGenerator[DeliveryClient | None, None]:
-    """Own one Storage transport per worker; embedded client remains caller-owned."""
-    if injected is not None:
-        yield injected
-        return
-    if (
+) -> AsyncGenerator[WorkerClients, None]:
+    """Share one Storage adapter/transport; injected adapters remain caller-owned."""
+    if (injected.delivery is not None and injected.input_reader is not None) or (
         config.storage_base_url is None
         or config.storage_object_origin is None
         or config.storage_service_secret is None
     ):
-        yield None
+        yield injected
         return
     async with StorageDeliveryTransport(
         config.storage_base_url,
         config.storage_object_origin,
         config.storage_service_secret.get_secret_value(),
     ) as transport:
-        yield StorageDeliveryClient(run_repository, transport)
+        client = StorageDeliveryClient(run_repository, transport)
+        yield WorkerClients(
+            delivery=injected.delivery if injected.delivery is not None else client,
+            input_reader=injected.input_reader
+            if injected.input_reader is not None
+            else client,
+        )
 
 
 def worker_execution_proofs(
@@ -294,9 +296,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         make_checkpointer(config.checkpoint) as saver,
         make_checkpointer(config.checkpoint) as interaction_reader,
         make_run_repository(config.run_repository) as run_repository,
-        worker_storage_delivery(
-            config, owner_clients.delivery, run_repository
-        ) as delivery,
+        worker_storage_clients(config, owner_clients, run_repository) as storage,
         make_memory_store(config.checkpoint) as memory_store,
         make_chat_repository(
             PostgresChatRepositorySettings(
@@ -344,7 +344,8 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
                 lease_reader=lease_reader,
             ),
             memory_store=memory_store,
-            delivery=delivery,
+            delivery=storage.delivery,
+            input_reader=storage.input_reader,
             model_resolver=model_resolver,
         )
         agent_factory = AgentFactory(dependencies)

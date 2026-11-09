@@ -1,4 +1,4 @@
-"""Seven generated Storage RPCs and signed ObjectStore PUT for Agent delivery."""
+"""Generated Storage delivery and exact selected-input reads through one transport."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ class StorageDeliveryTransport:
     async def call(
         self, method: str, request: object, headers: dict[str, str]
     ) -> object:
-        # Delivery writes plus the one Run-fenced final-artifact read are reachable.
+        # Delivery writes and the two exact selected-input reads are reachable.
         metadata = {
             **headers,
             "x-kokoro-service": "kokoro-agent",
@@ -117,11 +117,21 @@ class StorageDeliveryTransport:
         if method == "get_final_artifact_download_reference" and isinstance(
             request, pb.GetFinalArtifactDownloadReferenceRequest
         ):
-            if not request.run_id:
+            if not request.run_id or not request.consumer_run_id:
                 raise StorageClientError("STORAGE_READ_RUN_REQUIRED")
+            if not request.asset_id or not request.content_sha256:
+                raise StorageClientError("STORAGE_READ_SELECTOR_REQUIRED")
             return await self._client.get_final_artifact_download_reference(
                 request, headers=metadata
             )
+        if method == "get_download_reference" and isinstance(
+            request, pb.GetDownloadReferenceRequest
+        ):
+            if not request.consumer_run_id:
+                raise StorageClientError("STORAGE_READ_RUN_REQUIRED")
+            if not request.asset_id or not request.content_sha256:
+                raise StorageClientError("STORAGE_READ_SELECTOR_REQUIRED")
+            return await self._client.get_download_reference(request, headers=metadata)
         raise StorageClientError("STORAGE_OPERATION_FORBIDDEN")
 
     async def put(self, reference: pb.TransferReference, content: bytes) -> str:

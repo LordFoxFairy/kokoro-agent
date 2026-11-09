@@ -1,3 +1,8 @@
+## 2026-11-09 A-08 选中输入运行接线（未提交候选）
+基线 `55beed29`；Storage 正规消费固定 `c31a0657`。统一 `read_input` 承接 personal/project Asset 和历史 FINAL Artifact；当前持久 Run exact membership、consumer lease 与 source provenance 分开，RPC/GET 后重验并检查真实 bytes。现 CompositeBackend 提供稳定索引只读 `/.inputs/`，Worker 共用原 transport；旧 FinalArtifactRead 接口已删除，无新增协议、Schema、token 或兼容层。
+
+主控最终五文件定向 77 PASS；真实 Factory/锁定 SDK 的成功读取与 Storage 错误无正常终稿两个分支主控复验通过。主控完整类型、受影响 Ruff、wheel/sdist build 通过；writer 完整相关 Factory、生成检查与 contract-check 均通过；真实 PG/Redis/Storage/扫描/浏览器旅程未运行。1 MiB 下载预算和非 UTF-8 文本格式能力边界明确保留，不称 A-08 产品闭环。
+
 ## 2026-11-05 A‑03：同 Run 补充按已提交检查点确认
 
 真实 HTTP / Redis / Worker / PG：原工具运行中 mailbox 回执保持 pending，下一模型只收到一条原 HumanMessage，独立 checkpoint 同一条，之后同键 succeeded。模拟快速确认故障后以无进程缓存的桥从持久父子检查点恢复；已保存暂停接管在放租约前核一次，不重新执行图。另验终态无后续模型、陈旧租约拒写；不更改 HTTP 8.11、Schema 或普通调用。若 Stop/执行失败先完成终态而尚无可验证证据，原回执是未确认，不承诺未注入；产品不得自动重发。BFF/App 组合和 Chromium 仍待。

@@ -318,6 +318,12 @@ message GetFinalArtifactDownloadReferenceRequest {
   // Required for kokoro-agent and must match the finalized artifact source run.
   // BFF callers omit this field and remain conversation-scope readers.
   string run_id = 3;
+  // Required for Agent: exact finalized Asset and digest from its frozen input.
+  string asset_id = 4;
+  string content_sha256 = 5;
+  // Consumption identity; lease and manifest membership are checked by Agent.
+  // This may differ from the artifact source run_id above.
+  string consumer_run_id = 6;
 }
 
 message GetFinalArtifactDownloadReferenceResponse {
@@ -333,6 +339,9 @@ message GetDownloadReferenceRequest {
   kokoro.common.v1.CommandIdentity command = 2;
   string asset_id = 4;
   string content_sha256 = 5;
+  // Required for Agent personal/project ASSET input reads. Agent checks its
+  // current lease and frozen manifest; this ID is not an authorization token.
+  string consumer_run_id = 6;
 }
 
 message GetDownloadReferenceResponse {

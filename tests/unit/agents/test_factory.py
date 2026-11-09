@@ -85,6 +85,10 @@ from kokoro_agent.clients.storage import (
     DeliveryReceipt,
     DeliveryRequest,
     DeliveryRecoveryRequest,
+    InputResourceReadClient,
+    InputResourceReadRequest,
+    InputResourceReadReceipt,
+    StorageClientError,
 )
 from kokoro_agent.clients.system import (
     ModelResolutionError,
@@ -186,6 +190,7 @@ def _factory(
     *,
     config: AppConfig | None = None,
     delivery: DeliveryClient | None = None,
+    input_reader: InputResourceReadClient | None = None,
     platform: WorkerPlatformRuntime | None = None,
     checkpointer: InMemorySaver | None = None,
     isolate_model_call_gate_for_unrelated_unit_scope: bool = False,
@@ -235,6 +240,7 @@ def _factory(
             model_call_repository=_UnusedModelCallRepository(),
             memory_store=InMemoryStore(),
             delivery=delivery or clients.delivery,
+            input_reader=input_reader,
             platform=platform,
             model_resolver=resolver,
         ),
@@ -3369,3 +3375,124 @@ async def test_factory_fails_closed_before_owner_model_or_backend_io(
     platform.custom_api_for_run.assert_not_called()
     assert resolver.calls == []
     assert repository.static_recipes == {}
+
+
+@pytest.mark.parametrize("read_fails", [False, True])
+async def test_selected_input_native_factory_reads_or_fails_without_success_final(
+    monkeypatch: pytest.MonkeyPatch,
+    read_fails: bool,
+) -> None:
+    """Real SDK file-tool errors must escape the graph rather than yield a fake answer."""
+    import hashlib
+    from kokoro_agent.protocol.control import AssetResourceRef, AssetSourceScope
+
+    content = b"private selected input bytes"
+    selected = AssetResourceRef(
+        kind="asset",
+        resource_id="asset-1",
+        asset_id="asset-1",
+        content_sha256=hashlib.sha256(content).hexdigest(),
+        size_bytes=str(len(content)),
+        filename="user file.txt",
+        mime_type="text/plain",
+        source_scope=AssetSourceScope(kind="personal", id="subject"),
+    )
+    calls: list[InputResourceReadRequest] = []
+
+    class Reader:
+        async def read_input(
+            self, request: InputResourceReadRequest
+        ) -> InputResourceReadReceipt:
+            calls.append(request)
+            if read_fails:
+                raise StorageClientError("STORAGE_INPUT_REVOKED")
+            return InputResourceReadReceipt(
+                resource_id=selected.resource_id,
+                asset_id=selected.asset_id,
+                content_sha256=selected.content_sha256,
+                content=content,
+            )
+
+    class InputResolver(RouteResolver):
+        async def resolve(
+            self,
+            *,
+            tenant_id: str,
+            feature_key: str,
+            label: str | None,
+            request_id: str | None,
+        ) -> ResolvedModel:
+            route = await super().resolve(
+                tenant_id=tenant_id,
+                feature_key=feature_key,
+                label=label,
+                request_id=request_id,
+            )
+            return replace(route, context_window=32768)
+
+    factory, repository = _factory(
+        monkeypatch,
+        InputResolver(),
+        input_reader=Reader(),
+        isolate_model_call_gate_for_unrelated_unit_scope=True,
+    )
+    script = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "read_file",
+                    "id": "selected-read",
+                    "args": {"file_path": "/.inputs/0"},
+                }
+            ],
+        ),
+        AIMessage(content="normal success final"),
+    ]
+
+    def scripted_model(
+        _settings: ChatModelSettings,
+        _model: ModelConfig,
+        *,
+        model_clients: ModelHttpClients,
+    ) -> BaseChatModel:
+        return LocalFakeChatModel.with_script(script)
+
+    monkeypatch.setattr(agent_factory_module, "make_chat_model", scripted_model)
+    request = _request("chat").model_copy(
+        update={"selected_resource_refs": (selected,)}
+    )
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    assert handle.private_material
+    config: RunnableConfig = {"configurable": {"thread_id": request.session_id}}
+    invoke = getattr(handle.runnable, "ainvoke")
+    try:
+        if read_fails:
+            with pytest.raises(StorageClientError, match="STORAGE_INPUT_REVOKED"):
+                await invoke(
+                    {"messages": [HumanMessage(content="Read the selected input.")]},
+                    config,
+                )
+        else:
+            result = await invoke(
+                {"messages": [HumanMessage(content="Read the selected input.")]}, config
+            )
+            tool = next(
+                message
+                for message in result["messages"]
+                if isinstance(message, ToolMessage) and message.name == "read_file"
+            )
+            assert content.decode() in tool.text
+        state = await handle.runnable.aget_state(config)
+        assert any(
+            isinstance(message, AIMessage) and message.text == "normal success final"
+            for message in state.values["messages"]
+        ) is (not read_fails)
+        assert len(calls) == 1
+        assert calls[0].reference == selected
+    finally:
+        await handle.aclose()

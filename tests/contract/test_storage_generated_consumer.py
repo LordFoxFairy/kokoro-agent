@@ -11,7 +11,7 @@ ROOT = Path(__file__).parents[2]
 PIN = ROOT / "contract/storage/v3/provenance.json"
 SOURCE_DIGESTS = {
     "contract/storage/v3/proto/kokoro/common/v1/common.proto": "4604725ec7d5896c9d74b53c6f06d19b20ee758d5ab9e1cb90177ede95bba9fd",
-    "contract/storage/v3/proto/kokoro/storage/v3/storage.proto": "b84a2fb1fd9c6e8c16e15a29cafbc33de670f40f703f3f33ef27652a0237a629",
+    "contract/storage/v3/proto/kokoro/storage/v3/storage.proto": "1df62524f9c61db1c74fc39a0d06912ef851796ffdf0792b6521eaa9715bfc87",
 }
 
 
@@ -23,14 +23,14 @@ def test_storage_v3_is_the_only_vendored_owner_pin() -> None:
 
 def test_storage_vendor_inputs_match_owner_commit_and_bytes() -> None:
     pin = json.loads(PIN.read_text(encoding="utf-8"))
-    assert pin["owner_commit"] == "4a990617ffe36d739b5a3e622132c304d4d48d41"
+    assert pin["owner_commit"] == "3f18577dda6fd57d3cd3be2ee132192db170e1b6"
     assert {
         source["path"]: source["sha256"] for source in pin["sources"]
     } == SOURCE_DIGESTS
     assert pin["owner_provenance"] == {
         "path": "contract/storage/v3/owner-provenance.json",
-        "sha256": "d068869a69edba0dec661bceebdb37e0a3c0734fb3332ec02e07393f165bd9d0",
-        "combined_sha256": "c8e9c5c975b2f2c0035b486dd1295c36603e1ad12fa6bc22dc26b94264becd78",
+        "sha256": "c9a82c8b7e356d1cae904e44ec3f52225ea8fc9dc6c67741e0ced302879e064c",
+        "combined_sha256": "6f6bfb8893d28aa2ea366a7cdbafdaae6f0694004f662da3be382a0613232ba5",
     }
     for path, expected in SOURCE_DIGESTS.items():
         assert hashlib.sha256((ROOT / path).read_bytes()).hexdigest() == expected

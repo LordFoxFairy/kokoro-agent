@@ -1,7 +1,7 @@
 {
   "owner": "kokoro-storage",
   "owner_repository": "apps/kokoro-storage",
-  "owner_commit": "b07405c464e98dd2c596f22115d1186511cf00cb",
+  "owner_commit": "3f18577dda6fd57d3cd3be2ee132192db170e1b6",
   "sources": [
     {
       "owner_path": "contract/proto/kokoro/common/v1/common.proto",

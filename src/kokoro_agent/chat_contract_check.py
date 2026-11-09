@@ -1559,12 +1559,132 @@ _RESOURCE_REF_SCHEMA = {
 }
 
 
-def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
-    """Remove only the A-08 opaque resource selection child."""
+_RESOURCE_ID_SCHEMA = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 191,
+    "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\s\S])",
+}
+
+
+def _canonical_resource_schema(kind: str) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "kind": {"type": "string", "const": kind},
+        "resource_id": _RESOURCE_ID_SCHEMA,
+        "asset_id": _RESOURCE_ID_SCHEMA,
+        "content_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": r"^[a-f0-9]{64}(?![\s\S])",
+        },
+        "size_bytes": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20,
+            "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)(?![\\s\\S])",
+        },
+        "mime_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 191,
+            "pattern": r"^[A-Za-z0-9_.+-]+/[A-Za-z0-9_.+-]+(?![\s\S])",
+        },
+        "filename": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": r"^[^\u0000-\u001f\u007f/\\\uD800-\uDFFF]+(?![\s\S])",
+            "not": {"enum": [".", ".."]},
+        },
+        "source_scope": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "id"],
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["personal", "project"]
+                    if kind == "asset"
+                    else ["conversation"],
+                },
+                "id": _RESOURCE_ID_SCHEMA,
+            },
+        },
+    }
+    if kind == "artifact":
+        fields["source_run_id"] = _RESOURCE_ID_SCHEMA
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(fields),
+        "properties": fields,
+    }
+
+
+_CANONICAL_RESOURCE_REFS_SCHEMA = {
+    "type": "array",
+    "maxItems": 16,
+    "uniqueItems": True,
+    "x-kokoro-json-byte-limit": 32768,
+    "description": (
+        "Private owner-resolved inputs frozen by BFF, unique by kind/resource_id in original order. "
+        "Asset resource_id equals asset_id; personal source scope matches the trusted user subject, "
+        "project source scope matches launch project_ref. Artifact source conversation and source_run_id "
+        "are provenance, not the consumer run_id or authority. No version_id, URL or content. "
+        "Omission or [] preserves prior request bytes. Canonical ASCII JSON is limited to 32768 bytes."
+    ),
+    "items": {
+        "oneOf": [
+            _canonical_resource_schema("asset"),
+            _canonical_resource_schema("artifact"),
+        ]
+    },
+}
+
+
+def http813_canonical_resources_parent_bytes(document: dict[str, object]) -> bytes:
+    """Replace only canonical launch metadata and prove all issued 8.13 bytes."""
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != HTTP_CONTRACT_VERSION:
-        raise ValueError("resource refs require the current Agent HTTP version")
+        raise ValueError("canonical resources require the current Agent HTTP version")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
+    props = _object(launch.get("properties"), source="launch properties")
+    if props.get("selected_resource_refs") != _CANONICAL_RESOURCE_REFS_SCHEMA:
+        raise ValueError("canonical resource refs schema differs")
+    props["selected_resource_refs"] = copy.deepcopy(_RESOURCE_REF_SCHEMA)
+    launch["properties"] = props
+    schemas["LaunchRequest"] = launch
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.13.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "873da626bd2924c494a1c885d7bdad248f85498b639439d9852e5f24dfa084ba"
+    ):
+        raise ValueError("complete HTTP8.13 canonical resources parent differs")
+    return raw
+
+
+def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the A-08 opaque resource selection child."""
+    if (
+        _object(document.get("info"), source="info").get("version")
+        == HTTP_CONTRACT_VERSION
+    ):
+        document = _object(
+            json.loads(http813_canonical_resources_parent_bytes(document)),
+            source="HTTP8.13 canonical resources parent",
+        )
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.13.0":
+        raise ValueError("resource refs require Agent HTTP8.13")
     components = _object(parent.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
     launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
@@ -1578,7 +1698,10 @@ def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
     info["version"] = "8.12.0"
     parent["info"] = info
     raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
-    if hashlib.sha256(raw).hexdigest() != "94c497ea815eaccc545429756af9b8826d82c7f82a896d3a1fda972e03c71596":
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "94c497ea815eaccc545429756af9b8826d82c7f82a896d3a1fda972e03c71596"
+    ):
         raise ValueError("complete HTTP8.12 resource refs parent differs")
     return raw
 

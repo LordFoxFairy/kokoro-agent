@@ -11,7 +11,7 @@ from kokoro_agent.interfaces.http.ingress import (
 )
 from kokoro_agent.application.chat.service import ChatService
 from kokoro_agent.protocol import RunRequest, inbound_adapter
-from kokoro_agent.protocol.control import CustomApiProfileSelection, SelectedResourceRef
+from kokoro_agent.protocol.control import CustomApiProfileSelection
 from support.chat import FakeChatRepository
 from support.fakes import FakeBus, FakeRunRepository
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
@@ -235,24 +235,77 @@ async def test_pending_dispatch_retry_republishes_original_safe_refs() -> None:
     )
 
 
-async def test_resource_refs_roundtrip_as_opaque_run_intent() -> None:
+def _asset_ref(**changes: object) -> dict[str, object]:
+    return {
+        "kind": "asset",
+        "resource_id": "asset-1",
+        "asset_id": "asset-1",
+        "content_sha256": "a" * 64,
+        "size_bytes": "0",
+        "mime_type": "text/plain",
+        "filename": "资料.txt",
+        "source_scope": {"kind": "personal", "id": "subject"},
+        **changes,
+    }
+
+
+def _artifact_ref(**changes: object) -> dict[str, object]:
+    return {
+        **_asset_ref(),
+        "kind": "artifact",
+        "resource_id": "artifact-1",
+        "source_scope": {"kind": "conversation", "id": "previous-conversation"},
+        "source_run_id": "previous-run",
+        **changes,
+    }
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_empty_resource_selection_preserves_request_bytes_and_fence(
+    explicit: bool,
+) -> None:
+    body = _body()
+    if explicit:
+        body["selected_resource_refs"] = []
+    request, fence = await _admit(body)
+    assert request.model_dump_json() == LEGACY_JSON
+    assert fence == LEGACY_FENCE
+
+
+async def test_canonical_resources_preserve_source_and_consumer_run_on_recovery() -> (
+    None
+):
     body = {
         **_body(),
         "selected_resource_refs": [
-            {"kind": "asset", "resource_id": "asset-1", "version_id": "v1"},
-            {"kind": "artifact", "resource_id": "artifact-1"},
+            _asset_ref(size_bytes="18446744073709551615"),
+            _artifact_ref(),
         ],
     }
     request, fence = await _admit(body)
-    assert request.selected_resource_refs == (
-        SelectedResourceRef(kind="asset", resource_id="asset-1", version_id="v1"),
-        SelectedResourceRef(kind="artifact", resource_id="artifact-1"),
+    assert (
+        json.loads(request.model_dump_json())["selected_resource_refs"]
+        == body["selected_resource_refs"]
     )
-    assert json.loads(request.model_dump_json())["selected_resource_refs"] == body[
-        "selected_resource_refs"
-    ]
-    assert inbound_adapter.validate_json(request.model_dump_json()) == request
+    restored = inbound_adapter.validate_json(request.model_dump_json())
+    assert restored == request
+    assert request.has_private_prompt_material
+    assert request.run_id == "legacy"
+    assert request.selected_resource_refs[1].kind == "artifact"
+    assert request.selected_resource_refs[1].source_run_id == "previous-run"
     assert fence != LEGACY_FENCE
+    _, changed = await _admit(
+        {
+            **body,
+            "selected_resource_refs": [
+                _asset_ref(content_sha256="b" * 64),
+                _artifact_ref(),
+            ],
+        }
+    )
+    assert changed != fence
+    with pytest.raises(ValidationError):
+        request.selected_resource_refs[0].source_scope.id = "other"
 
 
 @pytest.mark.parametrize(
@@ -260,15 +313,79 @@ async def test_resource_refs_roundtrip_as_opaque_run_intent() -> None:
     [
         None,
         "asset-1",
-        [{"kind": "url", "resource_id": "asset-1"}],
-        [{"kind": "asset", "resource_id": "asset-1", "url": "https://x"}],
-        [{"kind": "asset", "resource_id": "asset-1", "content": "secret"}],
-        [{"kind": "asset", "resource_id": "asset-1", "content_sha256": "a" * 64}],
-        [{"kind": "asset", "resource_id": "asset-1"}, {"kind": "asset", "resource_id": "asset-1"}],
-        [{"kind": "asset", "resource_id": "a\n"}],
+        [{"kind": "asset", "resource_id": "asset-1"}],
+        [_asset_ref(kind="url")],
+        [_asset_ref(url="https://x")],
+        [_asset_ref(content="secret")],
+        [_asset_ref(version_id="v1")],
+        [_asset_ref(content_sha256="A" * 64)],
+        [_asset_ref(resource_id="a\n")],
+        [_asset_ref(asset_id="other")],
+        [_asset_ref(), _asset_ref(filename="other.txt")],
+        [_asset_ref(size_bytes=value) for value in (0, True)],
+        *[
+            [_asset_ref(size_bytes=value)]
+            for value in ("01", "-1", "1.0", "1\n", "18446744073709551616")
+        ],
+        [_artifact_ref(source_run_id=None)],
+        [_artifact_ref(source_scope={"kind": "personal", "id": "subject"})],
+        [_asset_ref(source_scope={"kind": "conversation", "id": "session"})],
+        [_asset_ref(source_scope={"kind": "personal", "id": "actor"})],
+        [_asset_ref(source_scope={"kind": "project", "id": "other-project"})],
+        *[
+            [_asset_ref(filename=name)]
+            for name in ("bad\n", "../file", "a\\b", ".", "..")
+        ],
+        [_asset_ref(mime_type="text/plain; charset=utf-8")],
+        [_asset_ref(filename="x\x00")],
+        [_asset_ref(filename="x\ud800")],
+        [_asset_ref(filename="x" * 256)],
+        [_asset_ref(mime_type="x" * 192)],
+        [
+            _asset_ref(resource_id=f"asset-{i}", asset_id=f"asset-{i}")
+            for i in range(17)
+        ],
     ],
 )
 async def test_malformed_resource_refs_fail_at_admission(value: object) -> None:
     with pytest.raises(IngressError) as error:
         await _admit({**_body(), "selected_resource_refs": value})
     assert (error.value.status, error.value.code) == (400, "invalid_launch_request")
+
+
+async def test_project_resource_must_match_launch_project_and_direct_worker_boundary() -> (
+    None
+):
+    ref = _asset_ref(source_scope={"kind": "project", "id": "project-1"})
+    request, _ = await _admit(
+        {**_body(), "project_ref": "project-1", "selected_resource_refs": [ref]}
+    )
+    assert inbound_adapter.validate_json(request.model_dump_json()) == request
+    raw = json.loads(request.model_dump_json())
+    raw["project_ref"] = "other-project"
+    with pytest.raises(ValidationError):
+        RunRequest.model_validate(raw)
+
+
+async def test_resource_budget_is_bounded_for_complete_canonical_manifest() -> None:
+    refs = [
+        _asset_ref(resource_id=f"asset-{i}", asset_id=f"asset-{i}", filename="x" * 255)
+        for i in range(16)
+    ]
+    assert (
+        len(json.dumps(refs, ensure_ascii=True, separators=(",", ":")).encode()) > 4096
+    )
+    request, _ = await _admit({**_body(), "selected_resource_refs": refs})
+    assert len(request.selected_resource_refs) == 16
+    oversized = [
+        {
+            **ref,
+            "resource_id": f"a{i:02}-" + "x" * 187,
+            "asset_id": f"a{i:02}-" + "x" * 187,
+            "filename": "界" * 255,
+            "mime_type": "x" * 95 + "/" + "x" * 95,
+        }
+        for i, ref in enumerate(refs)
+    ]
+    with pytest.raises(IngressError):
+        await _admit({**_body(), "selected_resource_refs": oversized})

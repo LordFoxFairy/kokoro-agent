@@ -1283,3 +1283,94 @@ def test_mcp_public_name_is_not_subject_to_file_basename_policy(name: str) -> No
     }
     validate(payload, tool)
     assert ToolDisplayDetail(kind="mcp_tool", name=name).name == name
+
+
+def test_canonical_resource_launch_preserves_complete_http813_parent() -> None:
+    import hashlib
+    from kokoro_agent.chat_contract_check import (
+        http813_canonical_resources_parent_bytes,
+    )
+
+    document = _document()
+    assert _object(document["info"])["version"] == "8.14.0"
+    assert (
+        hashlib.sha256(http813_canonical_resources_parent_bytes(document)).hexdigest()
+        == "873da626bd2924c494a1c885d7bdad248f85498b639439d9852e5f24dfa084ba"
+    )
+    schema = _object(
+        _object(_object(document["components"])["schemas"])["LaunchRequest"]
+    )
+    selection = _object(_object(schema["properties"])["selected_resource_refs"])
+    assert selection["x-kokoro-json-byte-limit"] == 32768
+    asset = {
+        "kind": "asset",
+        "resource_id": "asset-1",
+        "asset_id": "asset-1",
+        "content_sha256": "a" * 64,
+        "size_bytes": "0",
+        "mime_type": "text/plain",
+        "filename": "资料.txt",
+        "source_scope": {"kind": "personal", "id": "subject"},
+    }
+    artifact = {
+        **asset,
+        "kind": "artifact",
+        "resource_id": "artifact-1",
+        "source_scope": {"kind": "conversation", "id": "source-session"},
+        "source_run_id": "source-run",
+    }
+    for refs in (
+        [],
+        [asset],
+        [artifact],
+        [asset, artifact],
+        [{**asset, "size_bytes": "18446744073709551615"}],
+    ):
+        validate(refs, selection)
+    for invalid in (
+        [{"kind": "asset", "resource_id": "asset-1"}],
+        [{**asset, "version_id": "v1"}],
+        [{**asset, "url": "https://example.test"}],
+        [{**asset, "size_bytes": "01"}],
+        [{**asset, "size_bytes": "1\n"}],
+        [{**asset, "size_bytes": "18446744073709551616"}],
+        [{**asset, "mime_type": "text/plain; charset=utf-8"}],
+        [{**asset, "filename": "../file"}],
+        [{**asset, "filename": ".."}],
+        [{**asset, "filename": "bad\x00"}],
+        [{**artifact, "source_scope": {"kind": "project", "id": "project-1"}}],
+        [{key: value for key, value in artifact.items() if key != "source_run_id"}],
+    ):
+        with pytest.raises(SchemaValidationError):
+            validate(invalid, selection)
+
+
+@pytest.mark.parametrize("mutation", ["budget", "shape", "unrelated"])
+def test_canonical_resource_parent_rejects_schema_and_unrelated_drift(
+    mutation: str,
+) -> None:
+    from kokoro_agent.chat_contract_check import (
+        http813_canonical_resources_parent_bytes,
+    )
+
+    document = _document()
+    components = _object(document["components"])
+    schemas = _object(components["schemas"])
+    launch = _object(schemas["LaunchRequest"])
+    properties = _object(launch["properties"])
+    selection = _object(properties["selected_resource_refs"])
+    if mutation == "budget":
+        selection["x-kokoro-json-byte-limit"] = 65536
+    elif mutation == "shape":
+        selection["items"] = {"type": "object"}
+    else:
+        info = _object(document["info"])
+        info["title"] = "unrelated mutation"
+        document["info"] = info
+    properties["selected_resource_refs"] = selection
+    launch["properties"] = properties
+    schemas["LaunchRequest"] = launch
+    components["schemas"] = schemas
+    document["components"] = components
+    with pytest.raises(ValueError):
+        http813_canonical_resources_parent_bytes(document)

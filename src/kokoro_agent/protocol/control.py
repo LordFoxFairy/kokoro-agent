@@ -193,24 +193,117 @@ class CustomApiProfileSelection(StrictModel):
         return value
 
 
-class SelectedResourceRef(StrictModel):
-    """Opaque owner reference selected for one Run; never a URL or content blob."""
-
+class ResourceRefModel(StrictModel):
     model_config = ConfigDict(
-        strict=True, extra="forbid", frozen=True, revalidate_instances="always"
-    )
-    kind: Literal["asset", "artifact"]
-    resource_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
-    version_id: Annotated[str, StringConstraints(min_length=1, max_length=191)] | None = Field(
-        default=None, exclude_if=lambda value: value is None
+        strict=True,
+        extra="forbid",
+        frozen=True,
+        revalidate_instances="always",
+        hide_input_in_errors=True,
     )
 
-    @field_validator("resource_id", "version_id")
+    @field_validator("*", mode="after")
     @classmethod
-    def _validate_resource_id(cls, value: str | None) -> str | None:
-        if value is not None and _MCP_CONNECTION_ID.fullmatch(value) is None:
+    def _scalar_text(cls, value: object) -> object:
+        if isinstance(value, str) and (
+            "\x00" in value or any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+        ):
+            raise ValueError("invalid resource metadata text")
+        return value
+
+
+class ResourceSourceScope(ResourceRefModel):
+    id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+
+    @field_validator("id")
+    @classmethod
+    def _scope_id(cls, value: str) -> str:
+        if _MCP_CONNECTION_ID.fullmatch(value) is None:
+            raise ValueError("invalid resource source scope")
+        return value
+
+
+class AssetSourceScope(ResourceSourceScope):
+    kind: Literal["personal", "project"]
+
+
+class ArtifactSourceScope(ResourceSourceScope):
+    kind: Literal["conversation"]
+
+
+class ResourceMetadata(ResourceRefModel):
+    """Owner-resolved immutable metadata, never browser intent or read authority."""
+
+    resource_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+    asset_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+    content_sha256: Annotated[str, StringConstraints(min_length=64, max_length=64)]
+    size_bytes: Annotated[str, StringConstraints(min_length=1, max_length=20)]
+    mime_type: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+    filename: Annotated[str, StringConstraints(min_length=1, max_length=255)]
+
+    @field_validator("resource_id", "asset_id")
+    @classmethod
+    def _resource_id(cls, value: str) -> str:
+        if _MCP_CONNECTION_ID.fullmatch(value) is None:
             raise ValueError("invalid selected resource reference")
         return value
+
+    @field_validator("content_sha256")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        if re.fullmatch(r"[a-f0-9]{64}", value) is None:
+            raise ValueError("invalid resource digest")
+        return value
+
+    @field_validator("size_bytes")
+    @classmethod
+    def _decimal_size(cls, value: str) -> str:
+        if re.fullmatch(r"0|[1-9][0-9]*", value) is None or int(value) > (1 << 64) - 1:
+            raise ValueError("invalid resource size")
+        return value
+
+    @field_validator("mime_type")
+    @classmethod
+    def _mime(cls, value: str) -> str:
+        if re.fullmatch(r"[A-Za-z0-9_.+-]+/[A-Za-z0-9_.+-]+", value) is None:
+            raise ValueError("invalid resource MIME type")
+        return value
+
+    @field_validator("filename")
+    @classmethod
+    def _filename(cls, value: str) -> str:
+        if value in {".", ".."} or re.fullmatch(r"[^\x00-\x1f\x7f/\\]+", value) is None:
+            raise ValueError("invalid resource filename")
+        return value
+
+
+class AssetResourceRef(ResourceMetadata):
+    kind: Literal["asset"]
+    source_scope: AssetSourceScope
+
+    @model_validator(mode="after")
+    def _same_asset(self) -> AssetResourceRef:
+        if self.resource_id != self.asset_id:
+            raise ValueError("asset reference differs from resolved asset")
+        return self
+
+
+class ArtifactResourceRef(ResourceMetadata):
+    kind: Literal["artifact"]
+    source_scope: ArtifactSourceScope
+    source_run_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+
+    @field_validator("source_run_id")
+    @classmethod
+    def _source_run(cls, value: str) -> str:
+        if _MCP_CONNECTION_ID.fullmatch(value) is None:
+            raise ValueError("invalid artifact source Run")
+        return value
+
+
+SelectedResourceRef = Annotated[
+    AssetResourceRef | ArtifactResourceRef, Field(discriminator="kind")
+]
 
 
 _RESOURCE_REFS_ADAPTER: TypeAdapter[
@@ -254,7 +347,7 @@ class RunRequest(StrictModel):
         default=(), max_length=32, exclude_if=lambda refs: not refs
     )
 
-    # Opaque owner references only; nonempty choices participate in the Run fence.
+    # Owner-resolved canonical inputs; nonempty selections participate in the Run fence.
     selected_resource_refs: tuple[SelectedResourceRef, ...] = Field(
         default=(), max_length=16, exclude_if=lambda refs: not refs
     )
@@ -271,7 +364,11 @@ class RunRequest(StrictModel):
 
     @property
     def has_private_prompt_material(self) -> bool:
-        return self.personal_context is not None or self.project_instruction is not None
+        return (
+            self.personal_context is not None
+            or self.project_instruction is not None
+            or bool(self.selected_resource_refs)
+        )
 
     @field_validator("project_instruction")
     @classmethod
@@ -326,9 +423,7 @@ class RunRequest(StrictModel):
 
     @field_validator("selected_resource_refs", mode="before")
     @classmethod
-    def _parse_resource_refs(
-        cls, value: object
-    ) -> tuple[SelectedResourceRef, ...]:
+    def _parse_resource_refs(cls, value: object) -> tuple[SelectedResourceRef, ...]:
         return tuple(_RESOURCE_REFS_ADAPTER.validate_python(value, strict=True))
 
     @field_validator("selected_resource_refs")
@@ -336,7 +431,7 @@ class RunRequest(StrictModel):
     def _validate_resource_refs(
         cls, refs: tuple[SelectedResourceRef, ...]
     ) -> tuple[SelectedResourceRef, ...]:
-        identities = {(ref.kind, ref.resource_id, ref.version_id) for ref in refs}
+        identities = {(ref.kind, ref.resource_id) for ref in refs}
         if len(identities) != len(refs):
             raise ValueError("duplicate selected_resource_refs")
         encoded = json.dumps(
@@ -344,9 +439,22 @@ class RunRequest(StrictModel):
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode()
-        if len(encoded) > 4096:
+        if len(encoded) > 32768:
             raise ValueError("selected_resource_refs exceeds byte limit")
         return refs
+
+    @model_validator(mode="after")
+    def _resource_scope(self) -> RunRequest:
+        subject = self.execution_identity.subject
+        for ref in self.selected_resource_refs:
+            scope = ref.source_scope
+            if scope.kind == "personal" and (
+                subject.kind != "user" or scope.id != subject.opaque_ref
+            ):
+                raise ValueError("personal resource differs from trusted subject")
+            if scope.kind == "project" and scope.id != self.project_ref:
+                raise ValueError("resource differs from launch Project")
+        return self
 
     @field_validator("selected_mcp_connection_ids", mode="before")
     @classmethod

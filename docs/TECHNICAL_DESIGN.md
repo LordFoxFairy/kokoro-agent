@@ -1,3 +1,7 @@
+## 2026-11-09 A-08 canonical launch 切片（HTTP8.14，运行挂载尚未实现）
+
+内部 `selected_resource_refs` 现为唯一 canonical union，替换 opaque 引用，不保留第二份 resolved 列表。BFF 负责从当前 owner 元数据及本人源关联解析并冻结；Agent 仅校验严格 immutable manifest，消费者 Run 取顶层 `run_id`，历史 `source_run_id`/conversation 只表来源。personal scope 必须匹配可信 user subject，project scope 必须等于 launch `project_ref`，Artifact scope 仅 conversation。tenant 来自原可信 ExecutionIdentity，不接受引用内自报身份。本切片尚未装配 Storage 读取或 runtime backend，不代表附件可读或产品链已验。
+
 ## 2026-11-03 B08：个人材料首片（实施中，未发布）
 
 HTTP8.11 的 `personal_context` 是可选/null、schema_version=1 的私有 BFF 快照：owner{tenant_ref,user_ref} 必须匹配可信 human actor；profile 为 null 或 revision + nickname/occupation/about/instructions；knowledge 为 usage_revision/enabled/items，disabled 必须零 items，items 最多100、UUIDv4小写且不重复，每项携 revision/name/when_to_use/content。所有 revision 为安全整数，缺 usage 行表示0/false。字段上限与个人 owner 一致，不截断。POST /v1/runs 的 `x-kokoro-max-body-bytes=1048576` 公布既有上限，`context_window_exceeded` 是不可重试失败；旧8.10完整字节经有限逆验证不变。

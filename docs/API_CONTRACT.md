@@ -1,3 +1,9 @@
+## 2026-11-09 HTTP8.14 canonical resource inputs（运行挂载尚未实现）
+
+`LaunchRequest.selected_resource_refs` 替换为严格 asset/artifact union：共同必填 `kind/resource_id/asset_id/content_sha256/size_bytes/mime_type/filename/source_scope`；SHA 为64位小写hex，大小为uint64范围0～18446744073709551615的规范十进制字符串，MIME遵循owner ASCII type/subtype且最多191字符、文件名最多255字符并拒控制字符、路径分隔符、./..及非法Unicode。source_scope严格 `kind/id`，ID沿现191位ASCII域。asset 的两ID必须相等、scope限 personal/project；artifact必有 `source_run_id` 且scope限conversation。拒绝version_id、URL、正文和额外身份字段。最多16项，按kind/resource_id去重、保序，canonical ASCII JSON预算32768字节。省略/空数组保旧Run JSON和fence，非空元数据参与冻结/幂等；public选择仍由BFF解释，不能透传为本内部wire。
+
+仅此字段与版本变化可逆恢复完整HTTP8.13 SHA `873da626bd2924c494a1c885d7bdad248f85498b639439d9852e5f24dfa084ba`。沿现failure generator更新派生物/provenance；消费者须固定正式owner artifact再生成。本片不新增路由或Storage授权，不宣称runtime读取已实现。
+
 ## A‑06 Project 指令（Agent HTTP 8.12 候选）
 
 现有 `POST /v1/runs` 唯一增量为可省略的非空文本 `project_instruction`；仅可信 human actor、`chat` 和有 `project_ref` 的 launch 接受。空白以 OpenAPI 明确的 Unicode White_Space 字符集判定，不 trim 或归一化有效文本。省略时保留旧 Run JSON、fence 和行为；非空原样进入既有私有 dispatch/Redis/recovery，参与同 Run fence，不进入 RunInput、Chat/AG‑UI 公开事实、个人材料、trace 或工具授权。无新的 Project 读取、鉴权、表、路由、控制或公共版本。项目 owner 由 BFF 按新 Run 冻结；Scheduled 不生产该字段。

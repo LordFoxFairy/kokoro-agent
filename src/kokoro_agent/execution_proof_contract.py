@@ -24,7 +24,7 @@ from kokoro_agent.execution_proof_negative_specs import (
 
 
 OPENAPI_RELATIVE = "contract/openapi/v1/openapi.json"
-HTTP_CONTRACT_VERSION = "8.13.0"
+HTTP_CONTRACT_VERSION = "8.14.0"
 SCHEMA_RELATIVE = "contract/execution-proof/v2/schema.json"
 VECTORS_RELATIVE = "contract/execution-proof/v2/vectors.json"
 PROVENANCE_RELATIVE = "contract/provenance.json"

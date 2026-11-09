@@ -1,3 +1,7 @@
+## 2026-11-09 A-08 canonical manifest（无Schema增量）
+
+唯一内部 `selected_resource_refs` 的canonical元数据沿原Run request JSON、dispatch fence/outbox持久保存，恢复保留原顺序、源conversation/run和asset/hash/size；不新增表列、grant、第二份resolved列表或正文缓存。consumer Run仍是原顶层run_id，source_run_id不是执行身份；source scope来自BFF冻结的owner关系。未新增runtime挂载或实际读取记录，本片不证明历史附件正文已进入模型。
+
 ## 2026-11-01 B-02 Docker 文件发现无持久化增量
 
 Docker ls/glob/grep的有界名称/metadata、完整受检bytes、literal匹配和结果预算只属一次fresh Acquire/guard局部生命周期；不建目录缓存、索引、搜索服务、checkpoint或文件认证状态。原路径、敏感bytes及原始异常不持久化；同Run可变文件始终按本次快照检查。无表、列、Schema、wire或lock改动；E2B目录边界仍OPEN。

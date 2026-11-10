@@ -42,11 +42,20 @@ def feature_for_custom_api(
 
 def custom_api_workspace(request: RunRequest) -> str:
     scope = RunScope.of(request)
-    base = workspace_key(scope.namespace, scope.session_id)
     if not request.selected_custom_api_profiles:
-        return base
-    # Stable on lease recovery, separate from every other Run in the conversation.
-    return f"{base}/runs/{hashlib.sha256(request.run_id.encode()).hexdigest()}"
+        return workspace_key(scope.namespace, scope.session_id)
+    # Keep the run outside the ordinary conversation's bind mount.
+    material = json.dumps(
+        (
+            request.execution_identity.tenant_ref,
+            scope.namespace,
+            scope.session_id,
+            request.run_id,
+        ),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return f"custom-api-run-v1-{hashlib.sha256(material).hexdigest()}"
 
 
 def custom_api_instructions(profiles: tuple[CustomApiProfileDescription, ...]) -> str:

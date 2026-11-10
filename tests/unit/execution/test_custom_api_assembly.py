@@ -4,6 +4,7 @@ from typing import Literal
 import asyncio
 
 import pytest
+from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.state import StateBackend
 from support.fakes import FakeRunRepository, request
 
@@ -20,6 +21,7 @@ from kokoro_agent.execution.custom_api_selection import (
 from kokoro_agent.features.chat import CHAT_FEATURE
 from kokoro_agent.protocol.control import CustomApiProfileSelection
 from kokoro_agent.domain.run.repository import LeaseFence
+from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.sandbox import backend as backend_module
 from pydantic import SecretStr
 
@@ -73,14 +75,53 @@ def test_missing_isolated_configuration_fails_before_any_io():
     )
 
 
-def test_same_conversation_runs_have_distinct_stable_mounts():
-    first = selected("run-a")
-    second = first.model_copy(update={"run_id": "run-b"})
-    assert first.session_id == second.session_id
-    assert custom_api_workspace(first) != custom_api_workspace(second)
-    assert custom_api_workspace(first) == custom_api_workspace(first.model_copy())
-    assert "/runs/" in custom_api_workspace(first)
-    assert "/runs/" not in custom_api_workspace(request("ordinary"))
+def test_selected_run_workspace_is_a_sibling_of_the_ordinary_mount(tmp_path: Path):
+    settings = AppConfig.from_env(
+        {"KOKORO_AGENT_LOCAL_SHELL_ROOT": str(tmp_path)}
+    ).sandbox
+    session_id = "conv_00000000-0000-4000-8000-000000000001"
+    ordinary_run = request("ordinary", session_id=session_id)
+    first = selected("run-a").model_copy(update={"session_id": session_id})
+    ordinary_key = custom_api_workspace(ordinary_run)
+    selected_key = custom_api_workspace(first)
+    assert ordinary_key == f"{RunScope.of(ordinary_run).namespace}:{session_id}"
+    ordinary = backend_module.make_backend(
+        "local_shell", settings, workspace=ordinary_key
+    )
+    selected_files = backend_module.make_backend(
+        "local_shell", settings, workspace=selected_key
+    )
+    assert isinstance(ordinary, LocalShellBackend)
+    assert isinstance(selected_files, LocalShellBackend)
+    assert selected_files.cwd.is_dir()
+    assert selected_files.cwd.parent == ordinary.cwd.parent == tmp_path.resolve()
+    assert selected_files.cwd != ordinary.cwd
+    assert selected_key == custom_api_workspace(first.model_copy())
+    for variant in (
+        first.model_copy(update={"run_id": "run-b"}),
+        first.model_copy(
+            update={"session_id": "conv_00000000-0000-4000-8000-000000000002"}
+        ),
+        first.model_copy(
+            update={
+                "execution_identity": first.execution_identity.model_copy(
+                    update={"tenant_ref": "other-tenant"}
+                )
+            }
+        ),
+        first.model_copy(
+            update={
+                "execution_identity": first.execution_identity.model_copy(
+                    update={
+                        "subject": first.execution_identity.subject.model_copy(
+                            update={"opaque_ref": "other-subject"}
+                        )
+                    }
+                )
+            }
+        ),
+    ):
+        assert selected_key != custom_api_workspace(variant)
 
 
 def test_description_is_data_and_only_environment_names_are_in_model_context():

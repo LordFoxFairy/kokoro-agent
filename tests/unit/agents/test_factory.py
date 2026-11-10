@@ -3295,7 +3295,7 @@ async def test_real_factory_describes_once_before_model_and_keeps_recipe_static(
         assert first_arguments["run_id"] == first.run_id
         assert first_arguments["lease"] == lease
         first_workspace = first_arguments["workspace"]
-        assert isinstance(first_workspace, str) and "/runs/" in first_workspace
+        assert first_workspace == assembly.custom_api_workspace(first)
 
         stream = await handle.runnable.astream_events(
             {"messages": [HumanMessage(content="hello")]},

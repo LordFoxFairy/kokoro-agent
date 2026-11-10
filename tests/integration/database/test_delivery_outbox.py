@@ -209,9 +209,11 @@ def _tool_request() -> ToolCallRequest:
     )
 
 
+@pytest.mark.parametrize("path_proven", [False, True])
 async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_frame(
     run_repository: RunRepository,
     chat_repository: PostgresChatRepository,
+    path_proven: bool,
 ) -> None:
     run = _request()
     lease = await run_repository.try_claim(run, "worker-1")
@@ -233,8 +235,21 @@ async def test_intent_is_frozen_before_owner_effect_and_event_replays_exact_fram
         "size_bytes": 6,
         "content_sha256": "a" * 64,
     }
+    if path_proven:
+        frozen["display_path"] = frozen["path"]
     assert await run_repository.journal_delivery_intent(
         run.run_id, lease, "tool-1", json.dumps(frozen)
+    )
+    changed_proof = (
+        {key: value for key, value in frozen.items() if key != "display_path"}
+        if path_proven
+        else {**frozen, "display_path": frozen["path"]}
+    )
+    assert not await run_repository.journal_delivery_intent(
+        run.run_id,
+        lease,
+        "tool-1",
+        json.dumps({**changed_proof, "upload_id": "upload-1"}),
     )
     assert not await run_repository.journal_delivery_intent(
         run.run_id, lease, "tool-1", json.dumps({**frozen, "session_id": "other"})

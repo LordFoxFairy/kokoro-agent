@@ -19,6 +19,7 @@ from kokoro_agent.sandbox.docker_backend import (
     ArchivingDockerShellBackend,
 )
 from kokoro_agent.skills.backend import TypedSkillBackend, SKILLS_ROOT
+from kokoro_agent.execution.input_backend import InputResourceBackend, INPUTS_ROOT
 from kokoro_agent.clients.mcp import McpDisplayDeclaration
 
 from kokoro_agent.protocol import RunRequest
@@ -34,6 +35,37 @@ from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.tools.deliver import make_deliver_tool
 from kokoro_agent.tools.registry import RESERVED_TOOL_NAMES, resolve_tools
 from kokoro_agent.tools.toolbox import ProcessToolbox, plan_toolbox
+
+
+def _workspace_default(
+    backend: BackendProtocol | None, *, allow_inputs: bool = False
+) -> BackendProtocol | None:
+    if type(backend) is not CompositeBackend:
+        return backend
+    if type(backend.routes.get(SKILLS_ROOT)) is not TypedSkillBackend:
+        return None
+    routes = set(backend.routes)
+    if routes == {SKILLS_ROOT} or (
+        allow_inputs
+        and routes == {SKILLS_ROOT, INPUTS_ROOT}
+        and type(backend.routes.get(INPUTS_ROOT)) is InputResourceBackend
+    ):
+        return backend.default
+    return None
+
+
+def _virtual_workspace(backend: BackendProtocol | None, kind: Backend | None) -> bool:
+    if kind == "state" and type(backend) is StateBackend:
+        return True
+    if not isinstance(backend, LocalShellBackend) or backend.virtual_mode is not True:
+        return False
+    return (
+        kind == "local_shell"
+        and type(backend) in {LocalShellBackend, ArchivingLocalShellBackend}
+    ) or (
+        kind == "docker"
+        and type(backend) in {DockerShellBackend, ArchivingDockerShellBackend}
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,26 +166,13 @@ class Toolset:
         self, runnable: object
     ) -> tuple[ToolDisplaySource, ...]:
         codes = dict(self.mounted_display_codes(runnable))
-        backend = self.backend
-        skill_prefixes: tuple[str, ...] = ()
-        if type(backend) is CompositeBackend:
-            if (
-                set(backend.routes) == {SKILLS_ROOT}
-                and type(backend.routes.get(SKILLS_ROOT)) is TypedSkillBackend
-            ):
-                skill_prefixes = self.skill_prefixes
-                backend = backend.default
-            else:
-                backend = None  # Unknown file routes do not invalidate independent MCP provenance.
-        virtual = self.backend_kind == "state" and type(backend) is StateBackend
-        if isinstance(backend, LocalShellBackend) and backend.virtual_mode is True:
-            virtual = (
-                self.backend_kind == "local_shell"
-                and type(backend) in {LocalShellBackend, ArchivingLocalShellBackend}
-            ) or (
-                self.backend_kind == "docker"
-                and type(backend) in {DockerShellBackend, ArchivingDockerShellBackend}
-            )
+        backend = _workspace_default(self.backend)
+        skill_prefixes = (
+            self.skill_prefixes
+            if type(self.backend) is CompositeBackend and backend is not None
+            else ()
+        )
+        virtual = _virtual_workspace(backend, self.backend_kind)
         sources = {source.name: source for source in self.display_sources}
         result: list[ToolDisplaySource] = []
         for name, code in codes.items():
@@ -264,7 +283,17 @@ async def build_toolset(
         if source.kind == "delivery":
             if delivery is None:
                 raise ValueError("selected delivery requires its current owner client")
-            materialized = (_deliver_tool(request, backend, delivery, lease),)
+            materialized = (
+                _deliver_tool(
+                    request,
+                    backend,
+                    delivery,
+                    lease,
+                    virtual_workspace=_virtual_workspace(
+                        _workspace_default(backend, allow_inputs=True), agent.backend
+                    ),
+                ),
+            )
         else:
             materialized = bound[source.kind]
         if tuple(tool.name for tool in materialized) != source.names:
@@ -340,6 +369,8 @@ def _deliver_tool(
     backend: BackendProtocol,
     delivery: DeliveryClient,
     lease: LeaseFence | None,
+    *,
+    virtual_workspace: bool,
 ) -> StructuredTool:
     """Read through the same DeepAgents backend used by filesystem tools."""
     namespace = RunScope.of(request).namespace
@@ -350,4 +381,5 @@ def _deliver_tool(
         run_id=request.run_id,
         identity=request.execution_identity,
         lease=lease,
+        virtual_workspace=virtual_workspace,
     )

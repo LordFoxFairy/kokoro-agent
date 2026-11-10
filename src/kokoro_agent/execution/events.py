@@ -1093,6 +1093,7 @@ def _delivery_payload(
         size=result.size,
         content_hash=result.content_hash,
         note=result.note or None,
+        display_path=result.display_path,
     )
 
 

@@ -7,6 +7,7 @@ import json
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from kokoro_agent.domain.chat.projection import safe_delivery_display_path
 from kokoro_agent.domain.run.repository import LeaseFence, ToolJournalRecord
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.postgres_run_context import (
@@ -65,7 +66,14 @@ def _json_exact(left: JsonValue, right: JsonValue) -> bool:
 def _delivery_stage(value: dict[str, JsonValue]) -> int | None:
     if type(value.get("version")) is not int or value["version"] != 2:
         return None
-    keys = frozenset(value)
+    keys = frozenset(value) - {"display_path"}
+    display_path = value.get("display_path")
+    if "display_path" in value and (
+        not isinstance(display_path, str)
+        or display_path != value.get("path")
+        or not safe_delivery_display_path(display_path)
+    ):
+        return None
     if keys == _DELIVERY_BASE_KEYS:
         stage = 0
     elif keys == _DELIVERY_ADMITTED_KEYS:
@@ -370,6 +378,7 @@ class PostgresRunEffects:
                             or proposed_stage < prior_stage
                             or proposed_stage > prior_stage + 1
                             or not prior.keys() <= proposed.keys()
+                            or ("display_path" in prior) != ("display_path" in proposed)
                         ):
                             return False
                         for key, value in prior.items():

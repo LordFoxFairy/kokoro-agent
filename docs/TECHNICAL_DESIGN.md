@@ -1,3 +1,7 @@
+## 2026-11-10 · A‑10 成果展示来源
+
+只从成功 `deliver` 冻结的文件版本投影。复用已有真实 backend 判定：原生 State、虚拟 local/docker 及其官方 Skills/inputs wrapper 的 default；未知 backend/route 不授予路径展示。已有词法检查之上排隐藏路径段，原参数与规范路径不同则省略。首个 V2 intent 写入可选证明后保持原存在性和值，后继 Worker 或恢复调用不以当前 backend 重判；同一个 `DeliverResult` 构建 live/recovery 事件。无 Storage RPC、读取 API、状态机或文件保存改造；未交付文件不属于这条链。
+
 ## 2026-11-09 A‑08 历史最终答复只读输入（HTTP 8.15 候选）
 
 BFF 在接收前验证本人同范围的持久最终段并冻结，Agent 不再读取源会话或 Storage。现 `/.inputs/{index}` 在每次取原文字节前对照 consuming Run 已存 manifest 的相同索引、可信身份和当前 lease，并重核长度及 SHA‑256；final-only 无需 Storage reader。混合选择保原顺序，原 Asset/FINAL Artifact 继续走实时 Storage 验权。路径只用稳定索引；静态 `final-answer.md` / `text/markdown` 为模型文件提示，不是 owner 字段或输入内容。

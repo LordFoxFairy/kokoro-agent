@@ -55,6 +55,7 @@ class FakeDeliveryClient:
             mime_type=request.mime_type,
             artifact_kind="document",
             replayed=len(self.requests) > 1,
+            display_path=request.display_path,
         )
 
 
@@ -126,6 +127,41 @@ async def test_deliver_publishes_workspace_bytes_through_public_client(
     assert request.content == b"final report"
     assert request.content_sha256 == result.content_hash
     assert request.mime_type == "application/pdf"
+
+
+@pytest.mark.parametrize(
+    ("path", "proven", "display_path"),
+    [
+        ("/reports/report.txt", True, "/reports/report.txt"),
+        ("/reports/report.txt", False, None),
+        ("/reports//report.txt", True, None),
+        ("/reports/./report.txt", True, None),
+        ("/.inputs/0", True, None),
+        ("/reports/.internal/report.txt", True, None),
+        ("/reports/service-account.json", True, None),
+    ],
+)
+async def test_delivery_only_emits_proven_exact_display_paths(
+    tmp_path: Path, path: str, proven: bool, display_path: str | None
+) -> None:
+    source = tmp_path / path[1:]
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"same authorized bytes")
+    client = FakeDeliveryClient()
+    tool = make_deliver_tool(
+        _backend(tmp_path),
+        client,
+        namespace=_NS,
+        run_id=_RUN,
+        identity=_IDENTITY,
+        virtual_workspace=proven,
+    )
+    result = DeliverResult.model_validate_json(
+        await tool.ainvoke({"path": path, "title": "Same delivery"})
+    )
+    assert result.display_path == client.requests[0].display_path == display_path
+    assert ("display_path" in result.model_dump()) == (display_path is not None)
+    assert client.requests[0].content == b"same authorized bytes"
 
 
 async def test_deliver_request_is_idempotent_for_same_run_path_and_bytes(

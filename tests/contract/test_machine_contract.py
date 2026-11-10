@@ -41,7 +41,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "8.15.0"
+    assert _object(document["info"])["version"] == "8.16.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -249,6 +249,7 @@ def test_failure_contract_http_payload_string_has_explicit_failed_discriminator(
             "interaction.state": "#/components/schemas/ChatInteractionState",
             "activity": "#/components/schemas/ChatActivity",
             "todo.updated": "#/components/schemas/ChatTodo",
+            "delivery": "#/components/schemas/ChatDelivery",
         },
     }
 
@@ -568,7 +569,7 @@ def test_current_http_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "8.15.0"
+    assert _object(document["info"])["version"] == "8.16.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -599,7 +600,9 @@ def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
         "interaction.state",
         "activity",
         "todo.updated",
+        "delivery",
     }
+    assert mapping["delivery"] == "#/components/schemas/ChatDelivery"
     assert mapping["run.completed"] == "#/components/schemas/ChatRunCompleted"
     assert mapping["run.failed"] == "#/components/schemas/ChatFailure"
     assert mapping["interaction.state"] == "#/components/schemas/ChatInteractionState"
@@ -608,6 +611,54 @@ def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
         assert isinstance(ref, str) and ref.startswith("#/components/schemas/")
         assert ref.rsplit("/", 1)[1] in schemas
     assert mapping["activity"] != mapping["todo.updated"]
+
+
+def test_delivery_display_path_is_optional_exact_and_private_mount_free() -> None:
+    import hashlib
+    from kokoro_agent.chat_contract_check import (
+        http815_delivery_display_parent_bytes,
+        validate_decoded_chat_payload,
+    )
+
+    document = _document()
+    parent = http815_delivery_display_parent_bytes(document)
+    assert hashlib.sha256(parent).hexdigest() == (
+        "7d9b9163a5f8bd5104e57376eda2afa748460e97708fb7cb38b6f9365fdf0a81"
+    )
+    payload = {
+        "tool_call_id": "tool-1",
+        "artifact_id": "artifact-1",
+        "asset_id": "asset-1",
+        "artifact_kind": "document",
+        "path": "/reports/资料.md",
+        "title": "Report",
+        "mime": "text/markdown",
+        "size": 42,
+        "content_hash": "a" * 64,
+    }
+    for event in (payload, {**payload, "display_path": payload["path"]}):
+        validate_decoded_chat_payload(
+            document, event_type="delivery", payload_json=json.dumps(event)
+        )
+    for event in (
+        {**payload, "display_path": None},
+        {**payload, "display_path": "/other.md"},
+        *(
+            {**payload, "display_path": unsafe, "path": unsafe}
+            for unsafe in (
+                "/.inputs/0",
+                "/safe/.ssh/config",
+                "/reports/secret-key.txt",
+                "/reports//x",
+                "/reports/résumé.md",
+                "/" + "界" * 1400,
+            )
+        ),
+    ):
+        with pytest.raises(ValueError):
+            validate_decoded_chat_payload(
+                document, event_type="delivery", payload_json=json.dumps(event)
+            )
 
 
 def _r95_todo_component(document: dict[str, object]) -> tuple[str, dict[str, object]]:
@@ -1293,7 +1344,7 @@ def test_canonical_resource_launch_preserves_complete_http813_parent() -> None:
     )
 
     document = _document()
-    assert _object(document["info"])["version"] == "8.15.0"
+    assert _object(document["info"])["version"] == "8.16.0"
     parent = http814_final_answer_parent_bytes(document)
     assert hashlib.sha256(parent).hexdigest() == (
         "6d33f1110e354570ec2977d18b4620ba7e44be9174e1d8d6ceeb7234b76be424"

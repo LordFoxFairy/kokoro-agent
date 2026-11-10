@@ -142,6 +142,13 @@ def safe_virtual_path(value: str) -> bool:
     )
 
 
+def safe_delivery_display_path(value: str) -> bool:
+    """An already-attested virtual workspace path, never a private dot mount."""
+    return safe_virtual_path(value) and not any(
+        part.startswith(".") for part in value[1:].split("/")
+    )
+
+
 class SkillDisplay(_Payload):
     source_ref: str
     name: str
@@ -362,7 +369,7 @@ class _SkillActivity(_Payload):
         return self
 
 
-class _Delivery(_Payload):
+class ChatDelivery(_Payload):
     tool_call_id: str
     artifact_id: str
     asset_id: str
@@ -373,6 +380,19 @@ class _Delivery(_Payload):
     size: int
     content_hash: str
     note: str | None = None
+    display_path: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def exact_display_path(self) -> Self:
+        if "display_path" in self.model_fields_set and (
+            self.display_path is None
+            or self.display_path != self.path
+            or not safe_delivery_display_path(self.display_path)
+        ):
+            raise ValueError("invalid delivery display path")
+        return self
 
 
 class _Terminal(_Payload):
@@ -524,7 +544,7 @@ def project_chat_fact(
         )
     elif isinstance(payload, DeliveryCreatedPayload):
         event_type = "delivery"
-        safe_payload = _Delivery(**payload.model_dump())
+        safe_payload = ChatDelivery(**payload.model_dump())
     elif isinstance(payload, RunCompletedPayload):
         event_type = "run.completed"
         safe_payload = _Terminal(

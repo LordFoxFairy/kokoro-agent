@@ -38,6 +38,7 @@ class DeliveryRequest(BaseModel):
     # Set by the claimed worker/tool middleware, never by model tool arguments.
     lease: LeaseFence | None = None
     tool_call_id: str | None = None
+    display_path: str | None = None
 
 
 class DeliveryRecoveryRequest(BaseModel):
@@ -67,6 +68,8 @@ class DeliveryReceipt(BaseModel):
     size_bytes: int
     mime_type: str
     replayed: bool = False
+    # Read only from the Agent's frozen intent, not inferred from the current backend.
+    display_path: str | None = None
 
 
 class InputResourceReadRequest(BaseModel):

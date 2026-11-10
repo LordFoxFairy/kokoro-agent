@@ -24,6 +24,8 @@ from support.fakes import (
 )
 from support.chat import FakeChatRepository
 
+import pytest
+
 from kokoro_agent.protocol import (
     ArtifactKind,
     DeliveryCreated,
@@ -184,15 +186,21 @@ async def test_delivery_is_critical_and_deduplicates_same_tool_call() -> None:
     assert cast(str, rows[0]["event_id"]).startswith("evt_")
 
 
-async def test_terminal_barrier_recovers_journal_success_after_stream_loss() -> None:
+@pytest.mark.parametrize("display_path", [None, "/report.pdf"])
+async def test_terminal_barrier_recovers_journal_success_after_stream_loss(
+    display_path: str | None,
+) -> None:
     bus, store = FakeBus(), FakeRunRepository()
     chat = FakeChatRepository()
     lease = await store.try_claim(request("r1"))
     assert lease is not None
+    frozen = json.loads(_delivered_json(artifact_kind="code"))
+    if display_path is not None:
+        frozen["display_path"] = display_path
     store.tool_journal[("r1", "t1")] = {
         "name": "deliver",
         "status": "succeeded",
-        "result": _delivered_json(artifact_kind="code"),
+        "result": json.dumps(frozen),
         "is_error": False,
     }
     emitter = await RunEmitter.attach(
@@ -212,7 +220,12 @@ async def test_terminal_barrier_recovers_journal_success_after_stream_loss() -> 
     assert isinstance(published.payload, DeliveryCreatedPayload)
     assert published.payload.artifact_kind == "code"
     assert len(chat.records) == 1
-    assert json.loads(chat.records[0].payload_json)["artifact_kind"] == "code"
+    chat_payload = json.loads(chat.records[0].payload_json)
+    assert chat_payload["artifact_kind"] == "code"
+    assert chat_payload.get("display_path") == display_path
+    assert ("display_path" in chat_payload) == (display_path is not None)
+    live = delivery_created_payload(_deliver_call(json.dumps(frozen)))
+    assert live is not None and live == published.payload
     assert (
         len([row for row in store.outbox["r1"] if row["kind"] == "delivery.created"])
         == 1

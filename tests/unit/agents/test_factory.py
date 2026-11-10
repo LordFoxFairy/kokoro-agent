@@ -100,7 +100,8 @@ from kokoro_agent.tools.middleware import RunSupersededError
 
 
 class RouteResolver:
-    def __init__(self) -> None:
+    def __init__(self, *, context_window: int = 4096) -> None:
+        self.context_window = context_window
         self.calls: list[tuple[str, str, str | None, str | None]] = []
 
     async def resolve(
@@ -130,7 +131,7 @@ class RouteResolver:
             ),
             feature_key=feature_key,
             label_key=label or "default",
-            context_window=4096,
+            context_window=self.context_window,
             max_output_tokens=128,
         )
 
@@ -514,6 +515,7 @@ class RecordingDelivery:
             content_sha256=request.content_sha256,
             size_bytes=len(request.content),
             mime_type=request.mime_type,
+            display_path=request.display_path,
         )
 
 
@@ -524,10 +526,13 @@ async def _native_script(
     *,
     catalog: FeatureCatalog = FEATURE_CATALOG,
     action_observer: ActionObservationSink = lambda _observation: None,
+    request: RunRequest | None = None,
 ) -> tuple[list[BaseMessage], FakeRunRepository]:
     factory, repository = _factory(
         monkeypatch,
-        RouteResolver(),
+        RouteResolver(context_window=32768)
+        if request is not None and request.selected_resource_refs
+        else RouteResolver(),
         catalog,
         delivery=delivery,
         isolate_model_call_gate_for_unrelated_unit_scope=True,
@@ -542,7 +547,7 @@ async def _native_script(
         return LocalFakeChatModel.with_script(script)
 
     monkeypatch.setattr(agent_factory_module, "make_chat_model", scripted_model)
-    request = _request("chat")
+    request = request or _request("chat")
     lease = await repository.try_claim(request)
     assert lease is not None
     handle = await factory.build(
@@ -568,12 +573,40 @@ async def _native_script(
     return messages, repository
 
 
+@pytest.mark.parametrize("inputs_mounted", [False, True])
 async def test_general_native_write_read_and_deliver_share_state_workspace(
     monkeypatch: pytest.MonkeyPatch,
+    inputs_mounted: bool,
 ) -> None:
     import hashlib
+    from kokoro_agent.protocol.control import (
+        ArtifactSourceScope,
+        FinalAnswerResourceRef,
+    )
     from kokoro_agent.tools.deliver import DeliverResult
 
+    run = _request("chat")
+    if inputs_mounted:
+        text = "Frozen answer"
+        run = run.model_copy(
+            update={
+                "selected_resource_refs": (
+                    FinalAnswerResourceRef(
+                        kind="final_answer",
+                        resource_id="source-message",
+                        source_scope=ArtifactSourceScope(
+                            kind="conversation", id="source-session"
+                        ),
+                        source_run_id="source-run",
+                        source_final_segment_id="source-final-segment",
+                        source_revision="17",
+                        content=text,
+                        content_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                        size_bytes=str(len(text)),
+                    ),
+                )
+            }
+        )
     client = RecordingDelivery()
     messages, _repository = await _native_script(
         monkeypatch,
@@ -585,7 +618,7 @@ async def test_general_native_write_read_and_deliver_share_state_workspace(
                         "name": "write_file",
                         "id": "write-1",
                         "args": {
-                            "file_path": "/report.txt",
+                            "file_path": "/reports/report.txt",
                             "content": "native workspace bytes",
                         },
                     }
@@ -597,7 +630,7 @@ async def test_general_native_write_read_and_deliver_share_state_workspace(
                     {
                         "name": "read_file",
                         "id": "read-1",
-                        "args": {"file_path": "/report.txt"},
+                        "args": {"file_path": "/reports/report.txt"},
                     }
                 ],
             ),
@@ -607,13 +640,17 @@ async def test_general_native_write_read_and_deliver_share_state_workspace(
                     {
                         "name": "deliver",
                         "id": "deliver-1",
-                        "args": {"path": "/report.txt", "title": "Native report"},
+                        "args": {
+                            "path": "/reports/report.txt",
+                            "title": "Native report",
+                        },
                     }
                 ],
             ),
             AIMessage(content="done"),
         ],
         client,
+        request=run,
     )
     tools = {
         message.name: message
@@ -625,6 +662,7 @@ async def test_general_native_write_read_and_deliver_share_state_workspace(
     }
     request = client.requests[0]
     assert request.content == b"native workspace bytes"
+    assert request.display_path == "/reports/report.txt"
     assert request.tool_call_id == "deliver-1"
     assert request.lease is not None
     assert request.run_id == "run-chat"
@@ -632,6 +670,7 @@ async def test_general_native_write_read_and_deliver_share_state_workspace(
     assert "native workspace bytes" in tools["read_file"].text
     result = DeliverResult.model_validate_json(tools["deliver"].text)
     assert result.artifact_id == "artifact-native"
+    assert result.display_path == result.path == "/reports/report.txt"
     assert result.content_hash == hashlib.sha256(request.content).hexdigest()
 
 

@@ -1,3 +1,7 @@
+## 2026-11-10 · A‑10 交付 journal 可选证明
+
+不改 SQL Schema。现 Tool Journal V2 JSON 在 frozen/admitted/selected 允许可省略 `display_path`；第一条冻结后后继阶段不得新增、删除或变更（旧无字段永久缺省）。成功结果保留同一值供原 source event 重放；不在已有 Storage request digest/command identity、Run/lease 或 object bytes 中加入此字段。旧数据不迁移、不从历史 raw path 推导。
+
 ## 2026-11-09 历史最终答复冻结（无 Schema 增量）
 
 已接受的答复原文与来源 Message/Run/segment/revision、长度、SHA‑256 只存于同一私有 Run request 的 canonical 引用，沿原 fence、投递和恢复；不新建表、Storage 对象、正文缓存或公开 Message 正文。执行仍使用 consuming Run 及其有效 lease。删除另一个来源会话不改已接受 Run 或同键重放；新提交或生成新 Run 的 regenerate 由 BFF 重验来源。删除 consuming 会话仍用原取消。

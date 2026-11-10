@@ -815,6 +815,37 @@ async def test_final_owner_reply_lost_recovers_without_workspace_bytes() -> None
     assert [name for name, _, _ in transport.calls].count("create_upload") == 1
 
 
+@pytest.mark.parametrize("initial_path", [None, "/report.pdf"])
+async def test_delivery_replay_keeps_first_display_path_presence(
+    initial_path: str | None,
+) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.connect_error = Code.UNAVAILABLE
+    client = StorageDeliveryClient(runs, transport)
+    with pytest.raises(StorageClientError, match="UNAVAILABLE"):
+        await client.publish(
+            _request().model_copy(update={"display_path": initial_path})
+        )
+    assert json.loads(runs.last_intent or "{}").get("display_path") == initial_path
+
+    transport.connect_error = None
+    transport.finalize_reply_lost = True
+    changed_backend_path = "/report.pdf" if initial_path is None else None
+    with pytest.raises(StorageClientError):
+        await client.publish(
+            _request().model_copy(update={"display_path": changed_backend_path})
+        )
+    intents = [json.loads(value) for _, _, value in runs.intents]
+    assert all(intent.get("display_path") == initial_path for intent in intents)
+    assert all(
+        ("display_path" in intent) == (initial_path is not None) for intent in intents
+    )
+    receipt = await client.recover(_recovery())
+    assert receipt is not None
+    assert receipt.model_dump().get("display_path") == initial_path
+    assert transport.puts == [_CONTENT]
+
+
 async def test_recovery_rejects_changed_owner_kind_without_new_upload() -> None:
     runs, transport = FakeRuns(), FakeTransport()
     transport.finalize_reply_lost = True

@@ -1,3 +1,7 @@
+## 2026-11-10 · A‑10 已交付成果目录来源（HTTP 8.16.0）
+
+现 `ChatEvent.payload_json` 的 `delivery` 明确绑定闭合 `ChatDelivery`，既有字段和原 `path` 不变。可省略的 `display_path` 非 null，精确等于可证明的原虚拟绝对路径；NFC/4096 UTF‑8 字节上限，无控制、敏感名、宿主路径前缀或隐藏路径段。旧/未知路径缺字段，不返回替代值。路径只用于显示已交付 Artifact 的出处，不授权打开文件，不改变 Artifact、Run 或 Storage wire。Agent HTTP 路由集不变，8.15 完整父件由精确逆证保护。
+
 ## 2026-11-09 历史最终答复输入（HTTP 8.15 候选）
 
 `LaunchRequest.selected_resource_refs` 的私有 `final_answer` 分支只接受 `kind`、`resource_id`（源 assistant Message ID）、`source_scope: {kind:"conversation",id}`、`source_run_id`、`source_final_segment_id`、`source_revision`、`content`、`content_sha256`、`size_bytes`。仅 user subject 的 Chat Run；来源字段不授执行权，不含 `asset_id`、文件名、URL、版本 alias 或身份。源 segment ID 为 1–255 Unicode scalar；revision 为规范正十进制 i64。正文保完整 UTF‑8、不规范化、拒 NUL/孤立 surrogate，1–24576 字节；实际字节数和小写 SHA‑256 必须相符。

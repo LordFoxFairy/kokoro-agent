@@ -26,6 +26,7 @@ from kokoro_agent.clients.storage import (
     InputResourceReadRequest,
     StorageClientError,
 )
+from kokoro_agent.domain.chat.projection import safe_delivery_display_path
 from kokoro_agent.domain.run.models import LeaseFence, ToolJournalRecord
 from kokoro_agent.generated.kokoro.common.v1.common_pb import CommandIdentity
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
@@ -102,16 +103,25 @@ def _command(seed: str, stage: str, fields: object) -> CommandIdentity:
     )
 
 
-def _intent_stage(value: Mapping[str, object]) -> str:
-    keys = frozenset(value)
+def _intent_stage(value: Mapping[str, object]) -> tuple[str, str | None]:
+    keys = frozenset(value) - {"display_path"}
     if type(value.get("version")) is not int or value["version"] != 2:
         raise StorageClientError("DELIVERY_INTENT_VERSION_UNSUPPORTED")
+    display_path = value.get("display_path")
+    if "display_path" in value and (
+        not isinstance(display_path, str)
+        or display_path != value.get("path")
+        or not safe_delivery_display_path(display_path)
+    ):
+        raise StorageClientError("DELIVERY_INTENT_INVALID")
+    if not isinstance(display_path, str):
+        display_path = None
     if keys == _BASE_INTENT_KEYS:
-        return "frozen"
+        return "frozen", display_path
     if keys == _ADMITTED_INTENT_KEYS:
-        return "admitted"
+        return "admitted", display_path
     if keys == _SELECTED_INTENT_KEYS:
-        return "selected"
+        return "selected", display_path
     raise StorageClientError("DELIVERY_INTENT_INVALID")
 
 
@@ -211,7 +221,7 @@ class StorageDeliveryClient:
             frozen = _JSON_OBJECT.validate_json(recorded.result)
         except ValidationError as exc:
             raise StorageClientError("DELIVERY_INTENT_INVALID") from exc
-        stage = _intent_stage(frozen)
+        stage, display_path = _intent_stage(frozen)
         run = await self._canonical(
             DeliveryRequest(
                 request_id=request.request_id,
@@ -349,7 +359,9 @@ class StorageDeliveryClient:
         else:
             asset_id = status.asset_id
         await self._require_clean(owner_request, asset_id)
-        return await self._finalize(owner_request, asset_id=asset_id, size_bytes=size)
+        return await self._finalize(
+            owner_request, asset_id=asset_id, size_bytes=size, display_path=display_path
+        )
 
     async def _call(
         self, request: DeliveryRequest, method: str, message: object
@@ -611,7 +623,9 @@ class StorageDeliveryClient:
                 ):
                     raise StorageClientError("DELIVERY_INTENT_MISMATCH")
                 frozen.update(recorded)
-        stage = _intent_stage(frozen)
+        if (prior is None or not prior.result) and request.display_path is not None:
+            frozen["display_path"] = request.display_path
+        stage, display_path = _intent_stage(frozen)
         await self._intent(request, frozen)
 
         upload_id_value = frozen.get("upload_id")
@@ -773,7 +787,10 @@ class StorageDeliveryClient:
         await self._require_clean(request, asset_id)
 
         return await self._finalize(
-            request, asset_id=asset_id, size_bytes=len(request.content)
+            request,
+            asset_id=asset_id,
+            size_bytes=len(request.content),
+            display_path=display_path,
         )
 
     async def _require_clean(self, request: DeliveryRequest, asset_id: str) -> None:
@@ -803,7 +820,12 @@ class StorageDeliveryClient:
             raise StorageClientError("DELIVERY_SCAN_PENDING", retryable=True)
 
     async def _finalize(
-        self, request: DeliveryRequest, *, asset_id: str, size_bytes: int
+        self,
+        request: DeliveryRequest,
+        *,
+        asset_id: str,
+        size_bytes: int,
+        display_path: str | None,
     ) -> DeliveryReceipt:
         run = await self._canonical(request)
         seed = _digest([request.run_id, request.tool_call_id])
@@ -877,4 +899,5 @@ class StorageDeliveryClient:
             size_bytes=size_bytes,
             mime_type=request.mime_type,
             replayed=finalized.replayed,
+            display_path=display_path,
         )

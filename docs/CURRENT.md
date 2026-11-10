@@ -1,3 +1,7 @@
+## 2026-11-10 · A‑10 已交付成果的可验证展示路径
+
+HTTP 8.16.0 在原交付事件增可选 `display_path`，实际已知虚拟后端才出；官方 Skills/inputs 只读挂载不改变已知 default，不公开其路径。首次 V2 intent 冻结存在性及值，续跑和终态 journal 补发不重判、不回填历史。Storage 发布身份、字节、Schema、既有 raw `path` 和 source event identity 不变。仅为本人私有成果目录承接来源，不是工作区读取权限；BFF/App 与真实刷新由 Root 精确组合验收。
+
 ## 2026-11-10 A‑09 Storage 消费者精确配对
 
 Agent 仅从 Storage `0f91535a488a45379b567efd378c6cb4808f1206` 的 Git blobs 重钉 v3 Proto、owner provenance 并正规生成。该 owner 增量只扩个人 `ListAssets` 筛选，Agent 不调用该方法；运行时、公开契约和依赖锁不变。

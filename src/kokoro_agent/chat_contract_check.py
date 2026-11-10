@@ -16,7 +16,11 @@ from kokoro_agent.execution_proof_contract import (
     OWNER_SOURCE_FILES,
 )
 from kokoro_agent.bff_admission_contract import GENERATED as BFF_BUDGET_GENERATED
-from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolActivity
+from kokoro_agent.domain.chat.projection import (
+    ChatDelivery,
+    ToolDisplayCode,
+    ToolActivity,
+)
 from kokoro_agent.protocol.control import (
     FINAL_ANSWER_MAX_BYTES,
     PROJECT_INSTRUCTION_PATTERN,
@@ -34,9 +38,22 @@ _DECODED_PROFILES = {
     "todo.updated": "#/components/schemas/ChatTodo",
 }
 
-_CURRENT_DECODED_PROFILES = {
+_DECODED_PROFILES_WITH_TERMINAL = {
     **_DECODED_PROFILES,
     "run.completed": "#/components/schemas/ChatRunCompleted",
+}
+_CURRENT_DECODED_PROFILES = {
+    **_DECODED_PROFILES_WITH_TERMINAL,
+    "delivery": "#/components/schemas/ChatDelivery",
+}
+_DELIVERY_DISPLAY_PATH = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 4096,
+    "x-kokoro-utf8-byte-limit": 4096,
+    "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+    "x-kokoro-binding": "Equal to the exact source path; only a proven virtual workspace path, without hidden segments or sensitive names.",
+    "description": "Display-only path of this already delivered Artifact version. Not a read selector. Omitted when unproven.",
 }
 _FINAL_ANSWER_SCHEMA = {
     "type": "object",
@@ -576,6 +593,7 @@ def failure_model_bytes(
     """Compile only the approved two failure profiles; reject unsupported shapes."""
     if _object(document.get("info"), source="info").get("version") in {
         "8.14.0",
+        "8.15.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(
@@ -826,15 +844,16 @@ def validate_decoded_chat_payload(
 ) -> None:
     """Validate the mapped raw Chat profiles without I/O or normalization.
 
-    Ordinary Message/Delivery profiles are outside this entry's scope. Callers
-    dispatch only declared profiles; unknown/missing bindings fail closed.
+    Ordinary Message profiles are outside this entry's scope. Callers dispatch
+    only declared profiles; unknown/missing bindings fail closed.
     """
-    profiles = (
-        _CURRENT_DECODED_PROFILES
-        if _object(document.get("info"), source="info").get("version")
-        in {"8.8.0", "8.9.0", "8.10.0", "8.11.0", "8.14.0", HTTP_CONTRACT_VERSION}
-        else _DECODED_PROFILES
-    )
+    version = _object(document.get("info"), source="info").get("version")
+    if version == HTTP_CONTRACT_VERSION:
+        profiles = _CURRENT_DECODED_PROFILES
+    elif version in {"8.8.0", "8.9.0", "8.10.0", "8.11.0", "8.14.0", "8.15.0"}:
+        profiles = _DECODED_PROFILES_WITH_TERMINAL
+    else:
+        profiles = _DECODED_PROFILES
     if event_type not in profiles:
         raise ValueError("unsupported decoded Chat event type")
     components = _object(document.get("components"), source="components")
@@ -869,6 +888,8 @@ def validate_decoded_chat_payload(
         raise ValueError("decoded Chat payload violates owner schema") from error
     if event_type == "activity" and value.get("activity") == "tool":
         ToolActivity.model_validate(value, strict=True)
+    if event_type == "delivery":
+        ChatDelivery.model_validate(value, strict=True)
     if event_type == "todo.updated":
         shape = _object(schemas.get("ChatTodo"), source="ChatTodo")
         limit = shape.get("x-kokoro-json-byte-limit")
@@ -1718,12 +1739,71 @@ _FINAL_ANSWER_RESOURCE_REFS_SCHEMA = {
 }
 
 
-def http814_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
-    """Remove only the frozen final answer branch and prove every issued 8.14 byte."""
+def http815_delivery_display_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the decoded Delivery extension and prove every issued 8.15 byte."""
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != HTTP_CONTRACT_VERSION:
-        raise ValueError("final answer requires the current Agent HTTP version")
+        raise ValueError("delivery display path requires Agent HTTP8.16")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    delivery = _object(schemas.pop("ChatDelivery", None), source="ChatDelivery")
+    display = _object(delivery.get("properties"), source="ChatDelivery properties")
+    required = [
+        "tool_call_id",
+        "artifact_id",
+        "asset_id",
+        "artifact_kind",
+        "path",
+        "title",
+        "mime",
+        "size",
+        "content_hash",
+    ]
+    if (
+        delivery.get("type") != "object"
+        or delivery.get("additionalProperties") is not False
+        or delivery.get("required") != required
+        or set(display) != set(required) | {"note", "display_path"}
+        or display["display_path"] != _DELIVERY_DISPLAY_PATH
+    ):
+        raise ValueError("decoded Delivery schema differs")
+    event = _object(schemas.get("ChatEvent"), source="ChatEvent")
+    binding = _object(event.get("x-kokoro-decoded-payloads"), source="decoded binding")
+    mapping = _object(binding.get("mapping"), source="decoded mapping")
+    if mapping != _CURRENT_DECODED_PROFILES:
+        raise ValueError("decoded Delivery mapping differs")
+    del mapping["delivery"]
+    binding["mapping"] = mapping
+    event["x-kokoro-decoded-payloads"] = binding
+    schemas["ChatEvent"] = event
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.15.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "7d9b9163a5f8bd5104e57376eda2afa748460e97708fb7cb38b6f9365fdf0a81"
+    ):
+        raise ValueError("complete HTTP8.15 delivery display parent differs")
+    return raw
+
+
+def http814_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the frozen final answer branch and prove every issued 8.14 byte."""
+    if (
+        _object(document.get("info"), source="info").get("version")
+        == HTTP_CONTRACT_VERSION
+    ):
+        document = _object(
+            json.loads(http815_delivery_display_parent_bytes(document)),
+            source="HTTP8.15 delivery parent",
+        )
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.15.0":
+        raise ValueError("final answer requires Agent HTTP8.15")
     components = _object(parent.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
     launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
@@ -1776,10 +1856,10 @@ def http813_canonical_resources_parent_bytes(document: dict[str, object]) -> byt
 
 def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the A-08 opaque resource selection child."""
-    if (
-        _object(document.get("info"), source="info").get("version")
-        == HTTP_CONTRACT_VERSION
-    ):
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.15.0",
+        HTTP_CONTRACT_VERSION,
+    }:
         document = _object(
             json.loads(http814_final_answer_parent_bytes(document)),
             source="HTTP8.14 final answer parent",
@@ -1816,10 +1896,20 @@ def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http811_project_instruction_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the exact Project launch delta and prove every issued 8.11 byte."""
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.13.0",
+        "8.14.0",
+        "8.15.0",
+        HTTP_CONTRACT_VERSION,
+    }:
+        document = _object(
+            json.loads(http812_resource_refs_parent_bytes(document)),
+            source="HTTP8.12 resource refs parent",
+        )
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
-    if info.get("version") not in {HTTP_CONTRACT_VERSION, "8.12.0"}:
-        raise ValueError("project instruction requires the current Agent HTTP version")
+    if info.get("version") != "8.12.0":
+        raise ValueError("project instruction requires Agent HTTP8.12")
     components = _object(parent.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
     launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")

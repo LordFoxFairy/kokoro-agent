@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.15.0"
+    "version": "8.16.0"
   },
   "servers": [
     {
@@ -1402,7 +1402,8 @@
             "interaction.state": "#/components/schemas/ChatInteractionState",
             "activity": "#/components/schemas/ChatActivity",
             "todo.updated": "#/components/schemas/ChatTodo",
-            "run.completed": "#/components/schemas/ChatRunCompleted"
+            "run.completed": "#/components/schemas/ChatRunCompleted",
+            "delivery": "#/components/schemas/ChatDelivery"
           }
         }
       },
@@ -2957,6 +2958,81 @@
             }
           }
         ]
+      },
+      "ChatDelivery": {
+        "type": "object",
+        "required": [
+          "tool_call_id",
+          "artifact_id",
+          "asset_id",
+          "artifact_kind",
+          "path",
+          "title",
+          "mime",
+          "size",
+          "content_hash"
+        ],
+        "properties": {
+          "tool_call_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "asset_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_kind": {
+            "type": "string",
+            "enum": [
+              "document",
+              "code",
+              "image",
+              "audio",
+              "video",
+              "data",
+              "archive",
+              "other"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mime": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "note": {
+            "type": "string"
+          },
+          "display_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "x-kokoro-utf8-byte-limit": 4096,
+            "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+            "x-kokoro-binding": "Equal to the exact source path; only a proven virtual workspace path, without hidden segments or sensitive names.",
+            "description": "Display-only path of this already delivered Artifact version. Not a read selector. Omitted when unproven."
+          }
+        },
+        "additionalProperties": false
       }
     },
     "responses": {

@@ -250,6 +250,15 @@ class DeliveryCreatedPayload(StrictModel):
     # emitter 在 tool.returned 后追发本事件。
     content_hash: NonEmptyStr
     note: str | None = None
+    display_path: NonEmptyStr | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def exact_display_path(self) -> Self:
+        if self.display_path is not None and self.display_path != self.path:
+            raise ValueError("delivery display path differs from source path")
+        return self
 
 
 class RunControlReceiptPayload(StrictModel):

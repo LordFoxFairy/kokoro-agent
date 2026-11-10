@@ -7,6 +7,7 @@ technical modules directly.
 
 from __future__ import annotations
 
+from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
 from kokoro_agent.domain.run.interactions import (
     CheckpointObservation,
     ObservationTarget,
@@ -394,9 +395,16 @@ class PostgresRunRepository:
         tool_call_id: str,
         result: str,
         is_error: bool,
+        *,
+        workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool:
         return await self._effects.journal_tool_finished(
-            run_id, lease, tool_call_id, result, is_error
+            run_id,
+            lease,
+            tool_call_id,
+            result,
+            is_error,
+            workspace_write=workspace_write,
         )
 
     async def clear_tool_journal(

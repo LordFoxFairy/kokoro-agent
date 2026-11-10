@@ -8,6 +8,12 @@ import json
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.domain.chat.projection import safe_delivery_display_path
+from kokoro_agent.domain.run.workspace_output import (
+    MAX_OUTPUT_BYTES,
+    MAX_OUTPUT_VERSIONS,
+    NativeWorkspaceWrite,
+    output_path_digest,
+)
 from kokoro_agent.domain.run.repository import LeaseFence, ToolJournalRecord
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.postgres_run_context import (
@@ -20,6 +26,7 @@ from kokoro_agent.infrastructure.schema import (
     RUN_STEERS_TABLE,
     TOOL_JOURNAL_TABLE,
     TOOL_RESULTS_TABLE,
+    WORKSPACE_OUTPUT_VERSIONS_TABLE,
 )
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.protocol import RunSteer
@@ -405,7 +412,17 @@ class PostgresRunEffects:
         tool_call_id: str,
         result: str,
         is_error: bool,
+        *,
+        workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool:
+        if workspace_write is not None and (
+            is_error
+            or not tool_call_id
+            or output_path_digest(workspace_write.path) is None
+            or len(workspace_write.content) > MAX_OUTPUT_BYTES
+            or result != f"Updated file {workspace_write.path}"
+        ):
+            raise ValueError("invalid native workspace write completion")
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
@@ -417,7 +434,7 @@ class PostgresRunEffects:
                         UPDATE {}
                         SET status = %s, result = %s, is_error = %s
                         WHERE run_id = %s AND tool_call_id = %s AND status = 'started'
-                        RETURNING tool_call_id
+                        AND (NOT %s OR name = 'write_file') RETURNING tool_call_id
                         """.format(qualified(self._context.schema, TOOL_JOURNAL_TABLE)),
                         (
                             "failed" if is_error else "succeeded",
@@ -425,9 +442,51 @@ class PostgresRunEffects:
                             is_error,
                             run_id,
                             tool_call_id,
+                            workspace_write is not None,
                         ),
                     )
-                    return await fetch_one(cur) is not None
+                    if await fetch_one(cur) is None:
+                        return False
+                    if workspace_write is not None:
+                        raw = workspace_write.content
+                        version_id = (
+                            "wsv_"
+                            + hashlib.sha256(
+                                json.dumps(
+                                    [
+                                        "native-workspace-write:v1",
+                                        run_id,
+                                        tool_call_id,
+                                        workspace_write.path,
+                                    ],
+                                    ensure_ascii=True,
+                                    separators=(",", ":"),
+                                ).encode("ascii")
+                            ).hexdigest()
+                        )
+                        versions = qualified(
+                            self._context.schema, WORKSPACE_OUTPUT_VERSIONS_TABLE
+                        )
+                        await execute_sql(
+                            cur,
+                            f"""INSERT INTO {versions}
+                            (run_id,version_id,source_generation,tool_call_id,path,size_bytes,content_sha256,pending_bytes)
+                            SELECT %s,%s,%s,%s,%s,%s,%s,%s
+                            WHERE (SELECT count(*) FROM {versions} WHERE run_id=%s) < %s""",
+                            (
+                                run_id,
+                                version_id,
+                                lease.generation,
+                                tool_call_id,
+                                workspace_write.path,
+                                len(raw),
+                                hashlib.sha256(raw).hexdigest(),
+                                raw,
+                                run_id,
+                                MAX_OUTPUT_VERSIONS,
+                            ),
+                        )
+                    return True
 
     async def clear_tool_journal(
         self, run_id: str, lease: LeaseFence, tool_call_id: str

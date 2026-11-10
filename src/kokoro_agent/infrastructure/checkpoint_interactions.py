@@ -54,7 +54,11 @@ from kokoro_agent.infrastructure.checkpoint_workspace_outputs import (
     CheckpointWorkspaceOutputs,
 )
 from kokoro_agent.clients.storage import WorkspaceOutputUploadClient
-from kokoro_agent.domain.run.workspace_output import OUTPUT_METADATA, OUTPUT_ROOT
+from kokoro_agent.domain.run.workspace_output import (
+    OUTPUT_METADATA,
+    OUTPUT_ROOT,
+    WorkspaceOutputGuard,
+)
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all
 from kokoro_agent.protocol import RunRequest
@@ -272,10 +276,16 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
         return saved
 
     async def recover_workspace_outputs(
-        self, request: RunRequest, lease: LeaseFence
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        native: bool = False,
+        guard: WorkspaceOutputGuard | None = None,
     ) -> None:
         if self._workspace_outputs is not None:
-            await self._workspace_outputs.recover(request, lease)
+            await self._workspace_outputs.recover(
+                request, lease, native=native, guard=guard
+            )
 
     async def _confirm_steer_checkpoint(
         self,

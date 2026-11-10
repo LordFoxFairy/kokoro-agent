@@ -1,3 +1,7 @@
+## 2026-11-10 · A‑10 非 State 版本来源
+
+原 `kokoro_agent_workspace_output_version` 同一表新增暂存 `pending_bytes`，只给受信 native `write_file`，与成功 journal 同事务插入；该分支 checkpoint/task 全空，不借 State 身份。原 State 行 checkpoint/task 仍必有且从不存正文。发布只留原资产回执并清 pending，未公开 native 暂存在 Run 终态回收。仅 fresh canonical Agent schema，无独立迁移链；当前不部署。
+
 ## Task A A‑10：过程输出捕获行
 
 Agent canonical schema 增 `kokoro_agent_workspace_output_version`。唯一事实为当前 Run 下规范输出路径的 exact root checkpoint child/parent＋task、原代、字节长/SHA、opaque version；不复制 bytes、不写现 ToolJournal。记录不可变：同一定位重试只能逐字段相同。恢复以当前活跃租约重验并补同一身份，原 generation 保持。同一版本行只追加冻结的 `upload_id/source_version_id` 与 CLEAN `asset_id`；上传、扫描不持 PG 锁，只有现活跃租约可提交来源或资产。`asset_id IS NOT NULL` 是唯一发布条件，旧候选不会投影，未复制状态枚举、原字节或事件索引。

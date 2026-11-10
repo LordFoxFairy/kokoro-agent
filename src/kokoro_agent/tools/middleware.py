@@ -27,7 +27,13 @@ from langgraph.prebuilt import ToolRuntime
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
 from kokoro_agent.domain.run.repository import LeaseFence, RunRepository
-from kokoro_agent.domain.run.workspace_output import OUTPUT_PROOF, output_path_digest
+from kokoro_agent.domain.run.workspace_output import (
+    MAX_OUTPUT_BYTES,
+    NativeWorkspaceWrite,
+    OUTPUT_PROOF,
+    WorkspaceOutputGuard,
+    output_path_digest,
+)
 from kokoro_agent.protocol.events import DeliveryCreatedPayload
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
@@ -62,6 +68,33 @@ def _is_mapping(value: object) -> TypeGuard[dict[object, object]]:
     return isinstance(value, dict)
 
 
+def _native_output_path(
+    request: ToolCallRequest, thread_id: str, schema: type[BaseModel] | None
+) -> str | None:
+    call = request.tool_call
+    name, call_id, path = call["name"], call.get("id"), call["args"].get("file_path")
+    runtime: object = getattr(request, "runtime", None)
+    runtime_call_id: object = getattr(runtime, "tool_call_id", None)
+    config: object = getattr(runtime, "config", None)
+    configurable = config.get("configurable") if _is_mapping(config) else None
+    if (
+        schema is None
+        or request.tool is None
+        or request.tool.name != name
+        or request.tool.args_schema is not schema
+        or not isinstance(call_id, str)
+        or not call_id
+        or not isinstance(runtime, ToolRuntime)
+        or runtime_call_id != call_id
+        or not _is_mapping(configurable)
+        or configurable.get("thread_id") != thread_id
+        or not isinstance(path, str)
+        or output_path_digest(path) is None
+    ):
+        return None
+    return path
+
+
 class WorkspaceOutputProofMiddleware(AgentMiddleware):
     """Mark only the actual pinned native tools on this assembled State peer."""
 
@@ -73,40 +106,30 @@ class WorkspaceOutputProofMiddleware(AgentMiddleware):
         self, request: ToolCallRequest, handler: _ToolHandler
     ) -> ToolMessage | Command[Any]:
         call = request.tool_call
-        name = call["name"]
-        schema = {"write_file": WriteFileSchema, "edit_file": EditFileSchema}.get(name)
-        call_id = call.get("id")
-        path = call["args"].get("file_path")
-        runtime: object = getattr(request, "runtime", None)
-        runtime_call_id: object = getattr(runtime, "tool_call_id", None)
-        config: object = getattr(runtime, "config", None)
+        name, call_id = call["name"], call.get("id")
+        path = _native_output_path(
+            request,
+            self._thread_id,
+            {"write_file": WriteFileSchema, "edit_file": EditFileSchema}.get(name),
+        )
         result = await handler(request)
         if (
-            schema is None
-            or request.tool is None
-            or request.tool.name != name
-            or request.tool.args_schema is not schema
-            or not isinstance(call_id, str)
-            or not call_id
-            or not isinstance(runtime, ToolRuntime)
-            or runtime_call_id != call_id
-            or not isinstance(path, str)
+            path is None
             or not isinstance(result, ToolMessage)
             or (result.name, result.tool_call_id, result.status)
             != (name, call_id, "success")
-            or (digest := output_path_digest(path)) is None
         ):
             return result
-        configurable = config.get("configurable") if _is_mapping(config) else None
         metadata: object = getattr(result, "response_metadata")
-        if (
-            not _is_mapping(configurable)
-            or configurable.get("thread_id") != self._thread_id
-            or not _is_mapping(metadata)
-        ):
+        if not _is_mapping(metadata):
             return result
         return result.model_copy(
-            update={"response_metadata": {**metadata, OUTPUT_PROOF: digest}}
+            update={
+                "response_metadata": {
+                    **metadata,
+                    OUTPUT_PROOF: output_path_digest(path),
+                }
+            }
         )
 
 
@@ -375,12 +398,45 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         run_id: str,
         lease: LeaseFence,
         exempt: frozenset[str] = JOURNAL_EXEMPT_TOOLS,
+        workspace_thread: str | None = None,
+        workspace_guard: WorkspaceOutputGuard | None = None,
     ) -> None:
         super().__init__()
         self._run_repository = run_repository
         self._run_id = run_id
         self._lease = lease
         self._exempt = exempt
+        self._workspace_thread = workspace_thread
+        self._workspace_guard = workspace_guard
+
+    def for_workspace_output(
+        self, thread_id: str, guard: WorkspaceOutputGuard | None
+    ) -> ToolEffectJournalMiddleware:
+        return ToolEffectJournalMiddleware(
+            run_repository=self._run_repository,
+            run_id=self._run_id,
+            lease=self._lease,
+            exempt=self._exempt,
+            workspace_thread=thread_id,
+            workspace_guard=guard,
+        )
+
+    def _native_write(self, request: ToolCallRequest) -> NativeWorkspaceWrite | None:
+        if self._workspace_thread is None or request.tool_call["name"] != "write_file":
+            return None
+        path = _native_output_path(request, self._workspace_thread, WriteFileSchema)
+        content = request.tool_call["args"].get("content")
+        if (
+            path is None
+            or not isinstance(content, str)
+            or len(content) > MAX_OUTPUT_BYTES
+        ):
+            return None
+        try:
+            raw = content.encode("utf-8")
+        except UnicodeEncodeError:
+            return None
+        return NativeWorkspaceWrite(path, raw) if len(raw) <= MAX_OUTPUT_BYTES else None
 
     async def awrap_tool_call(
         self, request: ToolCallRequest, handler: _ToolHandler
@@ -429,6 +485,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         mcp_token = (
             _MCP_CALL.set((self._run_id, tool_id)) if name == "mcp_call" else None
         )
+        write = self._native_write(request)
         try:
             result = await handler(request)
         except GraphInterrupt:
@@ -450,12 +507,22 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
                 result = result.model_copy(update={"status": "error"})
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。
+            if write is not None and (
+                (result.name, result.tool_call_id, result.status, result.text)
+                != ("write_file", tool_id, "success", f"Updated file {write.path}")
+                or (
+                    self._workspace_guard is not None
+                    and not await self._workspace_guard(write.path, write.content)
+                )
+            ):
+                write = None
             finished = await self._run_repository.journal_tool_finished(
                 self._run_id,
                 self._lease,
                 tool_id,
                 result.text,
                 result.status == "error",
+                **({"workspace_write": write} if write is not None else {}),
             )
             if not finished:
                 raise RunSupersededError(

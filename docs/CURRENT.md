@@ -1,3 +1,7 @@
+## A-10 native Docker write versions
+
+Configured Docker/Local native `write_file` records the exact successful UTF-8 input in the existing leased tool transaction; it does not read the mutable path after success. The main controller verified Docker mount bytes, isolated PostgreSQL, and real Storage/MinIO/ClamAV: the path then changed, generation 2 recovered the original CLEAN bytes, stale generation did not publish, replay did not upload again, and pending bytes were cleared. The model and Custom API credential provider were fixtures; this was a native SDK graph, not an independent Worker or browser journey. State and the public RunDisplay contract are unchanged. Native edit, scripts and E2B are not claimed.
+
 ## 2026-11-10 · A‑10 State 过程文件 Agent 链
 
 现单 State Chat 的安全 `/outputs/` 从 native exact 已提交版本取原 UTF‑8 bytes，现 Worker 接管/settlement 沿 Storage v3 WORKSPACE_OUTPUT 上传及验证 CLEAN；同版本行保存稳定 PUT 源与精确资产，不建 FINAL、事件或第二索引。现租约冻结发布，迟到回复不发布；HTTP 8.17 复用 RunDisplay 的本人范围，只向 BFF 投影已发布版本，无文件时省略。主控隔离真 PG 用例通过：同路径两原版本、晚到 CLEAN 无发布、新租约同源重放和 RunDisplay 跨 Run 隔离；Storage 传输为协议替身。State 产品可见性、原字节预览和删除撤销由 Root 在 BFF/App 精确组合补验；Local/Docker/script 不在本 Agent 首条链证据内。

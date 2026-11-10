@@ -26,6 +26,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol
+from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.state import StateBackend
 
 from langchain_core.globals import get_debug, get_verbose
@@ -87,6 +88,8 @@ from kokoro_agent.clients.system import ModelResolutionError
 from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_run
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin
 from kokoro_agent.sandbox.backend import backend_resource
+from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+from kokoro_agent.domain.run.workspace_output import WorkspaceOutputGuard
 from kokoro_agent.skills.backend import (
     TypedSkillBackend,
     SkillDiscoveryBackend,
@@ -127,6 +130,8 @@ class AgentHandle:
     tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = ()
     tool_display_sources: tuple[ToolDisplaySource, ...] = ()
     workspace_output_root: str | None = None
+    native_workspace_write: bool = False
+    workspace_output_guard: WorkspaceOutputGuard | None = None
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)
@@ -418,12 +423,34 @@ async def build_deep_agent(
         for subagent in subagent_bundle.subagents:
             subagent["system_prompt"] = system_material(subagent["system_prompt"])
             subagent["model"] = bind_summary((*plan.peer_path, subagent["name"]))
+        native_workspace_write = bool(
+            plan.workspace_output_root and agent.backend != "state"
+        )
+        workspace_output_guard = (
+            backend.guard_workspace_output
+            if native_workspace_write and isinstance(backend, DockerShellBackend)
+            else None
+        )
+        if native_workspace_write and not isinstance(backend, LocalShellBackend):
+            raise ValueError("native workspace output backend unavailable")
+        if (
+            native_workspace_write
+            and capabilities.custom_api_environment is not None
+            and workspace_output_guard is None
+        ):
+            raise ValueError("native workspace output credential guard unavailable")
+        thread = RunScope.of(request).scoped_thread_id
         base_main_chain = chains.main(
             ToolPolicyMiddleware(
                 toolset.authorized,
                 declared_subagents=subagent_bundle.declared,
                 subagent_create=policy.subagent_create,
-            )
+            ),
+            workspace_journal=(
+                chains.journal.for_workspace_output(thread, workspace_output_guard)
+                if native_workspace_write
+                else None
+            ),
         )
         offset = len(chains.guards)
         main_chain = (
@@ -436,8 +463,8 @@ async def build_deep_agent(
             model_guard(plan.peer_path),
             *base_main_chain[offset:],
             *(
-                (WorkspaceOutputProofMiddleware(RunScope.of(request).scoped_thread_id),)
-                if plan.workspace_output_root
+                (WorkspaceOutputProofMiddleware(thread),)
+                if plan.workspace_output_root and not native_workspace_write
                 else ()
             ),
         )
@@ -452,7 +479,8 @@ async def build_deep_agent(
         native_constructor: Any = getattr(deepagents, "create_deep_agent")
         validate_native_registry()
         workspace_guidance = (
-            f"\n\nWrite user-facing process files under {plan.workspace_output_root} using write_file or edit_file. "
+            f"\n\nWrite user-facing process files under {plan.workspace_output_root} using "
+            f"{'write_file' if native_workspace_write else 'write_file or edit_file'}. "
             "Keep drafts, inputs, and secrets outside that directory."
             if plan.workspace_output_root
             else ""
@@ -527,6 +555,8 @@ async def build_deep_agent(
             tool_display_codes=toolset.mounted_display_codes(candidate),
             tool_display_sources=toolset.mounted_display_sources(candidate),
             workspace_output_root=plan.workspace_output_root,
+            native_workspace_write=native_workspace_write,
+            workspace_output_guard=workspace_output_guard,
             resources=resources,
             model_clients=(clients,),
         )

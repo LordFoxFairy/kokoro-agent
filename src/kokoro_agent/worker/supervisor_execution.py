@@ -113,7 +113,12 @@ class SupervisorExecutionMixin(SupervisorContext):
                 and self._recover_workspace_outputs is not None
                 and lease.generation > 1
             ):
-                await self._recover_workspace_outputs(request, lease)
+                await self._recover_workspace_outputs(
+                    request,
+                    lease,
+                    built.native_workspace_write,
+                    built.workspace_output_guard,
+                )
             # A committed native pause may precede the Run/Chat pause transaction.
             # Recover that fact without another graph invocation.
             try:
@@ -315,9 +320,15 @@ class SupervisorExecutionMixin(SupervisorContext):
                 "kokoro_generation": lease.generation,
             }
             if built.workspace_output_root:
-                checkpoint_metadata[OUTPUT_METADATA] = built.workspace_output_root
+                if not built.native_workspace_write:
+                    checkpoint_metadata[OUTPUT_METADATA] = built.workspace_output_root
                 if resume is not None and self._recover_workspace_outputs is not None:
-                    await self._recover_workspace_outputs(request, lease)
+                    await self._recover_workspace_outputs(
+                        request,
+                        lease,
+                        built.native_workspace_write,
+                        built.workspace_output_guard,
+                    )
             if resume is not None:
                 checkpoint_metadata["kokoro_command_id"] = resume[0]
                 checkpoint_metadata["kokoro_attempt_id"] = resume[1].attempt_id
@@ -332,7 +343,12 @@ class SupervisorExecutionMixin(SupervisorContext):
                     built.workspace_output_root
                     and self._recover_workspace_outputs is not None
                 ):
-                    await self._recover_workspace_outputs(request, lease)
+                    await self._recover_workspace_outputs(
+                        request,
+                        lease,
+                        built.native_workspace_write,
+                        built.workspace_output_guard,
+                    )
                 if self._recover_steers is not None:
                     await self._recover_steers(request, lease)
                 if resume is not None:

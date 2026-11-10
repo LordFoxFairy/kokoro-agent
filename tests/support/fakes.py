@@ -96,6 +96,7 @@ from kokoro_agent.protocol.control import control_request_digest
 from kokoro_agent.protocol import REQUESTS_STREAM, RUN_EVENTS_MAXLEN
 from kokoro_agent.domain.run.models import RunUsageSegment
 from kokoro_agent.domain.run.repository import RunRepository
+from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.execution.protocols import AgentRunnable, ModelStream, PeerRunStream
@@ -1631,7 +1632,10 @@ class FakeRunRepository:
         tool_call_id: str,
         result: str,
         is_error: bool,
+        *,
+        workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool:
+        del workspace_write
         if not await self.is_lease_current(run_id, lease):
             return False
         entry = self.tool_journal.get((run_id, tool_call_id))

@@ -131,7 +131,7 @@ async def read_run_display(
                     cur,
                     f"""SELECT version_id,path AS virtual_path,asset_id,content_sha256,size_bytes
                     FROM {workspace_table} WHERE run_id=%s AND asset_id IS NOT NULL
-                    ORDER BY checkpoint_id, version_id LIMIT %s""",
+                    ORDER BY checkpoint_id,created_at,version_id LIMIT %s""",
                     (request.run_id, MAX_OUTPUT_VERSIONS + 1),
                 )
                 workspace_rows = await fetch_all(cur)

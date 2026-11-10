@@ -19,6 +19,8 @@ from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.domain.run.workspace_output import (
     MAX_OUTPUT_BYTES,
+    MAX_OUTPUT_VERSIONS,
+    WorkspaceOutputGuard,
     OUTPUT_METADATA,
     OUTPUT_PROOF,
     OUTPUT_ROOT,
@@ -30,7 +32,10 @@ from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.postgres_run_context import (
     PostgresRunRepositoryContext,
 )
-from kokoro_agent.infrastructure.schema import WORKSPACE_OUTPUT_VERSIONS_TABLE
+from kokoro_agent.infrastructure.schema import (
+    TOOL_JOURNAL_TABLE,
+    WORKSPACE_OUTPUT_VERSIONS_TABLE,
+)
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.protocol import RunRequest
 
@@ -308,12 +313,23 @@ class CheckpointWorkspaceOutputs:
                     tuple(version for version, _ in _postimages(request, prior, saved)),
                 )
 
-    async def recover(self, request: RunRequest, lease: LeaseFence) -> None:
+    async def recover(
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        *,
+        native: bool = False,
+        guard: WorkspaceOutputGuard | None = None,
+    ) -> None:
         """Re-admit exact prior-generation versions along the actual Run lineage."""
         if (
             not await self._runs.is_lease_current(request.run_id, lease)
             or await self._runs.get_request(request.run_id) != request
         ):
+            return
+        if native:
+            if self._storage is not None:
+                await self._recover_native(self._storage, request, lease, guard)
             return
         thread = RunScope.of(request).scoped_thread_id
         table = qualified(self._context.schema, "checkpoints")
@@ -376,17 +392,83 @@ class CheckpointWorkspaceOutputs:
                 )
             if self._storage is not None:
                 for version, raw in postimages:
-                    await self._publish(self._storage, request, lease, version, raw)
+                    await self._publish(
+                        self._storage,
+                        request,
+                        lease,
+                        version.version_id,
+                        version.path,
+                        version.content_sha256,
+                        raw,
+                    )
+
+    async def _recover_native(
+        self,
+        storage: WorkspaceOutputUploadClient,
+        request: RunRequest,
+        lease: LeaseFence,
+        guard: WorkspaceOutputGuard | None,
+    ) -> None:
+        # Never accumulate multiple raw postimages in Python or reopen the file.
+        async with connect_pg(self._context.database_url) as conn, conn.cursor() as cur:
+            await execute_sql(
+                cur,
+                f"""SELECT version_id FROM {self._table}
+                WHERE run_id=%s AND pending_bytes IS NOT NULL AND source_generation<=%s
+                ORDER BY created_at,version_id LIMIT %s""",
+                (request.run_id, lease.generation, MAX_OUTPUT_VERSIONS + 1),
+            )
+            versions = await fetch_all(cur)
+        if len(versions) > MAX_OUTPUT_VERSIONS:
+            raise RuntimeError("native workspace output version budget exceeded")
+        journal = qualified(self._context.schema, TOOL_JOURNAL_TABLE)
+        for version in versions:
+            if not await self._runs.is_lease_current(request.run_id, lease):
+                return
+            version_id = version["version_id"]
+            async with (
+                connect_pg(self._context.database_url) as conn,
+                conn.cursor() as cur,
+            ):
+                await execute_sql(
+                    cur,
+                    f"""SELECT v.path,v.content_sha256,v.size_bytes,v.pending_bytes
+                    FROM {self._table} v JOIN {journal} j USING (run_id,tool_call_id)
+                    WHERE v.run_id=%s AND v.version_id=%s AND v.pending_bytes IS NOT NULL
+                    AND v.source_generation<=%s AND j.name='write_file' AND j.status='succeeded'
+                    AND j.is_error=FALSE AND j.result='Updated file '||v.path""",
+                    (request.run_id, version_id, lease.generation),
+                )
+                row = await fetch_one(cur)
+            if row is None:
+                continue
+            path, digest, raw = row["path"], row["content_sha256"], row["pending_bytes"]
+            if (
+                not isinstance(version_id, str)
+                or not isinstance(path, str)
+                or output_path_digest(path) is None
+                or not isinstance(digest, str)
+                or not isinstance(raw, bytes)
+                or len(raw) != row["size_bytes"]
+                or len(raw) > MAX_OUTPUT_BYTES
+                or sha256(raw).hexdigest() != digest
+            ):
+                raise RuntimeError("native workspace output evidence differs")
+            if guard is not None and not await guard(path, raw):
+                continue
+            await self._publish(storage, request, lease, version_id, path, digest, raw)
 
     async def _publish(
         self,
         storage: WorkspaceOutputUploadClient,
         request: RunRequest,
         lease: LeaseFence,
-        version: WorkspaceVersion,
+        version_id: str,
+        path: str,
+        digest: str,
         raw: bytes,
     ) -> None:
-        args = (request.run_id, version.version_id)
+        args = (request.run_id, version_id)
         async with connect_pg(self._context.database_url) as conn, conn.cursor() as cur:
             await execute_sql(
                 cur,
@@ -430,9 +512,9 @@ class CheckpointWorkspaceOutputs:
             asset_id = await storage.upload_workspace_output(
                 request,
                 lease,
-                version.version_id,
-                version.path,
-                version.content_sha256,
+                version_id,
+                path,
+                digest,
                 raw,
                 selected,
                 freeze,
@@ -452,7 +534,7 @@ class CheckpointWorkspaceOutputs:
                     return
                 await execute_sql(
                     cur,
-                    f"""UPDATE {self._table} SET asset_id=%s
+                    f"""UPDATE {self._table} SET asset_id=%s,pending_bytes=NULL
                     WHERE run_id=%s AND version_id=%s AND upload_id IS NOT NULL
                     AND (asset_id IS NULL OR asset_id=%s) RETURNING version_id""",
                     (asset_id, *args, asset_id),

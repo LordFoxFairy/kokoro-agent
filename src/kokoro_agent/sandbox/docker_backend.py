@@ -172,6 +172,11 @@ class DockerShellBackend(LocalShellBackend):
             else None
         )
 
+    async def guard_workspace_output(self, path: str, content: bytes) -> bool:
+        if self._file_egress is None:
+            return True  # No Custom API execution environment was configured.
+        return await self._file_egress.aguard_snapshot(path, content)
+
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         if self._file_egress is not None:
             return self._file_egress.read(file_path, offset, limit)

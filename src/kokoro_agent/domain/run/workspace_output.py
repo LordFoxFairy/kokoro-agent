@@ -1,5 +1,7 @@
 """The frozen namespace for user-visible process output, not a general file API."""
 
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Literal, TypeAlias
 
@@ -11,6 +13,15 @@ OUTPUT_PROOF = "kokoro_workspace_output_path_sha256_v1"
 OUTPUT_METADATA = "kokoro_workspace_output_root"
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_OUTPUT_VERSIONS = 128
+WorkspaceOutputGuard: TypeAlias = Callable[[str, bytes], Awaitable[bool]]
+
+
+@dataclass(frozen=True, slots=True)
+class NativeWorkspaceWrite:
+    path: str
+    content: bytes = field(repr=False)
+
+
 WorkspaceOutputMime: TypeAlias = Literal[
     "text/plain", "text/markdown", "text/csv", "application/json"
 ]

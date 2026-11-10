@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -407,3 +408,109 @@ async def test_mcp_success_text_prefix_does_not_override_typed_status() -> None:
     assert isinstance(result, ToolMessage) and result.status == "success"
     assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
     assert store.tool_journal[("rn", "c1")]["is_error"] is False
+
+
+async def test_native_workspace_write_freezes_input_not_mutable_disk_or_credentials(
+    tmp_path: Path,
+) -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+    from pydantic import SecretStr
+
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
+    from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+    from support.deepagents import create_test_deep_agent
+    from support.local_fake import LocalFakeChatModel
+
+    marker = "local-test-credential"
+    safe_text = "原始\r\nreport\n"
+    path, private = "/outputs/report.md", "/outputs/second.md"
+
+    class Credentials:
+        async def acquire(
+            self, *, deadline_monotonic: float
+        ) -> tuple[tuple[str, SecretStr], ...]:
+            return (("TEST_API_KEY", SecretStr(marker)),)
+
+    class Captured(FakeRunRepository):
+        captures: dict[str, NativeWorkspaceWrite]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.captures = {}
+
+        async def journal_tool_finished(
+            self,
+            run_id: str,
+            lease: LeaseFence,
+            tool_call_id: str,
+            result: str,
+            is_error: bool,
+            *,
+            workspace_write: NativeWorkspaceWrite | None = None,
+        ) -> bool:
+            ok = await super().journal_tool_finished(
+                run_id, lease, tool_call_id, result, is_error
+            )
+            if ok and workspace_write is not None:
+                self.captures[tool_call_id] = workspace_write
+            return ok
+
+    store = Captured()
+    run = request("workspace-external")
+    lease = await store.try_claim(run)
+    assert lease is not None
+    thread = RunScope.of(run).scoped_thread_id
+    backend = DockerShellBackend(
+        root=tmp_path,
+        container_id="not-started",
+        timeout=2,
+        max_output_bytes=2048,
+        environment_provider=Credentials(),
+    )
+    journal = ToolEffectJournalMiddleware(
+        run_repository=store, run_id=run.run_id, lease=lease
+    )
+    runnable = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "write_file",
+                            "id": "safe",
+                            "args": {"file_path": path, "content": safe_text},
+                        },
+                        {
+                            "name": "write_file",
+                            "id": "private",
+                            "args": {"file_path": private, "content": marker},
+                        },
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        ),
+        backend=backend,
+        checkpointer=InMemorySaver(),
+        middleware=[
+            journal.for_workspace_output(thread, backend.guard_workspace_output)
+        ],
+    )
+    stream = await runnable.astream_events(
+        {"messages": [HumanMessage(content="Write two test files")]},
+        version="v3",
+        config={"configurable": {"thread_id": thread}},
+        transformers=[],
+    )
+    async with stream:
+        assert not await stream.interrupted()
+    assert (tmp_path / "outputs/report.md").read_bytes() == safe_text.encode()
+    (tmp_path / "outputs/report.md").write_text("new mutable bytes")
+    assert store.captures == {
+        "safe": NativeWorkspaceWrite(path=path, content=safe_text.encode())
+    }
+    assert (await store.get_tool_journal(run.run_id, "private")) is not None
+    assert marker not in str(store.tool_journal)

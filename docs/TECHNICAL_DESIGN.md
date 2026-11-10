@@ -1,3 +1,9 @@
+## 2026-11-10 · A‑10 Docker/Local 原生 write_file 过程版本
+
+受信配置、普通单 peer Chat 的 Docker/Local 虚拟工作区才开 `/outputs/`。锁定 SDK `write_file` 的实际 ToolRuntime、原规范路径与成功 ACK 必须相符；原 UTF‑8 输入就是该原生写入的后像，不回读可变盘。Custom API Docker 复用现 FileEgress，原路径与原 bytes 在写入版本和接管上传前重新查凭据；拒绝不生成公开版本。`edit_file`、脚本和 E2B 不接本片。
+
+同一原 tool journal 完成事务在现活跃租约下冻结版本及 ≤8 MiB pending bytes；非 State 不造 checkpoint locator。接管只读同 Run 已成功 journal 的 exact bytes，再用原 Storage 命令及当前 lease 发布。CLEAN 绑定同一事务擦除 pending；失败、取消等终态删未公开 native 暂存，不碰 State 或已发布版本。无 API、第二表、事件或工作进程。
+
 ## Task A A‑10：State 过程输出捕获
 
 仅正常 Chat 单 State peer 的冻结配方启用 `/outputs/`；官方原生 write/edit 无审批/结果改写时，由真实 ToolNode/ToolRuntime 记录成功返回对应规范路径的 SHA 标记（私有 ToolMessage response metadata），不改回执正文或 artifact。独立 reader 只接受同 Run/代、根 namespace 且实际已提交的精确 parent→child files 版本变化，匹配同一 task 唯一成功标记和唯一 UTF‑8 后像。旧无标记不回填，临时、隐藏、敏感路径及冲突写不产版本。

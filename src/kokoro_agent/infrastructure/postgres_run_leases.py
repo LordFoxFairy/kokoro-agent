@@ -44,6 +44,7 @@ from kokoro_agent.infrastructure.schema import (
     RUN_USAGE_SEGMENTS_TABLE,
     RUN_RECEIPTS_TABLE,
     RUN_STEERS_TABLE,
+    WORKSPACE_OUTPUT_VERSIONS_TABLE,
 )
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     close_model_call_attempts_for_terminal,
@@ -807,6 +808,12 @@ class PostgresRunLeases:
                             fence_seq,
                             run_id,
                         ),
+                    )
+                    # Unpublished native bytes are only a recovery input for an active Run.
+                    await execute_sql(
+                        cur,
+                        f"DELETE FROM {qualified(self._context.schema, WORKSPACE_OUTPUT_VERSIONS_TABLE)} WHERE run_id=%s AND pending_bytes IS NOT NULL",
+                        (run_id,),
                     )
                     await self._context.queue_bound_sandbox_cleanup(cur, row, now=now)
                     return TerminalCommitResult(

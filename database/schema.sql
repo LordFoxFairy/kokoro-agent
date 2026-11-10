@@ -665,10 +665,10 @@ CREATE INDEX IF NOT EXISTS idx_checkpoint_observation_target
 CREATE TABLE IF NOT EXISTS kokoro_agent_workspace_output_version (
   run_id TEXT NOT NULL,
   version_id TEXT NOT NULL,
-  checkpoint_id TEXT NOT NULL,
-  parent_checkpoint_id TEXT NOT NULL,
+  checkpoint_id TEXT,
+  parent_checkpoint_id TEXT,
   source_generation BIGINT NOT NULL,
-  task_id TEXT NOT NULL,
+  task_id TEXT,
   tool_call_id TEXT NOT NULL,
   path TEXT NOT NULL,
   size_bytes BIGINT NOT NULL,
@@ -677,6 +677,7 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_workspace_output_version (
   upload_id TEXT,
   source_version_id TEXT,
   asset_id TEXT,
+  pending_bytes BYTEA,
   PRIMARY KEY (run_id, version_id),
   CONSTRAINT ck_workspace_output_storage CHECK (
     ((upload_id IS NULL AND source_version_id IS NULL) OR
@@ -687,9 +688,13 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_workspace_output_version (
   ),
   CONSTRAINT ck_workspace_output_version CHECK (
     version_id ~ '^wsv_[0-9a-f]{64}$' AND source_generation > 0
-    AND checkpoint_id <> parent_checkpoint_id AND length(run_id) > 0
-    AND length(checkpoint_id) > 0 AND length(parent_checkpoint_id) > 0
-    AND length(task_id) > 0 AND length(tool_call_id) > 0
+    AND length(run_id) > 0 AND length(tool_call_id) > 0
+    AND ((checkpoint_id IS NOT NULL AND parent_checkpoint_id IS NOT NULL AND task_id IS NOT NULL
+          AND length(checkpoint_id) > 0 AND length(parent_checkpoint_id) > 0 AND length(task_id) > 0
+          AND checkpoint_id <> parent_checkpoint_id AND pending_bytes IS NULL)
+         OR (checkpoint_id IS NULL AND parent_checkpoint_id IS NULL AND task_id IS NULL
+             AND ((asset_id IS NOT NULL AND pending_bytes IS NULL)
+                  OR (asset_id IS NULL AND pending_bytes IS NOT NULL AND octet_length(pending_bytes) = size_bytes))))
     AND octet_length(path) BETWEEN 10 AND 4096 AND left(path, 9) = '/outputs/'
     AND size_bytes BETWEEN 0 AND 8388608 AND content_sha256 ~ '^[0-9a-f]{64}$'
   )

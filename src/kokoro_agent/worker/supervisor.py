@@ -43,6 +43,7 @@ from kokoro_agent.worker.supervisor_context import (
     SandboxTeardown,
     SourceResolver,
     CheckpointRecovery,
+    WorkspaceOutputRecovery,
     TraceFactory,
 )
 from kokoro_agent.model.call_scope import (
@@ -88,7 +89,7 @@ class RunSupervisor(
         agent_builder: AgentBuilder,
         interaction_reader: InteractionReader,
         recover_steers: CheckpointRecovery | None = None,
-        recover_workspace_outputs: CheckpointRecovery | None = None,
+        recover_workspace_outputs: WorkspaceOutputRecovery | None = None,
         run_repository: RunRepository,
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,

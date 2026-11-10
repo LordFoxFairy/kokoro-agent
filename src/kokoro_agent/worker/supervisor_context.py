@@ -8,6 +8,7 @@ from typing import Never
 
 from langchain_core.runnables.config import RunnableConfig
 
+from kokoro_agent.domain.run.workspace_output import WorkspaceOutputGuard
 from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.infrastructure.checkpoint_interactions import InteractionReader
@@ -54,6 +55,9 @@ BackendResolver = Callable[[RunRequest], Backend]
 FeatureResolver = Callable[[str], Feature]
 SandboxTeardown = Callable[[SandboxBackendKind, str, str], Awaitable[None]]
 CheckpointRecovery = Callable[[RunRequest, LeaseFence], Awaitable[None]]
+WorkspaceOutputRecovery = Callable[
+    [RunRequest, LeaseFence, bool, WorkspaceOutputGuard | None], Awaitable[None]
+]
 ProcessFatal = Callable[[int], Never]
 
 
@@ -64,7 +68,7 @@ class SupervisorContext:
     _drained_attempts: dict[tuple[str, int, str], str]
     _interaction_reader: InteractionReader
     _recover_steers: CheckpointRecovery | None
-    _recover_workspace_outputs: CheckpointRecovery | None
+    _recover_workspace_outputs: WorkspaceOutputRecovery | None
     _resume_attempts: dict[str, tuple[str, StartedResume]]
     _build: AgentBuilder
     _run_repository: RunRepository

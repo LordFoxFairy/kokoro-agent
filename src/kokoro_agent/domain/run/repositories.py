@@ -8,6 +8,7 @@ coupling itself to the complete execution persistence surface.
 
 from __future__ import annotations
 
+from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
 from kokoro_agent.domain.run.models import (
     StaticRecipeBinding,
     RunTerminalOutcome,
@@ -248,6 +249,8 @@ class RunEffectPort(Protocol):
         tool_call_id: str,
         result: str,
         is_error: bool,
+        *,
+        workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool: ...
 
     async def clear_tool_journal(

@@ -31,15 +31,20 @@ class GuardChains:
     steering: AgentMiddleware
     review: AgentMiddleware | None
     # R3 tool effect journal：恒挂在 tool-call 链最内层（最靠近副作用），主链与子代理链同下发。
-    journal: AgentMiddleware
+    journal: ToolEffectJournalMiddleware
 
-    def main(self, policy: ToolPolicyMiddleware) -> tuple[AgentMiddleware, ...]:
+    def main(
+        self,
+        policy: ToolPolicyMiddleware,
+        *,
+        workspace_journal: ToolEffectJournalMiddleware | None = None,
+    ) -> tuple[AgentMiddleware, ...]:
         # 主链顺序：守卫 → steering → policy → review → journal。policy 在 review 外层：
         # 先拦未授权调用，才轮到已授权调用的结果送审；journal 最内层守门真正的工具执行。
         chain: list[AgentMiddleware] = [*self.guards, self.steering, policy]
         if self.review is not None:
             chain.append(self.review)
-        chain.append(self.journal)
+        chain.append(workspace_journal or self.journal)
         return tuple(chain)
 
 

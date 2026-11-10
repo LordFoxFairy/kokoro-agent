@@ -51,6 +51,7 @@ class RuntimeAssemblyPolicy:
     openai_reasoning: bool
     model_allow_loopback_http: bool
     backend_recipes: tuple[tuple[str, bytes], ...]
+    workspace_root_configured: bool = False
 
     def __post_init__(self) -> None:
         if type(self.run_token_budget) is not int or self.run_token_budget < 0:
@@ -295,12 +296,19 @@ def prepare_feature(
             for descriptor in selected_tools
         )
         permissions = agent.permissions
+        native_write = (
+            agent.backend in {"docker", "local_shell"}
+            and runtime_policy.workspace_root_configured
+        )
         output_root = (
             OUTPUT_ROOT
             if feature.key == "chat"
             and len(feature.agents) == 1
-            and agent.backend == "state"
-            and not OUTPUT_TOOLS.intersection(
+            and (
+                agent.backend == "state"
+                or (native_write and permissions.filesystem == "workspace_write")
+            )
+            and not (OUTPUT_TOOLS if not native_write else {"write_file"}).intersection(
                 (
                     *permissions.approval_tools,
                     *permissions.review_tools,

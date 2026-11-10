@@ -171,6 +171,28 @@ class FileEgress:
                 FileDownloadResponse(path="", error="permission_denied") for _ in paths
             ]
 
+    async def aguard_snapshot(self, path: str, content: bytes) -> bool:
+        """Inspect an already-frozen postimage without reopening the workspace."""
+
+        def verify(
+            inspect: Callable[[bytes], None],
+            _deadline: float,
+            _cancelled: threading.Event,
+        ) -> None:
+            relative_path(path)
+            if len(content) > MAX_FILE_BYTES:
+                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            inspect(path.encode("utf-8"))
+            inspect(content)
+
+        try:
+            await self.runner.aguard(self.timeout, verify)
+        except ExecutionBoundaryError as error:
+            if str(error) != "sandbox_file_denied":
+                raise
+            return False
+        return True
+
     @staticmethod
     def project(
         response: FileDownloadResponse, path: str, offset: int, limit: int

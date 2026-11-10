@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.14.0"
+    "version": "8.15.0"
   },
   "servers": [
     {
@@ -439,7 +439,7 @@
             "maxItems": 16,
             "uniqueItems": true,
             "x-kokoro-json-byte-limit": 32768,
-            "description": "Private owner-resolved inputs frozen by BFF, unique by kind/resource_id in original order. Asset resource_id equals asset_id; personal source scope matches the trusted user subject, project source scope matches launch project_ref. Artifact source conversation and source_run_id are provenance, not the consumer run_id or authority. No version_id, URL or content. Omission or [] preserves prior request bytes. Canonical ASCII JSON is limited to 32768 bytes.",
+            "description": "Private owner-resolved inputs frozen by BFF, unique by kind/resource_id in original order. Asset resource_id equals asset_id; personal source scope matches the trusted user subject, project source scope matches launch project_ref. Artifact source conversation and source_run_id are provenance, not the consumer run_id or authority. Asset and artifact have no inline content. Final answer is only for a user chat Run and resource_id is its source assistant Message ID; exact source conversation, Run, final segment and revision are provenance, not the consumer identity. Its unmodified UTF-8 text, size and SHA-256 must agree. No version_id, URL or additional identity. Omission or [] preserves prior request bytes. Canonical ASCII JSON is limited to 32768 bytes.",
             "items": {
               "oneOf": [
                 {
@@ -615,6 +615,91 @@
                       "minLength": 1,
                       "maxLength": 191,
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "resource_id",
+                    "source_scope",
+                    "source_run_id",
+                    "source_final_segment_id",
+                    "source_revision",
+                    "content",
+                    "content_sha256",
+                    "size_bytes"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "final_answer"
+                    },
+                    "resource_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+                    },
+                    "source_scope": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "id"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "conversation"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 191,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+                        }
+                      }
+                    },
+                    "source_run_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 191,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,190}(?![\\s\\S])"
+                    },
+                    "source_final_segment_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000\\uD800-\\uDFFF]{1,255}(?![\\s\\S])"
+                    },
+                    "source_revision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 19,
+                      "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)(?![\\s\\S])"
+                    },
+                    "content": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 24576,
+                      "pattern": "^[^\\u0000\\uD800-\\uDFFF]+(?![\\s\\S])",
+                      "x-kokoro-utf8-max-bytes": 24576
+                    },
+                    "content_sha256": {
+                      "type": "string",
+                      "minLength": 64,
+                      "maxLength": 64,
+                      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                    },
+                    "size_bytes": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 5,
+                      "pattern": "^(?:[1-9][0-9]{0,3}|1[0-9]{4}|2[0-3][0-9]{3}|24[0-4][0-9]{2}|245[0-6][0-9]{1}|2457[0-5]|24576)(?![\\s\\S])"
                     }
                   }
                 }

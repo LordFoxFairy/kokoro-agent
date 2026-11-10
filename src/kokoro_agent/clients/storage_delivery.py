@@ -31,7 +31,7 @@ from kokoro_agent.generated.kokoro.common.v1.common_pb import CommandIdentity
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.clients.storage_transport import DeliveryTransport
 from kokoro_agent.protocol import ArtifactKind, RunRequest
-from kokoro_agent.protocol.control import SelectedResourceRef
+from kokoro_agent.protocol.control import StorageResourceRef
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _Response = TypeVar("_Response")
@@ -381,7 +381,7 @@ class StorageDeliveryClient:
 
     async def _read_canonical(
         self, request: InputResourceReadRequest
-    ) -> tuple[RunRequest, SelectedResourceRef]:
+    ) -> tuple[RunRequest, StorageResourceRef]:
         task = asyncio.current_task()
         if task is not None and task.cancelling():
             raise asyncio.CancelledError
@@ -395,7 +395,11 @@ class StorageDeliveryClient:
         if run.execution_identity.subject.kind != "user":
             raise StorageClientError("INPUT_READ_CONTEXT_INVALID")
         reference = next(
-            (ref for ref in run.selected_resource_refs if ref == request.reference),
+            (
+                ref
+                for ref in run.selected_resource_refs
+                if ref.kind != "final_answer" and ref == request.reference
+            ),
             None,
         )
         if reference is None:
@@ -408,7 +412,7 @@ class StorageDeliveryClient:
         self,
         request: InputResourceReadRequest,
         run: RunRequest,
-        reference: SelectedResourceRef,
+        reference: StorageResourceRef,
         method: str,
         message: object,
     ) -> object:

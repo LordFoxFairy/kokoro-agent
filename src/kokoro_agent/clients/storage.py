@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity
-from kokoro_agent.protocol.control import SelectedResourceRef
+from kokoro_agent.protocol.control import StorageResourceRef
 
 
 class StorageClientError(RuntimeError):
@@ -77,7 +77,7 @@ class InputResourceReadRequest(BaseModel):
     request_id: str
     run_id: str
     identity: ExecutionIdentity
-    reference: SelectedResourceRef
+    reference: StorageResourceRef
     lease: LeaseFence
 
 

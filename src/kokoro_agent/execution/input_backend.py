@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import fnmatch
+import hashlib
 import json
 from collections.abc import Sequence
 
@@ -29,8 +31,13 @@ from kokoro_agent.clients.storage import (
     StorageClientError,
 )
 from kokoro_agent.domain.run.models import LeaseFence
+from kokoro_agent.domain.run.repositories import RunLifecyclePort
 from kokoro_agent.protocol import RunRequest
-from kokoro_agent.protocol.control import SelectedResourceRef
+from kokoro_agent.protocol.control import (
+    FINAL_ANSWER_MAX_BYTES,
+    FinalAnswerResourceRef,
+    SelectedResourceRef,
+)
 
 INPUTS_ROOT = "/.inputs/"
 
@@ -41,8 +48,12 @@ def input_resource_prompt(refs: Sequence[SelectedResourceRef]) -> str:
     metadata = [
         {
             "path": f"{INPUTS_ROOT}{index}",
-            "filename": ref.filename,
-            "mime_type": ref.mime_type,
+            "filename": "final-answer.md"
+            if ref.kind == "final_answer"
+            else ref.filename,
+            "mime_type": "text/markdown"
+            if ref.kind == "final_answer"
+            else ref.mime_type,
             "size_bytes": ref.size_bytes,
         }
         for index, ref in enumerate(refs)
@@ -58,17 +69,23 @@ def input_resource_prompt(refs: Sequence[SelectedResourceRef]) -> str:
 class InputResourceBackend(BackendProtocol):
     """CompositeBackend strips /.inputs/; only stable index paths are readable.
 
-    No bytes are retained here. Each read revalidates the persistent manifest,
-    current lease and live Storage resource through the worker-owned reader.
-    Storage failures propagate to the native graph, never an empty file result.
+    No separate body cache. Each read revalidates the persistent manifest
+    and current lease; Storage-backed refs also revalidate their live owner.
+    Read failures propagate to the native graph, never an empty file result.
     """
 
     def __init__(
-        self, request: RunRequest, lease: LeaseFence, reader: InputResourceReadClient
+        self,
+        request: RunRequest,
+        lease: LeaseFence,
+        reader: InputResourceReadClient | None,
+        *,
+        runs: RunLifecyclePort | None = None,
     ) -> None:
         self._request = request
         self._lease = lease
         self._reader = reader
+        self._runs = runs
         self._refs = {
             f"/{index}": ref for index, ref in enumerate(request.selected_resource_refs)
         }
@@ -77,6 +94,10 @@ class InputResourceBackend(BackendProtocol):
         reference = self._refs.get(path)
         if reference is None:
             return None
+        if reference.kind == "final_answer":
+            return await self._frozen_answer(int(path[1:]), reference)
+        if self._reader is None:
+            raise StorageClientError("INPUT_READER_UNAVAILABLE")
         receipt = await self._reader.read_input(
             InputResourceReadRequest(
                 request_id=self._request.request_id or self._request.run_id,
@@ -87,6 +108,46 @@ class InputResourceBackend(BackendProtocol):
             )
         )
         return receipt.content
+
+    async def _frozen_answer(
+        self, slot: int, reference: FinalAnswerResourceRef
+    ) -> bytes:
+        if self._runs is None:
+            raise StorageClientError("INPUT_READER_UNAVAILABLE")
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+        consuming = self._request
+        durable = await self._runs.get_request(consuming.run_id)
+        if (
+            durable is None
+            or durable.run_id != consuming.run_id
+            or durable.session_id != consuming.session_id
+            or durable.execution_identity != consuming.execution_identity
+        ):
+            raise StorageClientError("INPUT_RUN_MISMATCH")
+        if (
+            durable.execution_identity.subject.kind != "user"
+            or durable.feature_key != "chat"
+        ):
+            raise StorageClientError("INPUT_READ_CONTEXT_INVALID")
+        if slot >= len(durable.selected_resource_refs):
+            raise StorageClientError("INPUT_RESOURCE_NOT_SELECTED")
+        frozen = durable.selected_resource_refs[slot]
+        if frozen.kind != "final_answer" or frozen != reference:
+            raise StorageClientError("INPUT_RESOURCE_NOT_SELECTED")
+        if not await self._runs.is_lease_current(consuming.run_id, self._lease):
+            raise StorageClientError("INPUT_LEASE_STALE")
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+        content = frozen.content.encode("utf-8")
+        if (
+            not 0 < len(content) <= FINAL_ANSWER_MAX_BYTES
+            or str(len(content)) != frozen.size_bytes
+            or hashlib.sha256(content).hexdigest() != frozen.content_sha256
+        ):
+            raise StorageClientError("INPUT_READ_CONTENT_MISMATCH")
+        return content
 
     async def als(self, path: str) -> LsResult:
         if path != "/":

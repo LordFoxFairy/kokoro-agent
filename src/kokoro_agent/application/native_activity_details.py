@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from deepagents.backends.utils import validate_path
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from pydantic import TypeAdapter, ValidationError
 
@@ -71,6 +72,7 @@ def native_activity_details(
     messages: Sequence[BaseMessage],
     allowed: tuple[str, ...],
     journal: Mapping[str, ToolJournalRecord],
+    final_answer_paths: frozenset[str] = frozenset(),
 ) -> list[ActivityDetail]:
     """Pair original typed call/result with the existing opaque activity identity.
 
@@ -141,15 +143,16 @@ def native_activity_details(
         arguments = {
             key: value for key, value in args.items() if key in _ARGUMENTS[name]
         }
-        input_preview = preview(arguments, limit=2048)
-        if input_preview is not None:
-            values["input_preview"] = input_preview
-        # Native text only. Non-text blocks/artifacts are not arbitrary raw dumps.
-        content = output.model_dump().get("content")
-        if isinstance(content, str):
-            output_preview = preview(content, limit=4096, plain=True)
-            if output_preview is not None:
-                values["output_preview"] = output_preview
+        if not _reads_final_answer(name, arguments, final_answer_paths):
+            input_preview = preview(arguments, limit=2048)
+            if input_preview is not None:
+                values["input_preview"] = input_preview
+            # Native text only. Non-text blocks/artifacts are not arbitrary raw dumps.
+            content = output.model_dump().get("content")
+            if isinstance(content, str):
+                output_preview = preview(content, limit=4096, plain=True)
+                if output_preview is not None:
+                    values["output_preview"] = output_preview
         raw_target = activity.get("display_detail")
         if raw_target is not None and name in {"read_file", "write_file", "edit_file"}:
             target = ToolDisplayDetail.model_validate(raw_target)
@@ -157,3 +160,26 @@ def native_activity_details(
                 values["target"] = target
         result.append(ActivityDetail.model_validate(values))
     return result
+
+
+def _reads_final_answer(
+    tool: str, args: Mapping[str, object], final_answer_paths: frozenset[str]
+) -> bool:
+    if not final_answer_paths or tool not in {"read_file", "grep"}:
+        return False
+    raw = args.get("file_path" if tool == "read_file" else "path")
+    if raw is None:
+        return tool == "grep"  # CompositeBackend searches every mount by default.
+    if not isinstance(raw, str):
+        return False
+    try:
+        path = validate_path(raw)
+    except ValueError:
+        return False
+    return path in final_answer_paths or (
+        tool == "grep"
+        and (
+            path == "/"
+            or any(item.rpartition("/")[0] == path for item in final_answer_paths)
+        )
+    )

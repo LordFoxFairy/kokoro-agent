@@ -113,6 +113,7 @@ def recover_display(
     journal_records: Mapping[str, ToolJournalRecord] | None = None,
     mcp_connections: tuple[str, ...] = (),
     native_tools: tuple[str, ...] = (),
+    final_answer_paths: frozenset[str] = frozenset(),
 ) -> RunDisplay:
     """Intersect native facts with original ready/activity and real journal IDs.
 
@@ -229,6 +230,7 @@ def recover_display(
             journal_records or {},
             mcp_connections,
             native_tools,
+            final_answer_paths,
         ),
         tool_facts=_mcp_facts(
             scope,
@@ -329,6 +331,7 @@ def _activity_details(
     journal: Mapping[str, ToolJournalRecord],
     connections: tuple[str, ...],
     native_tools: tuple[str, ...] = (),
+    final_answer_paths: frozenset[str] = frozenset(),
 ) -> list[ActivityDetail]:
     codes = {
         "mcp_call": "tool.mcp.call",
@@ -446,7 +449,7 @@ def _activity_details(
         {
             item.activity_id: item
             for item in native_activity_details(
-                scope, activities, messages, native_tools, journal
+                scope, activities, messages, native_tools, journal, final_answer_paths
             )
         }
     )

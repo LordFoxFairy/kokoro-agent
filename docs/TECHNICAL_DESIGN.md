@@ -1,3 +1,9 @@
+## 2026-11-09 A‑08 历史最终答复只读输入（HTTP 8.15 候选）
+
+BFF 在接收前验证本人同范围的持久最终段并冻结，Agent 不再读取源会话或 Storage。现 `/.inputs/{index}` 在每次取原文字节前对照 consuming Run 已存 manifest 的相同索引、可信身份和当前 lease，并重核长度及 SHA‑256；final-only 无需 Storage reader。混合选择保原顺序，原 Asset/FINAL Artifact 继续走实时 Storage 验权。路径只用稳定索引；静态 `final-answer.md` / `text/markdown` 为模型文件提示，不是 owner 字段或输入内容。
+
+正文不加入系统提示、公开 Message/AG‑UI 或 trace；需要原文时走原生只读工具。私有 RunDisplay 对指向该答复的原生 read_file 和可能搜索该挂载的 grep 隐藏参数/输出预览，保活动身份和其他工具详情。无新网络读取、表或服务；真实跨 owner / 浏览器旅程由主控另验。
+
 ## 2026-11-09 A-08 只读输入运行接线（HTTP8.14，待真实组合验收）
 
 Worker 复用一个 Storage transport/client 同时处理交付与选中输入，不增加服务、令牌或数据表。`InputResourceReadClient.read_input` 只接受持久 Run 中完全相同的 canonical 引用及当前 consumer lease；source Run 只用于 FINAL 来源。每项下载命令绑定 consumer Run 和完整引用，同项重放稳定、多项互不冲突。RPC 后及 GET 后重新核对 manifest/lease，并核对实际长度和 SHA；Asset 响应另核 CLEAN、MIME 和长度。

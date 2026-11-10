@@ -301,8 +301,58 @@ class ArtifactResourceRef(ResourceMetadata):
         return value
 
 
-SelectedResourceRef = Annotated[
+FINAL_ANSWER_MAX_BYTES = 24 * 1024
+
+
+class FinalAnswerResourceRef(ResourceRefModel):
+    """One BFF-owned final text frozen for this consuming Run."""
+
+    kind: Literal["final_answer"]
+    resource_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+    source_scope: ArtifactSourceScope
+    source_run_id: Annotated[str, StringConstraints(min_length=1, max_length=191)]
+    source_final_segment_id: Annotated[
+        str, StringConstraints(min_length=1, max_length=255)
+    ]
+    source_revision: Annotated[str, StringConstraints(min_length=1, max_length=19)]
+    content: Annotated[
+        str, StringConstraints(min_length=1, max_length=FINAL_ANSWER_MAX_BYTES)
+    ] = Field(repr=False)
+    content_sha256: Annotated[str, StringConstraints(min_length=64, max_length=64)]
+    size_bytes: Annotated[str, StringConstraints(min_length=1, max_length=5)]
+
+    @field_validator("resource_id", "source_run_id")
+    @classmethod
+    def _opaque_id(cls, value: str) -> str:
+        if _MCP_CONNECTION_ID.fullmatch(value) is None:
+            raise ValueError("invalid final answer source identity")
+        return value
+
+    @field_validator("source_revision")
+    @classmethod
+    def _source_revision(cls, value: str) -> str:
+        if re.fullmatch(r"[1-9][0-9]*", value) is None or int(value) > (1 << 63) - 1:
+            raise ValueError("invalid final answer source revision")
+        return value
+
+    @model_validator(mode="after")
+    def _frozen_content(self) -> FinalAnswerResourceRef:
+        content = self.content.encode("utf-8")
+        if (
+            not 0 < len(content) <= FINAL_ANSWER_MAX_BYTES
+            or self.size_bytes != str(len(content))
+            or self.content_sha256 != hashlib.sha256(content).hexdigest()
+        ):
+            raise ValueError("invalid frozen final answer content")
+        return self
+
+
+StorageResourceRef = Annotated[
     AssetResourceRef | ArtifactResourceRef, Field(discriminator="kind")
+]
+SelectedResourceRef = Annotated[
+    AssetResourceRef | ArtifactResourceRef | FinalAnswerResourceRef,
+    Field(discriminator="kind"),
 ]
 
 
@@ -369,6 +419,10 @@ class RunRequest(StrictModel):
             or self.project_instruction is not None
             or bool(self.selected_resource_refs)
         )
+
+    @property
+    def has_storage_selected_inputs(self) -> bool:
+        return any(ref.kind != "final_answer" for ref in self.selected_resource_refs)
 
     @field_validator("project_instruction")
     @classmethod
@@ -454,6 +508,10 @@ class RunRequest(StrictModel):
                 raise ValueError("personal resource differs from trusted subject")
             if scope.kind == "project" and scope.id != self.project_ref:
                 raise ValueError("resource differs from launch Project")
+            if ref.kind == "final_answer" and (
+                subject.kind != "user" or self.feature_key != "chat"
+            ):
+                raise ValueError("final answer requires a user chat Run")
         return self
 
     @field_validator("selected_mcp_connection_ids", mode="before")

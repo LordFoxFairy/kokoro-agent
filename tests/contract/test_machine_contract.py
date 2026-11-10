@@ -41,7 +41,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "8.12.0"
+    assert _object(document["info"])["version"] == "8.15.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -562,13 +562,13 @@ def test_owner_checker_rejects_relaxed_hitl_required_fields(
 
 
 # R95 HTTP5 target assertions are additive: HTTP4 baseline assertions above remain.
-def test_current_http7_and_proof2_versions_are_explicit() -> None:
+def test_current_http_and_proof2_versions_are_explicit() -> None:
     document = _document()
     proof = _object(
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "8.12.0"
+    assert _object(document["info"])["version"] == "8.15.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -1289,12 +1289,19 @@ def test_canonical_resource_launch_preserves_complete_http813_parent() -> None:
     import hashlib
     from kokoro_agent.chat_contract_check import (
         http813_canonical_resources_parent_bytes,
+        http814_final_answer_parent_bytes,
     )
 
     document = _document()
-    assert _object(document["info"])["version"] == "8.14.0"
+    assert _object(document["info"])["version"] == "8.15.0"
+    parent = http814_final_answer_parent_bytes(document)
+    assert hashlib.sha256(parent).hexdigest() == (
+        "6d33f1110e354570ec2977d18b4620ba7e44be9174e1d8d6ceeb7234b76be424"
+    )
     assert (
-        hashlib.sha256(http813_canonical_resources_parent_bytes(document)).hexdigest()
+        hashlib.sha256(
+            http813_canonical_resources_parent_bytes(json.loads(parent))
+        ).hexdigest()
         == "873da626bd2924c494a1c885d7bdad248f85498b639439d9852e5f24dfa084ba"
     )
     schema = _object(
@@ -1319,11 +1326,23 @@ def test_canonical_resource_launch_preserves_complete_http813_parent() -> None:
         "source_scope": {"kind": "conversation", "id": "source-session"},
         "source_run_id": "source-run",
     }
+    answer = {
+        "kind": "final_answer",
+        "resource_id": "assistant-message",
+        "source_scope": {"kind": "conversation", "id": "source-session"},
+        "source_run_id": "source-run",
+        "source_final_segment_id": "seg:𠮷",
+        "source_revision": "9223372036854775807",
+        "content": "字\n",
+        "content_sha256": hashlib.sha256("字\n".encode()).hexdigest(),
+        "size_bytes": "4",
+    }
     for refs in (
         [],
         [asset],
         [artifact],
         [asset, artifact],
+        [asset, answer, artifact],
         [{**asset, "size_bytes": "18446744073709551615"}],
     ):
         validate(refs, selection)
@@ -1340,17 +1359,26 @@ def test_canonical_resource_launch_preserves_complete_http813_parent() -> None:
         [{**asset, "filename": "bad\x00"}],
         [{**artifact, "source_scope": {"kind": "project", "id": "project-1"}}],
         [{key: value for key, value in artifact.items() if key != "source_run_id"}],
+        [{**answer, "asset_id": "asset-1"}],
+        [{**answer, "source_scope": {"kind": "personal", "id": "subject"}}],
+        [{**answer, "source_final_segment_id": "x" * 256}],
+        [{**answer, "source_final_segment_id": "\x00"}],
+        [{**answer, "source_revision": "9223372036854775808"}],
+        [{**answer, "source_revision": "01"}],
+        [{**answer, "content": ""}],
+        [{**answer, "content": "x\x00"}],
+        [{**answer, "size_bytes": "24577"}],
     ):
         with pytest.raises(SchemaValidationError):
             validate(invalid, selection)
 
 
 @pytest.mark.parametrize("mutation", ["budget", "shape", "unrelated"])
-def test_canonical_resource_parent_rejects_schema_and_unrelated_drift(
+def test_final_answer_parent_rejects_schema_and_unrelated_drift(
     mutation: str,
 ) -> None:
     from kokoro_agent.chat_contract_check import (
-        http813_canonical_resources_parent_bytes,
+        http814_final_answer_parent_bytes,
     )
 
     document = _document()
@@ -1373,4 +1401,4 @@ def test_canonical_resource_parent_rejects_schema_and_unrelated_drift(
     components["schemas"] = schemas
     document["components"] = components
     with pytest.raises(ValueError):
-        http813_canonical_resources_parent_bytes(document)
+        http814_final_answer_parent_bytes(document)

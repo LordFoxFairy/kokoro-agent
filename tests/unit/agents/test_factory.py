@@ -3377,17 +3377,26 @@ async def test_factory_fails_closed_before_owner_model_or_backend_io(
     assert repository.static_recipes == {}
 
 
-@pytest.mark.parametrize("read_fails", [False, True])
+@pytest.mark.parametrize(
+    ("source", "read_fails"),
+    [("asset", False), ("asset", True), ("final_answer", False)],
+)
 async def test_selected_input_native_factory_reads_or_fails_without_success_final(
     monkeypatch: pytest.MonkeyPatch,
+    source: str,
     read_fails: bool,
 ) -> None:
     """Real SDK file-tool errors must escape the graph rather than yield a fake answer."""
     import hashlib
-    from kokoro_agent.protocol.control import AssetResourceRef, AssetSourceScope
+    from kokoro_agent.protocol.control import (
+        ArtifactSourceScope,
+        AssetResourceRef,
+        AssetSourceScope,
+        FinalAnswerResourceRef,
+    )
 
     content = b"private selected input bytes"
-    selected = AssetResourceRef(
+    asset = AssetResourceRef(
         kind="asset",
         resource_id="asset-1",
         asset_id="asset-1",
@@ -3396,6 +3405,21 @@ async def test_selected_input_native_factory_reads_or_fails_without_success_fina
         filename="user file.txt",
         mime_type="text/plain",
         source_scope=AssetSourceScope(kind="personal", id="subject"),
+    )
+    selected = (
+        asset
+        if source == "asset"
+        else FinalAnswerResourceRef(
+            kind="final_answer",
+            resource_id="source-message",
+            source_scope=ArtifactSourceScope(kind="conversation", id="source-session"),
+            source_run_id="source-run",
+            source_final_segment_id="source-final-segment",
+            source_revision="17",
+            content=content.decode(),
+            content_sha256=asset.content_sha256,
+            size_bytes=asset.size_bytes,
+        )
     )
     calls: list[InputResourceReadRequest] = []
 
@@ -3407,9 +3431,9 @@ async def test_selected_input_native_factory_reads_or_fails_without_success_fina
             if read_fails:
                 raise StorageClientError("STORAGE_INPUT_REVOKED")
             return InputResourceReadReceipt(
-                resource_id=selected.resource_id,
-                asset_id=selected.asset_id,
-                content_sha256=selected.content_sha256,
+                resource_id=asset.resource_id,
+                asset_id=asset.asset_id,
+                content_sha256=asset.content_sha256,
                 content=content,
             )
 
@@ -3433,7 +3457,7 @@ async def test_selected_input_native_factory_reads_or_fails_without_success_fina
     factory, repository = _factory(
         monkeypatch,
         InputResolver(),
-        input_reader=Reader(),
+        input_reader=Reader() if source == "asset" else None,
         isolate_model_call_gate_for_unrelated_unit_scope=True,
     )
     script = [
@@ -3492,7 +3516,10 @@ async def test_selected_input_native_factory_reads_or_fails_without_success_fina
             isinstance(message, AIMessage) and message.text == "normal success final"
             for message in state.values["messages"]
         ) is (not read_fails)
-        assert len(calls) == 1
-        assert calls[0].reference == selected
+        if source == "asset":
+            assert len(calls) == 1
+            assert calls[0].reference == selected
+        else:
+            assert not calls
     finally:
         await handle.aclose()

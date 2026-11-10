@@ -189,7 +189,7 @@ async def _preflight(
     progress: SkillProgressSink,
     before_load: Callable[[], Awaitable[None]],
 ) -> _ResolvedCapabilities:
-    if request.selected_resource_refs and dependencies.input_reader is None:
+    if request.has_storage_selected_inputs and dependencies.input_reader is None:
         raise StorageClientError("INPUT_READER_UNAVAILABLE")
     skills: tuple[ResolvedSkill, ...] = ()
     reader: SkillClient | None = None
@@ -330,10 +330,11 @@ async def build_deep_agent(
         skill_backend = TypedSkillBackend(resolved_skills, capabilities.skill_reader)
         input_backend = None
         if request.selected_resource_refs:
-            if dependencies.input_reader is None:
-                raise StorageClientError("INPUT_READER_UNAVAILABLE")
             input_backend = InputResourceBackend(
-                request, lease, dependencies.input_reader
+                request,
+                lease,
+                dependencies.input_reader,
+                runs=dependencies.run_repository,
             )
         native_backend = _with_native_routes(backend, skill_backend, input_backend)
         toolset = await build_toolset(

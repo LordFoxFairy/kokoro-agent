@@ -17,7 +17,10 @@ from kokoro_agent.execution_proof_contract import (
 )
 from kokoro_agent.bff_admission_contract import GENERATED as BFF_BUDGET_GENERATED
 from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolActivity
-from kokoro_agent.protocol.control import PROJECT_INSTRUCTION_PATTERN
+from kokoro_agent.protocol.control import (
+    FINAL_ANSWER_MAX_BYTES,
+    PROJECT_INSTRUCTION_PATTERN,
+)
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -571,10 +574,10 @@ def failure_model_bytes(
     document: dict[str, object], *, source_sha256: str = ""
 ) -> bytes:
     """Compile only the approved two failure profiles; reject unsupported shapes."""
-    if (
-        _object(document.get("info"), source="info").get("version")
-        == HTTP_CONTRACT_VERSION
-    ):
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.14.0",
+        HTTP_CONTRACT_VERSION,
+    }:
         document = _object(
             json.loads(http812_resource_refs_parent_bytes(document)),
             source="HTTP8.12 resource refs parent",
@@ -829,7 +832,7 @@ def validate_decoded_chat_payload(
     profiles = (
         _CURRENT_DECODED_PROFILES
         if _object(document.get("info"), source="info").get("version")
-        in {"8.8.0", "8.9.0", "8.10.0", "8.11.0", HTTP_CONTRACT_VERSION}
+        in {"8.8.0", "8.9.0", "8.10.0", "8.11.0", "8.14.0", HTTP_CONTRACT_VERSION}
         else _DECODED_PROFILES
     )
     if event_type not in profiles:
@@ -1643,12 +1646,112 @@ _CANONICAL_RESOURCE_REFS_SCHEMA = {
 }
 
 
+_FINAL_ANSWER_RESOURCE_FIELDS = {
+    "kind": {"type": "string", "const": "final_answer"},
+    "resource_id": _RESOURCE_ID_SCHEMA,
+    "source_scope": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["kind", "id"],
+        "properties": {
+            "kind": {"type": "string", "enum": ["conversation"]},
+            "id": _RESOURCE_ID_SCHEMA,
+        },
+    },
+    "source_run_id": _RESOURCE_ID_SCHEMA,
+    "source_final_segment_id": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": r"^[^\u0000\uD800-\uDFFF]{1,255}(?![\s\S])",
+    },
+    "source_revision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 19,
+        "pattern": r"^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)(?![\s\S])",
+    },
+    "content": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": FINAL_ANSWER_MAX_BYTES,
+        "pattern": r"^[^\u0000\uD800-\uDFFF]+(?![\s\S])",
+        "x-kokoro-utf8-max-bytes": FINAL_ANSWER_MAX_BYTES,
+    },
+    "content_sha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": r"^[a-f0-9]{64}(?![\s\S])",
+    },
+    "size_bytes": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 5,
+        "pattern": r"^(?:[1-9][0-9]{0,3}|1[0-9]{4}|2[0-3][0-9]{3}|24[0-4][0-9]{2}|245[0-6][0-9]{1}|2457[0-5]|24576)(?![\s\S])",
+    },
+}
+_FINAL_ANSWER_RESOURCE_REFS_SCHEMA = {
+    **_CANONICAL_RESOURCE_REFS_SCHEMA,
+    "description": (
+        "Private owner-resolved inputs frozen by BFF, unique by kind/resource_id in original order. "
+        "Asset resource_id equals asset_id; personal source scope matches the trusted user subject, "
+        "project source scope matches launch project_ref. Artifact source conversation and source_run_id "
+        "are provenance, not the consumer run_id or authority. Asset and artifact have no inline content. "
+        "Final answer is only for a user chat Run and "
+        "resource_id is its source assistant Message ID; exact source conversation, Run, final segment "
+        "and revision are provenance, not the consumer identity. Its unmodified UTF-8 text, size and "
+        "SHA-256 must agree. No version_id, URL or additional identity. Omission or [] preserves prior "
+        "request bytes. Canonical ASCII JSON is limited to 32768 bytes."
+    ),
+    "items": {
+        "oneOf": [
+            _canonical_resource_schema("asset"),
+            _canonical_resource_schema("artifact"),
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(_FINAL_ANSWER_RESOURCE_FIELDS),
+                "properties": _FINAL_ANSWER_RESOURCE_FIELDS,
+            },
+        ]
+    },
+}
+
+
+def http814_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the frozen final answer branch and prove every issued 8.14 byte."""
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != HTTP_CONTRACT_VERSION:
+        raise ValueError("final answer requires the current Agent HTTP version")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
+    props = _object(launch.get("properties"), source="launch properties")
+    if props.get("selected_resource_refs") != _FINAL_ANSWER_RESOURCE_REFS_SCHEMA:
+        raise ValueError("final answer resource refs schema differs")
+    props["selected_resource_refs"] = copy.deepcopy(_CANONICAL_RESOURCE_REFS_SCHEMA)
+    launch["properties"] = props
+    schemas["LaunchRequest"] = launch
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.14.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "6d33f1110e354570ec2977d18b4620ba7e44be9174e1d8d6ceeb7234b76be424"
+    ):
+        raise ValueError("complete HTTP8.14 final answer parent differs")
+    return raw
+
+
 def http813_canonical_resources_parent_bytes(document: dict[str, object]) -> bytes:
     """Replace only canonical launch metadata and prove all issued 8.13 bytes."""
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
-    if info.get("version") != HTTP_CONTRACT_VERSION:
-        raise ValueError("canonical resources require the current Agent HTTP version")
+    if info.get("version") != "8.14.0":
+        raise ValueError("canonical resources require Agent HTTP8.14")
     components = _object(parent.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
     launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
@@ -1677,6 +1780,11 @@ def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
         _object(document.get("info"), source="info").get("version")
         == HTTP_CONTRACT_VERSION
     ):
+        document = _object(
+            json.loads(http814_final_answer_parent_bytes(document)),
+            source="HTTP8.14 final answer parent",
+        )
+    if _object(document.get("info"), source="info").get("version") == "8.14.0":
         document = _object(
             json.loads(http813_canonical_resources_parent_bytes(document)),
             source="HTTP8.13 canonical resources parent",

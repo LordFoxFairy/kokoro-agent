@@ -1,5 +1,6 @@
 """Exact CustomAPI profile choice is immutable intent, never a trace or an authorization grant."""
 
+import hashlib
 import json
 
 import pytest
@@ -258,6 +259,82 @@ def _artifact_ref(**changes: object) -> dict[str, object]:
         "source_run_id": "previous-run",
         **changes,
     }
+
+
+def _answer_ref(content: str = " 前文\r\n𠮷\t", **changes: object) -> dict[str, object]:
+    raw = content.encode("utf-8")
+    return {
+        "kind": "final_answer",
+        "resource_id": "assistant-message",
+        "source_scope": {"kind": "conversation", "id": "source-session"},
+        "source_run_id": "source-run",
+        "source_final_segment_id": "seg:𠮷",
+        "source_revision": "9223372036854775807",
+        "content": content,
+        "content_sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": str(len(raw)),
+        **changes,
+    }
+
+
+async def test_frozen_final_answer_round_trips_private_original_and_versions_fence() -> (
+    None
+):
+    answer = _answer_ref()
+    body = {
+        **_body(),
+        "selected_resource_refs": [_asset_ref(), answer, _artifact_ref()],
+    }
+    request, fence = await _admit(body)
+    assert (
+        json.loads(request.model_dump_json())["selected_resource_refs"]
+        == body["selected_resource_refs"]
+    )
+    assert inbound_adapter.validate_json(request.model_dump_json()) == request
+    assert request.has_private_prompt_material and "前文" not in repr(request)
+    assert request.run_id == "legacy"
+    _, changed = await _admit(
+        {
+            **body,
+            "selected_resource_refs": [
+                _asset_ref(),
+                {**answer, "source_revision": "1"},
+                _artifact_ref(),
+            ],
+        }
+    )
+    assert changed != fence
+
+
+@pytest.mark.parametrize(
+    "refs",
+    [
+        [_answer_ref(asset_id="asset-1")],
+        [_answer_ref(source_scope={"kind": "project", "id": "project"})],
+        [_answer_ref(source_final_segment_id="x" * 256)],
+        [_answer_ref(source_final_segment_id="x\x00")],
+        [_answer_ref(source_revision="01")],
+        [_answer_ref(source_revision="0")],
+        [_answer_ref(source_revision="9223372036854775808")],
+        [_answer_ref(size_bytes="1")],
+        [_answer_ref(content_sha256="0" * 64)],
+        [_answer_ref("")],
+        [_answer_ref("x\x00")],
+        [_answer_ref("界" * 8193)],
+        [_answer_ref(), _answer_ref(source_revision="1")],
+        [_answer_ref("界" * 6000)],
+    ],
+)
+async def test_invalid_frozen_final_answer_is_rejected_at_admission(
+    refs: object,
+) -> None:
+    with pytest.raises(IngressError) as error:
+        await _admit({**_body(), "selected_resource_refs": refs})
+    assert (error.value.status, error.value.code) == (400, "invalid_launch_request")
+
+
+async def test_final_answer_admission_allows_exact_byte_budget() -> None:
+    await _admit({**_body(), "selected_resource_refs": [_answer_ref("x" * 24576)]})
 
 
 @pytest.mark.parametrize("explicit", [False, True])

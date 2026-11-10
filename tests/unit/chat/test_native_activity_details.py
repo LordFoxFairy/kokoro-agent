@@ -32,6 +32,7 @@ def details(
     status: str = "completed",
     tool_status: str = "success",
     journal: dict[str, ToolJournalRecord] | None = None,
+    final_answer_paths: frozenset[str] = frozenset(),
 ) -> list[Any]:
     code = (
         "tool.file.read"
@@ -73,6 +74,7 @@ def details(
         journal={},
         journal_records=journal,
         native_tools=allowed,
+        final_answer_paths=final_answer_paths,
     ).activity_details
 
 
@@ -145,6 +147,30 @@ def test_private_input_and_output_are_not_exposed_as_raw_dumps() -> None:
     rows = details("read_file", {"file_path": "/.env"}, "password=DO_NOT_DISPLAY")
     assert len(rows) == 1
     assert rows[0].input_preview is None and rows[0].output_preview is None
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "hidden"),
+    [
+        ("read_file", {"file_path": "/.inputs/1"}, True),
+        ("read_file", {"file_path": ".inputs//1"}, True),
+        ("read_file", {"file_path": "/.inputs/0"}, False),
+        ("read_file", {"file_path": "/workspace/file.txt"}, False),
+        ("grep", {"path": "/", "pattern": "private marker"}, True),
+        ("grep", {"pattern": "private marker"}, True),
+        ("grep", {"path": "/.inputs", "pattern": "private marker"}, True),
+        ("grep", {"path": "/.inputs/1", "pattern": "private marker"}, True),
+        ("grep", {"path": "/.inputs/0", "pattern": "other"}, False),
+        ("grep", {"path": "/workspace", "pattern": "other"}, False),
+    ],
+)
+def test_frozen_final_answer_omits_relevant_native_previews_only(
+    name: str, args: dict[str, Any], hidden: bool
+) -> None:
+    row = details(name, args, "output", final_answer_paths=frozenset({"/.inputs/1"}))[0]
+    assert row.tool_name == name and row.activity_id
+    assert (row.output_preview is None) is hidden
+    assert (row.input_preview is None) is hidden
 
 
 def test_output_is_bounded_and_failure_status_is_not_promoted() -> None:

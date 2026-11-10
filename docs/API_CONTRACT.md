@@ -1,3 +1,9 @@
+## 2026-11-09 历史最终答复输入（HTTP 8.15 候选）
+
+`LaunchRequest.selected_resource_refs` 的私有 `final_answer` 分支只接受 `kind`、`resource_id`（源 assistant Message ID）、`source_scope: {kind:"conversation",id}`、`source_run_id`、`source_final_segment_id`、`source_revision`、`content`、`content_sha256`、`size_bytes`。仅 user subject 的 Chat Run；来源字段不授执行权，不含 `asset_id`、文件名、URL、版本 alias 或身份。源 segment ID 为 1–255 Unicode scalar；revision 为规范正十进制 i64。正文保完整 UTF‑8、不规范化、拒 NUL/孤立 surrogate，1–24576 字节；实际字节数和小写 SHA‑256 必须相符。
+
+原 16 项、32 KiB ASCII JSON、1 MiB launch 和原 asset/artifact 分支保持；省略和空选择字节、原 fence 不变。只撤销本分支和版本可复原完整 8.14（SHA‑256 `6d33f1110e354570ec2977d18b4620ba7e44be9174e1d8d6ceeb7234b76be424`）。OpenAPI 是唯一机器契约；用 `uv run --frozen --offline python scripts/generate_failure_models.py` 更新派生物和 provenance。BFF 固定发行原件后才生产该分支。
+
 ## 2026-11-09 选中输入读取（HTTP8.14，无新增公开入口）
 
 Worker 现将唯一 canonical manifest 接入原生只读文件工具 `/.inputs/{index}`；通过现两个 Storage 下载请求分别读取 Asset 与 FINAL Artifact，固定 Storage `c31a065708ce3a0f2713efd29f064f63eb9d44c9`。consumer Run 来自当前持久 Run，source Run 保留来源语义；exact asset/hash、当前 manifest/lease 和实际内容均核对，不接受 URL、浏览器 scope 或自报身份。不新增 HTTP/RPC 路由、token 或兼容读取接口；旧 `FinalArtifactRead*` 已替换为统一 `InputResourceRead*`。GET 仍受现有 1 MiB 预算约束，非 UTF-8 文本工具明确报告格式边界，未新增文档解析能力。真实组合验收待主控记录。

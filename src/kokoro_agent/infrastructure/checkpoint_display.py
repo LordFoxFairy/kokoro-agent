@@ -22,6 +22,7 @@ from kokoro_agent.application.native_activity_details import (
 )
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.domain.run.models import ToolJournalRecord
+from kokoro_agent.execution.input_backend import INPUTS_ROOT
 from kokoro_agent.execution.runtime_profile import canonical_json
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
@@ -389,4 +390,9 @@ async def read_run_display(
                     journal_records=records,
                     mcp_connections=connections,
                     native_tools=native_tools,
+                    final_answer_paths=frozenset(
+                        f"{INPUTS_ROOT}{index}"
+                        for index, ref in enumerate(request.selected_resource_refs)
+                        if ref.kind == "final_answer"
+                    ),
                 ).model_copy(update={"final_message_id": final_id})

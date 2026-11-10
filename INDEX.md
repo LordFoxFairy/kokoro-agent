@@ -14,7 +14,7 @@
 - `src/kokoro_agent/application/schema.py`：canonical schema operator use case；CLI 与 worker 共同导入。
 - `src/kokoro_agent/worker/supervisor.py`：Redis dispatch、lease fencing、control 和终态收口。
 - `src/kokoro_agent/agent_factory.py`：唯一 DeepAgents native runnable 构造入口。
-- `src/kokoro_agent/execution/input_backend.py`：选中 canonical 输入的稳定索引只读文件路由，复用 Worker Storage reader。
+- `src/kokoro_agent/execution/input_backend.py`：选中输入的稳定索引只读文件路由；复用 Worker Storage reader，历史最终答复则读取同一 consuming Run 已冻结的原字节和当前 lease。
 
 ## 代码地图
 

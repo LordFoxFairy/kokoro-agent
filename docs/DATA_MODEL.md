@@ -1,3 +1,7 @@
+## 2026-11-09 历史最终答复冻结（无 Schema 增量）
+
+已接受的答复原文与来源 Message/Run/segment/revision、长度、SHA‑256 只存于同一私有 Run request 的 canonical 引用，沿原 fence、投递和恢复；不新建表、Storage 对象、正文缓存或公开 Message 正文。执行仍使用 consuming Run 及其有效 lease。删除另一个来源会话不改已接受 Run 或同键重放；新提交或生成新 Run 的 regenerate 由 BFF 重验来源。删除 consuming 会话仍用原取消。
+
 ## 2026-11-09 A-08 只读运行接线（无 Schema 增量）
 
 选中输入继续只从原持久 Run request 的 canonical manifest 读取，下载前后核对当前 lease；每项命令身份绑定 consumer Run 与完整引用。没有输入表、授权缓存、正文副本或恢复 alias。原生文件工具收到的内容沿原私有 Run/checkpoint 生命周期处理，不作为 Message、AG-UI 或 trace 正文发布。源 Artifact Run 与当前执行 Run 分开保存，读取不改 source owner 数据。真实组合验收仍待。

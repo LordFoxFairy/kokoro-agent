@@ -18,6 +18,7 @@ RUN_OUTBOX_TABLE = "kokoro_agent_run_outbox"
 RUN_RECEIPTS_TABLE = "kokoro_agent_run_receipt"
 RUN_RECEIPT_MANIFESTS_TABLE = "kokoro_agent_run_receipt_manifest"
 RUN_CHECKPOINT_OBSERVATIONS_TABLE = "kokoro_agent_run_checkpoint_observation"
+WORKSPACE_OUTPUT_VERSIONS_TABLE = "kokoro_agent_workspace_output_version"
 RUN_CONTROL_COMMANDS_TABLE = "kokoro_agent_run_control_command"
 RUN_STEERS_TABLE = "kokoro_agent_run_steer"
 RUN_USAGE_SEGMENTS_TABLE = "kokoro_agent_run_usage_segment"
@@ -42,6 +43,7 @@ AGENT_TABLES = (
     RUN_RECEIPT_MANIFESTS_TABLE,
     RUN_CONTROL_COMMANDS_TABLE,
     RUN_CHECKPOINT_OBSERVATIONS_TABLE,
+    WORKSPACE_OUTPUT_VERSIONS_TABLE,
     RUN_STEERS_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
     MODEL_CALL_ATTEMPTS_TABLE,

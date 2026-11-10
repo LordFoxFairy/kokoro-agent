@@ -594,6 +594,7 @@ def failure_model_bytes(
     if _object(document.get("info"), source="info").get("version") in {
         "8.14.0",
         "8.15.0",
+        "8.16.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(
@@ -848,7 +849,7 @@ def validate_decoded_chat_payload(
     only declared profiles; unknown/missing bindings fail closed.
     """
     version = _object(document.get("info"), source="info").get("version")
-    if version == HTTP_CONTRACT_VERSION:
+    if version in {"8.16.0", HTTP_CONTRACT_VERSION}:
         profiles = _CURRENT_DECODED_PROFILES
     elif version in {"8.8.0", "8.9.0", "8.10.0", "8.11.0", "8.14.0", "8.15.0"}:
         profiles = _DECODED_PROFILES_WITH_TERMINAL
@@ -1739,11 +1740,74 @@ _FINAL_ANSWER_RESOURCE_REFS_SCHEMA = {
 }
 
 
-def http815_delivery_display_parent_bytes(document: dict[str, object]) -> bytes:
-    """Remove only the decoded Delivery extension and prove every issued 8.15 byte."""
+def http816_workspace_output_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the private RunDisplay workspace fact and verify issued HTTP8.16."""
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
     if info.get("version") != HTTP_CONTRACT_VERSION:
+        raise ValueError("workspace output requires Agent HTTP8.17")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    display = _object(schemas.get("RunDisplay"), source="RunDisplay")
+    props = _object(display.get("properties"), source="RunDisplay properties")
+    outputs = _object(props.pop("workspace_outputs", None), source="workspace_outputs")
+    version = _object(
+        schemas.pop("WorkspaceOutputVersion", None), source="WorkspaceOutputVersion"
+    )
+    fields = [
+        "version_id",
+        "virtual_path",
+        "asset_id",
+        "content_sha256",
+        "size_bytes",
+        "mime_type",
+    ]
+    if (
+        outputs.get("type") != "array"
+        or outputs.get("minItems") != 1
+        or outputs.get("maxItems") != 128
+        or outputs.get("items")
+        != {"$ref": "#/components/schemas/WorkspaceOutputVersion"}
+        or outputs.get("x-kokoro-unique-by") != "version_id"
+        or version.get("type") != "object"
+        or version.get("additionalProperties") is not False
+        or version.get("required") != fields
+        or set(
+            _object(
+                version.get("properties"), source="WorkspaceOutputVersion properties"
+            )
+        )
+        != set(fields)
+    ):
+        raise ValueError("private workspace output version schema differs")
+    display["properties"] = props
+    schemas["RunDisplay"] = display
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.16.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "e303dfadfccd3a86c3cd47542f751868394d269fd584c70cfd9c801eaa618958"
+    ):
+        raise ValueError("complete HTTP8.16 workspace output parent differs")
+    return raw
+
+
+def http815_delivery_display_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the decoded Delivery extension and prove every issued 8.15 byte."""
+    if (
+        _object(document.get("info"), source="info").get("version")
+        == HTTP_CONTRACT_VERSION
+    ):
+        document = _object(
+            json.loads(http816_workspace_output_parent_bytes(document)),
+            source="HTTP8.16 workspace output parent",
+        )
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.16.0":
         raise ValueError("delivery display path requires Agent HTTP8.16")
     components = _object(parent.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
@@ -1792,10 +1856,10 @@ def http815_delivery_display_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http814_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the frozen final answer branch and prove every issued 8.14 byte."""
-    if (
-        _object(document.get("info"), source="info").get("version")
-        == HTTP_CONTRACT_VERSION
-    ):
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.16.0",
+        HTTP_CONTRACT_VERSION,
+    }:
         document = _object(
             json.loads(http815_delivery_display_parent_bytes(document)),
             source="HTTP8.15 delivery parent",
@@ -1858,6 +1922,7 @@ def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the A-08 opaque resource selection child."""
     if _object(document.get("info"), source="info").get("version") in {
         "8.15.0",
+        "8.16.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(
@@ -1900,6 +1965,7 @@ def http811_project_instruction_parent_bytes(document: dict[str, object]) -> byt
         "8.13.0",
         "8.14.0",
         "8.15.0",
+        "8.16.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(

@@ -117,6 +117,7 @@ domain/chat/projection.py
 domain/chat/repositories.py
 domain/chat/time.py
 domain/run/__init__.py
+domain/run/workspace_output.py
 execution/__init__.py
 execution/events.py
 execution/failures.py
@@ -145,6 +146,7 @@ infrastructure/package_archive.py
 infrastructure/chat_mappers.py
 infrastructure/checkpoints.py
 infrastructure/checkpoint_interactions.py
+infrastructure/checkpoint_workspace_outputs.py
 infrastructure/memory_store.py
 infrastructure/postgres.py
 infrastructure/postgres_chat_repository.py

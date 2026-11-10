@@ -1,3 +1,7 @@
+## Task A A‑10：过程输出捕获行
+
+Agent canonical schema 增 `kokoro_agent_workspace_output_version`。唯一事实为当前 Run 下规范输出路径的 exact root checkpoint child/parent＋task、原代、字节长/SHA、opaque version；不复制 bytes、不写现 ToolJournal。记录不可变：同一定位重试只能逐字段相同。恢复以当前活跃租约重验并补同一身份，原 generation 保持。同一版本行只追加冻结的 `upload_id/source_version_id` 与 CLEAN `asset_id`；上传、扫描不持 PG 锁，只有现活跃租约可提交来源或资产。`asset_id IS NOT NULL` 是唯一发布条件，旧候选不会投影，未复制状态枚举、原字节或事件索引。
+
 ## 2026-11-10 · A‑10 交付 journal 可选证明
 
 不改 SQL Schema。现 Tool Journal V2 JSON 在 frozen/admitted/selected 允许可省略 `display_path`；第一条冻结后后继阶段不得新增、删除或变更（旧无字段永久缺省）。成功结果保留同一值供原 source event 重放；不在已有 Storage request digest/command identity、Run/lease 或 object bytes 中加入此字段。旧数据不迁移、不从历史 raw path 推导。

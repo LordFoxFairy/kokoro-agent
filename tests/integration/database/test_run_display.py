@@ -14,6 +14,7 @@ import pytest
 from langgraph.checkpoint.base import empty_checkpoint
 
 from kokoro_agent.domain.chat.projection import project_chat_fact
+from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.infrastructure.checkpoint_display import read_run_display
 from kokoro_agent.infrastructure.checkpoints import (
@@ -1223,3 +1224,274 @@ async def test_native_state_file_postimages_bind_committed_run_versions(
                 len(expected_raw),
                 hashlib.sha256(expected_raw).hexdigest(),
             )
+
+
+@pytest.mark.asyncio
+async def test_state_output_versions_recover_committed_edit_without_borrowing_new_lease(
+    run_chat_schema: str,
+    run_chat_database_url: str,
+    run_repository: RunRepository,
+) -> None:
+    """One native output, a missed committed edit, then its fenced recovery."""
+    from collections.abc import Awaitable, Callable
+    from typing import cast
+
+    import deepagents
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_core.runnables import RunnableConfig
+
+    from kokoro_agent.agents.native_profile import bootstrap_native_profiles
+    from kokoro_agent.clients.storage import StorageClientError
+    from kokoro_agent.domain.run.models import LeaseFence
+    from kokoro_agent.protocol import RunRequest
+    from kokoro_agent.domain.run.workspace_output import (
+        OUTPUT_METADATA,
+        OUTPUT_PROOF,
+        OUTPUT_ROOT,
+        output_path_digest,
+    )
+    from kokoro_agent.infrastructure.checkpoint_interactions import (
+        make_interaction_checkpointer,
+    )
+    from kokoro_agent.infrastructure.checkpoint_workspace_outputs import (
+        CheckpointWorkspaceOutputs,
+    )
+    from kokoro_agent.infrastructure.schema import WORKSPACE_OUTPUT_VERSIONS_TABLE
+    from kokoro_agent.tools.middleware import WorkspaceOutputProofMiddleware
+    from support.local_fake import LocalFakeChatModel
+
+    run = request("workspace-output-recovery")
+    scope = RunScope.of(run)
+    await run_repository.enqueue_dispatch(run, scope.namespace, f"output:{run.run_id}")
+    lease = await run_repository.claim_dispatch(run, "workspace-output-first")
+    assert lease is not None and lease.generation == 1
+    settings = CheckpointSettings(
+        database_url=run_chat_database_url, schema_name=run_chat_schema
+    )
+    path = "/outputs/report.txt"
+    first, second = "版本一\r\nunchanged tail  \r\n", "版本二🦉\r\nunchanged tail  \r\n"
+    script = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "file-write",
+                    "name": "write_file",
+                    "args": {
+                        "file_path": path,
+                        "content": first,
+                    },
+                },
+                {
+                    "id": "private-write",
+                    "name": "write_file",
+                    "args": {
+                        "file_path": "/outputs/.private.txt",
+                        "content": "Not public",
+                    },
+                },
+            ],
+        ),
+        AIMessage(content="First response"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "file-edit",
+                    "name": "edit_file",
+                    "args": {
+                        "file_path": path,
+                        "old_string": "版本一",
+                        "new_string": "版本二🦉",
+                    },
+                }
+            ],
+        ),
+        AIMessage(content="Second response"),
+    ]
+    config: RunnableConfig = {
+        "configurable": {"thread_id": scope.scoped_thread_id, "checkpoint_ns": ""},
+        "metadata": {
+            "kokoro_run_id": run.run_id,
+            "kokoro_generation": lease.generation,
+            OUTPUT_METADATA: OUTPUT_ROOT,
+        },
+    }
+
+    async def versions() -> list[dict[str, object]]:
+        table = qualified(run_chat_schema, WORKSPACE_OUTPUT_VERSIONS_TABLE)
+        async with connect_pg(run_chat_database_url) as conn, conn.cursor() as cur:
+            await execute_sql(
+                cur,
+                f"SELECT * FROM {table} WHERE run_id=%s ORDER BY checkpoint_id",
+                (run.run_id,),
+            )
+            return await fetch_all(cur)
+
+    def exact_version(row: dict[str, object], content: str, call_id: str) -> None:
+        raw = content.encode("utf-8")
+        assert (
+            row["path"],
+            row["source_generation"],
+            row["tool_call_id"],
+            row["size_bytes"],
+            row["content_sha256"],
+        ) == (
+            path,
+            lease.generation,
+            call_id,
+            len(raw),
+            hashlib.sha256(raw).hexdigest(),
+        )
+        assert row["parent_checkpoint_id"] != row["checkpoint_id"]
+
+    bootstrap_native_profiles()
+    create: Any = getattr(deepagents, "create_deep_agent")
+    async with (
+        make_checkpointer(settings) as saver,
+        make_checkpointer(settings) as reader,
+    ):
+        wrapped = make_interaction_checkpointer(
+            saver=saver,
+            reader=reader,
+            repository=run_repository,
+            settings=settings,
+        )
+
+        def graph(checkpointer: object) -> Any:
+            return create(
+                model=LocalFakeChatModel.with_script(script),
+                checkpointer=checkpointer,
+                middleware=[WorkspaceOutputProofMiddleware(scope.scoped_thread_id)],
+            )
+
+        result = await graph(wrapped).ainvoke(
+            {"messages": [HumanMessage(id="workspace-first", content="Write report")]},
+            config,
+        )
+        messages = cast(list[object], result["messages"])
+        tool_results = {
+            message.tool_call_id: message
+            for message in messages
+            if isinstance(message, ToolMessage)
+        }
+        metadata = cast(
+            dict[str, object], getattr(tool_results["file-write"], "response_metadata")
+        )
+        assert metadata.get(OUTPUT_PROOF) == output_path_digest(path)
+        assert path not in repr(metadata) and first not in repr(metadata)
+        assert tool_results["file-write"].artifact is None
+        assert OUTPUT_PROOF not in cast(
+            dict[str, object],
+            getattr(tool_results["private-write"], "response_metadata"),
+        )
+        (original,) = await versions()
+        exact_version(original, first, "file-write")
+
+        # The old process committed the real native edit, but its live
+        # callback was lost. Reopen the actual checkpoint without that callback.
+        await graph(saver).ainvoke(
+            {"messages": [HumanMessage(id="workspace-second", content="Edit report")]},
+            config,
+        )
+        changed = [
+            item
+            async for item in reader.alist(config)
+            if "files" in (item.checkpoint.get("updated_channels") or ())
+        ]
+        assert len(changed) == 2
+        edit = changed[0]
+        assert edit.parent_config is not None
+        assert await versions() == [original]
+        assert await run_repository.pause(run.run_id, lease)
+        current = await run_repository.adopt(run.run_id, "workspace-output-second")
+        assert current is not None and current.generation == 2
+        await CheckpointWorkspaceOutputs(settings, run_repository, reader).capture(
+            edit.parent_config,
+            edit.config,
+        )
+        await wrapped.recover_workspace_outputs(run, lease)
+        assert await versions() == [original]
+
+        await wrapped.recover_workspace_outputs(run, current)
+        prior, recovered = await versions()
+        assert prior == original
+        exact_version(recovered, second, "file-edit")
+        assert recovered["checkpoint_id"] == edit.checkpoint["id"]
+        assert recovered["version_id"] != original["version_id"]
+        await wrapped.recover_workspace_outputs(run, current)
+        assert await versions() == [original, recovered]
+
+        original_run = run
+
+        class CleanStorage:
+            next_lease: LeaseFence | None = None
+            calls: list[tuple[str, bytes, tuple[str, str] | None]]
+
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def upload_workspace_output(
+                self,
+                run: RunRequest,
+                lease: LeaseFence,
+                version_id: str,
+                path: str,
+                content_sha256: str,
+                content: bytes,
+                selected: tuple[str, str] | None,
+                freeze: Callable[[str, str], Awaitable[bool]],
+            ) -> str:
+                assert run == original_run and path == "/outputs/report.txt"
+                assert hashlib.sha256(content).hexdigest() == content_sha256
+                if not await run_repository.is_lease_current(run.run_id, lease):
+                    raise StorageClientError("WORKSPACE_OUTPUT_LEASE_STALE")
+                self.calls.append((version_id, content, selected))
+                selection = (f"upload-{version_id}", "s3-exact-version")
+                if selected is None:
+                    assert await freeze(*selection)
+                else:
+                    assert selected == selection
+                if self.next_lease is None:
+                    # Simulate a legitimate CLEAN owner reply arriving after
+                    # another worker owns this Run. Only the SQL CAS can stop it.
+                    assert await run_repository.pause(run.run_id, lease)
+                    self.next_lease = await run_repository.adopt(
+                        run.run_id, "workspace-output-third"
+                    )
+                return f"asset:{version_id}"
+
+        storage = CleanStorage()
+        publication = CheckpointWorkspaceOutputs(
+            settings, run_repository, reader, storage
+        )
+        await publication.recover(run, current)
+        later = storage.next_lease
+        assert later is not None and later.generation == 3
+        unpublished = await read_run_display(
+            run_chat_database_url, run_chat_schema, run
+        )
+        assert "workspace_outputs" not in unpublished.model_dump(mode="json")
+        await publication.recover(run, later)
+        published = await read_run_display(run_chat_database_url, run_chat_schema, run)
+        assert [
+            (item.version_id, item.virtual_path, item.content_sha256, item.mime_type)
+            for item in published.workspace_outputs
+        ] == [
+            (row["version_id"], path, row["content_sha256"], "text/plain")
+            for row in (original, recovered)
+        ]
+        assert [content for _, content, _ in storage.calls] == [
+            first.encode(),
+            first.encode(),
+            second.encode(),
+        ]
+        assert [selected is not None for _, _, selected in storage.calls] == [
+            False,
+            True,
+            False,
+        ]
+        unrelated = await read_run_display(
+            run_chat_database_url, run_chat_schema, request("other-output-run")
+        )
+        assert not unrelated.workspace_outputs

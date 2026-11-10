@@ -15,12 +15,21 @@ from langchain_core.messages import BaseMessage
 from pydantic import TypeAdapter
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from kokoro_agent.application.run_display import RunDisplay, recover_display
+from kokoro_agent.application.run_display import (
+    RunDisplay,
+    WorkspaceOutputVersion,
+    recover_display,
+)
 from kokoro_agent.application.native_activity_details import (
     NATIVE_FILE_CODES,
     frozen_native_tools,
 )
 from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.domain.run.workspace_output import (
+    MAX_OUTPUT_VERSIONS,
+    workspace_output_mime,
+)
+from kokoro_agent.infrastructure.schema import WORKSPACE_OUTPUT_VERSIONS_TABLE
 from kokoro_agent.domain.run.models import ToolJournalRecord
 from kokoro_agent.execution.input_backend import INPUTS_ROOT
 from kokoro_agent.execution.runtime_profile import canonical_json
@@ -117,7 +126,28 @@ async def read_run_display(
                 final_id = await read_final_message_id(
                     conn, schema, request, budget.reserve
                 )
-                result = result.model_copy(update={"final_message_id": final_id})
+                workspace_table = qualified(schema, WORKSPACE_OUTPUT_VERSIONS_TABLE)
+                await execute_sql(
+                    cur,
+                    f"""SELECT version_id,path AS virtual_path,asset_id,content_sha256,size_bytes
+                    FROM {workspace_table} WHERE run_id=%s AND asset_id IS NOT NULL
+                    ORDER BY checkpoint_id, version_id LIMIT %s""",
+                    (request.run_id, MAX_OUTPUT_VERSIONS + 1),
+                )
+                workspace_rows = await fetch_all(cur)
+                if len(workspace_rows) > MAX_OUTPUT_VERSIONS:
+                    raise ValueError("workspace output display bound exceeded")
+                workspace_outputs = [
+                    WorkspaceOutputVersion.model_validate(
+                        {**row, "mime_type": workspace_output_mime(row["virtual_path"])}
+                    )
+                    for row in workspace_rows
+                ]
+                extra = {
+                    "final_message_id": final_id,
+                    "workspace_outputs": workspace_outputs,
+                }
+                result = result.model_copy(update=extra)
                 has_mcp = any(
                     event.get("display_code")
                     in {"tool.mcp.call", "tool.mcp.describe", "tool.mcp.discover"}
@@ -395,4 +425,4 @@ async def read_run_display(
                         for index, ref in enumerate(request.selected_resource_refs)
                         if ref.kind == "final_answer"
                     ),
-                ).model_copy(update={"final_message_id": final_id})
+                ).model_copy(update=extra)

@@ -4,7 +4,7 @@
   "info": {
     "title": "Kokoro Agent internal HTTP API",
     "description": "Agent-owned execution admission, control, evidence and identity-scoped chat query boundary. The BFF consumes this contract; the Agent does not expose browser SSE or AG-UI.",
-    "version": "8.16.0"
+    "version": "8.17.0"
   },
   "servers": [
     {
@@ -2884,6 +2884,16 @@
             "type": "string",
             "pattern": "^msg_[0-9a-f]{32}(?![\\s\\S])",
             "description": "Optional private read-only proof of a completed legacy Run's final public assistant message identity. Derived from a bounded reviewed native terminal and exact same-Run public body; never inferred from public ordering, never written back to historical events, and not an execution authority. Omitted when unproven. Consumers must bind their own exact ordered parts and revision before display."
+          },
+          "workspace_outputs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceOutputVersion"
+            },
+            "x-kokoro-unique-by": "version_id",
+            "description": "Published, CLEAN versions from this exact Run only. Omitted when no version has been published; path is display only."
           }
         },
         "additionalProperties": false,
@@ -3033,6 +3043,57 @@
           }
         },
         "additionalProperties": false
+      },
+      "WorkspaceOutputVersion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version_id",
+          "virtual_path",
+          "asset_id",
+          "content_sha256",
+          "size_bytes",
+          "mime_type"
+        ],
+        "properties": {
+          "version_id": {
+            "type": "string",
+            "pattern": "^wsv_[0-9a-f]{64}(?![\\s\\S])"
+          },
+          "virtual_path": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 4096,
+            "pattern": "^/outputs/",
+            "x-kokoro-utf8-byte-limit": 4096,
+            "x-kokoro-unicode-domain": "NFC Unicode scalars; no Cc, Cf or Cs",
+            "description": "Exact safe virtual output path; never a host path, URL, secret or private mount."
+          },
+          "asset_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Private Storage exact reference. Never sent to browsers as an authorization token."
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8388608
+          },
+          "mime_type": {
+            "type": "string",
+            "enum": [
+              "text/plain",
+              "text/markdown",
+              "text/csv",
+              "application/json"
+            ]
+          }
+        }
       }
     },
     "responses": {

@@ -19,7 +19,11 @@ from langgraph.store.base import BaseStore
 from kokoro_agent.clients.system import ModelResolver
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.model.call_models import ModelCallRepository
-from kokoro_agent.clients.storage import DeliveryClient, InputResourceReadClient
+from kokoro_agent.clients.storage import (
+    DeliveryClient,
+    InputResourceReadClient,
+    WorkspaceOutputUploadClient,
+)
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.agents.subagent_catalog import SubagentCatalog
@@ -33,6 +37,7 @@ class WorkerClients:
     delivery: DeliveryClient | None = None
     input_reader: InputResourceReadClient | None = None
     model_resolver: ModelResolver | None = None
+    workspace_storage: WorkspaceOutputUploadClient | None = None
 
 
 @dataclass(frozen=True, slots=True)

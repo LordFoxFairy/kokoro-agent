@@ -207,7 +207,11 @@ async def worker_storage_clients(
     run_repository: RunRepository,
 ) -> AsyncGenerator[WorkerClients, None]:
     """Share one Storage adapter/transport; injected adapters remain caller-owned."""
-    if (injected.delivery is not None and injected.input_reader is not None) or (
+    if (
+        injected.delivery is not None
+        and injected.input_reader is not None
+        and injected.workspace_storage is not None
+    ) or (
         config.storage_base_url is None
         or config.storage_object_origin is None
         or config.storage_service_secret is None
@@ -224,6 +228,9 @@ async def worker_storage_clients(
             delivery=injected.delivery if injected.delivery is not None else client,
             input_reader=injected.input_reader
             if injected.input_reader is not None
+            else client,
+            workspace_storage=injected.workspace_storage
+            if injected.workspace_storage is not None
             else client,
         )
 
@@ -324,6 +331,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
             reader=interaction_reader,
             repository=run_repository,
             settings=config.checkpoint,
+            workspace_storage=storage.workspace_storage,
         )
         dependencies = WorkerDependencies(
             platform=platform,
@@ -352,6 +360,7 @@ async def serve(config: AppConfig, clients: WorkerClients | None = None) -> None
         supervisor = RunSupervisor(
             interaction_reader=interaction_checkpointer.read_interaction,
             recover_steers=interaction_checkpointer.recover_steers,
+            recover_workspace_outputs=interaction_checkpointer.recover_workspace_outputs,
             agent_builder=agent_factory.build,
             run_repository=run_repository,
             approval_tool_names=agent_factory.approval_names,

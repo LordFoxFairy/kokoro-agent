@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, TypeGuard
 
+from deepagents.middleware.filesystem import EditFileSchema, WriteFileSchema
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import (
     ModelRequest,
@@ -21,10 +22,12 @@ from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationEr
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
+from langgraph.prebuilt import ToolRuntime
 
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
 from kokoro_agent.domain.run.repository import LeaseFence, RunRepository
+from kokoro_agent.domain.run.workspace_output import OUTPUT_PROOF, output_path_digest
 from kokoro_agent.protocol.events import DeliveryCreatedPayload
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
@@ -53,6 +56,58 @@ _MCP_CALL: ContextVar[tuple[str, str] | None] = ContextVar(
 def current_mcp_tool_call_id(run_id: str) -> str | None:
     current = _MCP_CALL.get()
     return current[1] if current is not None and current[0] == run_id else None
+
+
+def _is_mapping(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+class WorkspaceOutputProofMiddleware(AgentMiddleware):
+    """Mark only the actual pinned native tools on this assembled State peer."""
+
+    def __init__(self, thread_id: str) -> None:
+        super().__init__()
+        self._thread_id = thread_id
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest, handler: _ToolHandler
+    ) -> ToolMessage | Command[Any]:
+        call = request.tool_call
+        name = call["name"]
+        schema = {"write_file": WriteFileSchema, "edit_file": EditFileSchema}.get(name)
+        call_id = call.get("id")
+        path = call["args"].get("file_path")
+        runtime: object = getattr(request, "runtime", None)
+        runtime_call_id: object = getattr(runtime, "tool_call_id", None)
+        config: object = getattr(runtime, "config", None)
+        result = await handler(request)
+        if (
+            schema is None
+            or request.tool is None
+            or request.tool.name != name
+            or request.tool.args_schema is not schema
+            or not isinstance(call_id, str)
+            or not call_id
+            or not isinstance(runtime, ToolRuntime)
+            or runtime_call_id != call_id
+            or not isinstance(path, str)
+            or not isinstance(result, ToolMessage)
+            or (result.name, result.tool_call_id, result.status)
+            != (name, call_id, "success")
+            or (digest := output_path_digest(path)) is None
+        ):
+            return result
+        configurable = config.get("configurable") if _is_mapping(config) else None
+        metadata: object = getattr(result, "response_metadata")
+        if (
+            not _is_mapping(configurable)
+            or configurable.get("thread_id") != self._thread_id
+            or not _is_mapping(metadata)
+        ):
+            return result
+        return result.model_copy(
+            update={"response_metadata": {**metadata, OUTPUT_PROOF: digest}}
+        )
 
 
 class ToolPolicyMiddleware(AgentMiddleware):

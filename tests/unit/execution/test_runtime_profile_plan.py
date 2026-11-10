@@ -49,6 +49,19 @@ def test_recipe_uses_actual_declarations_and_distinct_domain() -> None:
     assert prepare(changed).fingerprint != plan.fingerprint
 
 
+def test_only_single_state_chat_freezes_a_workspace_output_root() -> None:
+    agent = Agent(key="one", prompt="task", backend="state")
+    chat = Feature(key="chat", agents=(agent,), entry_agent="one")
+    recipe = json.loads(prepare(chat).recipe_bytes)
+    assert recipe["feature"]["agents"][0]["workspace_output_root"] == "/outputs/"
+    for unsupported in (
+        replace(chat, key="another"),
+        replace(chat, agents=(replace(agent, backend="docker"),)),
+    ):
+        recipe = json.loads(prepare(unsupported).recipe_bytes)
+        assert "workspace_output_root" not in recipe["feature"]["agents"][0]
+
+
 def test_handoff_instances_are_real_ordered_and_retained() -> None:
     feature = Feature(
         key="team",

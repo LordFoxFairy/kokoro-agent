@@ -23,6 +23,13 @@ from kokoro_agent.domain.chat.projection import (
 )
 
 
+from kokoro_agent.domain.run.workspace_output import (
+    MAX_OUTPUT_BYTES,
+    MAX_OUTPUT_VERSIONS,
+    WorkspaceOutputMime,
+    output_path_digest,
+)
+
 from kokoro_agent.domain.chat.tool_display_preview import (
     ActivityDetail,
     ToolPreview,
@@ -73,6 +80,22 @@ class ToolFact(BaseModel):
         return self
 
 
+class WorkspaceOutputVersion(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    version_id: str = Field(pattern=r"^wsv_[0-9a-f]{64}$", min_length=68, max_length=68)
+    virtual_path: str = Field(min_length=10, max_length=4096)
+    asset_id: str = Field(min_length=1, max_length=255)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", min_length=64, max_length=64)
+    size_bytes: int = Field(ge=0, le=MAX_OUTPUT_BYTES)
+    mime_type: WorkspaceOutputMime
+
+    @model_validator(mode="after")
+    def safe_path(self) -> Self:
+        if output_path_digest(self.virtual_path) is None:
+            raise ValueError("unsafe workspace output path")
+        return self
+
+
 class RunDisplay(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
     run_id: str
@@ -91,8 +114,18 @@ class RunDisplay(BaseModel):
         default_factory=lambda: list[ActivityDetail](), max_length=128
     )
 
+    workspace_outputs: list[WorkspaceOutputVersion] = Field(
+        default_factory=lambda: list[WorkspaceOutputVersion](),
+        max_length=MAX_OUTPUT_VERSIONS,
+        exclude_if=lambda value: not value,
+    )
+
     @model_validator(mode="after")
     def unique_facts(self) -> Self:
+        if len({item.version_id for item in self.workspace_outputs}) != len(
+            self.workspace_outputs
+        ):
+            raise ValueError("duplicate workspace output version")
         if len({fact.activity_id for fact in self.tool_facts}) != len(self.tool_facts):
             raise ValueError("duplicate tool display fact")
         if len({item.activity_id for item in self.activity_details}) != len(

@@ -14,7 +14,7 @@ from connectrpc.errors import ConnectError
 from connectrpc.method import IdempotencyLevel, MethodInfo
 from connectrpc.server import ConnectASGIApplication, Endpoint
 
-from .storage_pb import AbortUploadRequest, AbortUploadResponse, CompleteUploadRequest, CompleteUploadResponse, CreateArtifactRequest, CreateArtifactResponse, CreateUploadRequest, CreateUploadResponse, DeleteAssetRequest, DeleteAssetResponse, DeleteFinalArtifactRequest, DeleteFinalArtifactResponse, FinalizeArtifactRequest, FinalizeArtifactResponse, GetAssetRequest, GetAssetResponse, GetDownloadReferenceRequest, GetDownloadReferenceResponse, GetFinalArtifactDownloadReferenceRequest, GetFinalArtifactDownloadReferenceResponse, GetFinalArtifactRequest, GetFinalArtifactResponse, GetPackageReferenceRequest, GetPackageReferenceResponse, GetScanStatusRequest, GetScanStatusResponse, GetUploadStatusRequest, GetUploadStatusResponse, ListAssetsRequest, ListAssetsResponse, ListFinalArtifactsRequest, ListFinalArtifactsResponse, ReleaseConversationScopeRequest, ReleaseConversationScopeResponse, ReleaseProjectScopeRequest, ReleaseProjectScopeResponse
+from .storage_pb import AbortUploadRequest, AbortUploadResponse, CompleteUploadRequest, CompleteUploadResponse, CreateArtifactRequest, CreateArtifactResponse, CreateUploadRequest, CreateUploadResponse, DeleteAssetRequest, DeleteAssetResponse, DeleteFinalArtifactRequest, DeleteFinalArtifactResponse, FinalizeArtifactRequest, FinalizeArtifactResponse, GetAssetRequest, GetAssetResponse, GetDownloadReferenceRequest, GetDownloadReferenceResponse, GetFinalArtifactDownloadReferenceRequest, GetFinalArtifactDownloadReferenceResponse, GetFinalArtifactRequest, GetFinalArtifactResponse, GetPackageReferenceRequest, GetPackageReferenceResponse, GetScanStatusRequest, GetScanStatusResponse, GetUploadStatusRequest, GetUploadStatusResponse, ListAssetsRequest, ListAssetsResponse, ListFinalArtifactsRequest, ListFinalArtifactsResponse, ReleaseConversationScopeRequest, ReleaseConversationScopeResponse, ReleaseConversationWorkspaceOutputsRequest, ReleaseConversationWorkspaceOutputsResponse, ReleaseProjectScopeRequest, ReleaseProjectScopeResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -78,6 +78,9 @@ class StorageService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def release_conversation_scope(self, request: ReleaseConversationScopeRequest, ctx: RequestContext[ReleaseConversationScopeRequest, ReleaseConversationScopeResponse]) -> ReleaseConversationScopeResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def release_conversation_workspace_outputs(self, request: ReleaseConversationWorkspaceOutputsRequest, ctx: RequestContext[ReleaseConversationWorkspaceOutputsRequest, ReleaseConversationWorkspaceOutputsResponse]) -> ReleaseConversationWorkspaceOutputsResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
 
@@ -273,6 +276,16 @@ class StorageServiceASGIApplication(ConnectASGIApplication[StorageService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.release_conversation_scope,
+                ),
+                "/kokoro.storage.v3.StorageService/ReleaseConversationWorkspaceOutputs": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ReleaseConversationWorkspaceOutputs",
+                        service_name="kokoro.storage.v3.StorageService",
+                        input=ReleaseConversationWorkspaceOutputsRequest,
+                        output=ReleaseConversationWorkspaceOutputsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.release_conversation_workspace_outputs,
                 ),
             },
             interceptors=interceptors,
@@ -642,6 +655,26 @@ class StorageServiceClient(ConnectClient):
                 service_name="kokoro.storage.v3.StorageService",
                 input=ReleaseConversationScopeRequest,
                 output=ReleaseConversationScopeResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def release_conversation_workspace_outputs(
+        self,
+        request: ReleaseConversationWorkspaceOutputsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReleaseConversationWorkspaceOutputsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReleaseConversationWorkspaceOutputs",
+                service_name="kokoro.storage.v3.StorageService",
+                input=ReleaseConversationWorkspaceOutputsRequest,
+                output=ReleaseConversationWorkspaceOutputsResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

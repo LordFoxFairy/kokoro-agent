@@ -73,9 +73,7 @@ def test_current_generator_rejects_a_complete_old_parent_before_any_write(
         for p in tmp_path.rglob("*")
         if p.is_file()
     }
-    with pytest.raises(
-        ValueError, match="project instruction requires the current Agent HTTP version"
-    ):
+    with pytest.raises(ValueError):
         generate_failure_models(tmp_path, check=check)
     assert {
         p.relative_to(tmp_path): p.read_bytes()

@@ -30,6 +30,7 @@ from kokoro_agent.execution.runtime_profile import (
 )
 from kokoro_agent.execution.runtime_profile_sources import SourceManifest
 from kokoro_agent.features.definition import Feature
+from kokoro_agent.domain.run.workspace_output import OUTPUT_ROOT, OUTPUT_TOOLS
 from kokoro_agent.mcp.tools import MCP_TOOL_METADATA
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.sandbox.backend import SandboxSettings
@@ -142,6 +143,7 @@ class PreparedPeerPlan:
     subagents: subagents.SubagentSelectionPlan
     handoffs: tuple[BaseTool, ...]
     tool_metadata: bytes
+    workspace_output_root: str | None = None
 
     def verify_tools(self, tools: Sequence[BaseTool]) -> None:
         actual = tuple(
@@ -292,6 +294,21 @@ def prepare_feature(
             }
             for descriptor in selected_tools
         )
+        permissions = agent.permissions
+        output_root = (
+            OUTPUT_ROOT
+            if feature.key == "chat"
+            and len(feature.agents) == 1
+            and agent.backend == "state"
+            and not OUTPUT_TOOLS.intersection(
+                (
+                    *permissions.approval_tools,
+                    *permissions.review_tools,
+                    *agent.pause_tools,
+                )
+            )
+            else None
+        )
         peers.append(
             PreparedPeerPlan(
                 agent=agent,
@@ -300,14 +317,19 @@ def prepare_feature(
                 subagents=selected,
                 handoffs=handoffs,
                 tool_metadata=canonical_json(metadata),
+                workspace_output_root=output_root,
             )
         )
-        permissions = agent.permissions
         model = agent.model
         recipes.append(
             {
                 "key": agent.key,
                 "prompt": agent.prompt,
+                **(
+                    {"workspace_output_root": output_root}
+                    if output_root is not None
+                    else {}
+                ),
                 "public_action_intent": {
                     "field": "_kokoro_action",
                     "max_utf8_bytes": 256,

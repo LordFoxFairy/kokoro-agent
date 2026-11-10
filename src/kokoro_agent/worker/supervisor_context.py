@@ -53,7 +53,7 @@ SourceResolver = Callable[[str], SubagentSource]
 BackendResolver = Callable[[RunRequest], Backend]
 FeatureResolver = Callable[[str], Feature]
 SandboxTeardown = Callable[[SandboxBackendKind, str, str], Awaitable[None]]
-SteerCheckpointRecovery = Callable[[RunRequest, LeaseFence], Awaitable[None]]
+CheckpointRecovery = Callable[[RunRequest, LeaseFence], Awaitable[None]]
 ProcessFatal = Callable[[int], Never]
 
 
@@ -63,7 +63,8 @@ class SupervisorContext:
     _boot_id: str
     _drained_attempts: dict[tuple[str, int, str], str]
     _interaction_reader: InteractionReader
-    _recover_steers: SteerCheckpointRecovery | None
+    _recover_steers: CheckpointRecovery | None
+    _recover_workspace_outputs: CheckpointRecovery | None
     _resume_attempts: dict[str, tuple[str, StartedResume]]
     _build: AgentBuilder
     _run_repository: RunRepository

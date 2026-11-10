@@ -937,3 +937,81 @@ async def test_owner_cancel_preserves_task_cancellation() -> None:
     transport.connect_error = Code.CANCELED
     with pytest.raises(asyncio.CancelledError):
         await StorageDeliveryClient(runs, transport).publish(_request())
+
+
+@pytest.mark.asyncio
+async def test_workspace_output_replays_exact_put_selection_but_never_publishes_late_clean() -> (
+    None
+):
+    class WorkspaceTransport(FakeTransport):
+        revoke_after_complete = True
+
+        async def call(
+            self, method: str, request: object, headers: dict[str, str]
+        ) -> object:
+            result = await super().call(method, request, headers)
+            if method == "create_upload":
+                assert isinstance(result, pb.CreateUploadResponse)
+                assert result.upload_reference is not None
+                result.upload_reference.required_headers["content-type"] = (
+                    "text/markdown"
+                )
+            if method == "complete_upload" and self.revoke_after_complete:
+                runs.current = False
+            return result
+
+    runs = FakeRuns()
+    transport = WorkspaceTransport()
+    client = StorageDeliveryClient(runs, transport)
+    selections: list[tuple[str, str]] = []
+
+    async def freeze(upload_id: str, source_version: str) -> bool:
+        selections.append((upload_id, source_version))
+        return True
+
+    async def publish(selected: tuple[str, str] | None) -> str:
+        return await client.upload_workspace_output(
+            _RUN,
+            _LEASE,
+            "wsv_" + "1" * 64,
+            "/outputs/report.md",
+            _HASH,
+            _CONTENT,
+            selected,
+            freeze,
+        )
+
+    with pytest.raises(StorageClientError, match="WORKSPACE_OUTPUT_LEASE_STALE"):
+        await publish(None)
+    assert selections == [("upload-1", "version-A")]
+    runs.current = True
+    transport.revoke_after_complete = False
+    assert await publish(selections[0]) == "asset-1"
+    assert transport.puts == [_CONTENT]
+    assert [call[0] for call in transport.calls] == [
+        "create_upload",
+        "complete_upload",
+        "complete_upload",
+    ]
+    created = transport.calls[0][1]
+    assert isinstance(created, pb.CreateUploadRequest)
+    assert int(created.upload_purpose) == 6
+    assert (
+        created.filename,
+        created.mime_type,
+        created.content_sha256,
+        created.size_bytes,
+    ) == (
+        "report.md",
+        "text/markdown",
+        _HASH,
+        len(_CONTENT),
+    )
+    completed = [
+        request for method, request, _ in transport.calls if method == "complete_upload"
+    ]
+    assert len(completed) == 2 and completed[0] == completed[1]
+    assert all(
+        headers["x-kokoro-scope-id"] == _RUN.session_id
+        for _, _, headers in transport.calls
+    )

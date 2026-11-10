@@ -1,3 +1,7 @@
+## 2026-11-10 · A‑10 State 过程文件 Agent 链
+
+现单 State Chat 的安全 `/outputs/` 从 native exact 已提交版本取原 UTF‑8 bytes，现 Worker 接管/settlement 沿 Storage v3 WORKSPACE_OUTPUT 上传及验证 CLEAN；同版本行保存稳定 PUT 源与精确资产，不建 FINAL、事件或第二索引。现租约冻结发布，迟到回复不发布；HTTP 8.17 复用 RunDisplay 的本人范围，只向 BFF 投影已发布版本，无文件时省略。主控隔离真 PG 用例通过：同路径两原版本、晚到 CLEAN 无发布、新租约同源重放和 RunDisplay 跨 Run 隔离；Storage 传输为协议替身。State 产品可见性、原字节预览和删除撤销由 Root 在 BFF/App 精确组合补验；Local/Docker/script 不在本 Agent 首条链证据内。
+
 ## 2026-11-10 · A‑10 已交付成果的可验证展示路径
 
 HTTP 8.16.0 在原交付事件增可选 `display_path`，实际已知虚拟后端才出；官方 Skills/inputs 只读挂载不改变已知 default，不公开其路径。首次 V2 intent 冻结存在性及值，续跑和终态 journal 补发不重判、不回填历史。Storage 发布身份、字节、Schema、既有 raw `path` 和 source event identity 不变。仅为本人私有成果目录承接来源，不是工作区读取权限；BFF/App 与真实刷新由 Root 精确组合验收。

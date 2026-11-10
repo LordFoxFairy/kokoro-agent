@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import PurePosixPath
 from typing import Protocol, TypeVar
 
@@ -28,6 +28,11 @@ from kokoro_agent.clients.storage import (
 )
 from kokoro_agent.domain.chat.projection import safe_delivery_display_path
 from kokoro_agent.domain.run.models import LeaseFence, ToolJournalRecord
+from kokoro_agent.domain.run.workspace_output import (
+    MAX_OUTPUT_BYTES,
+    output_path_digest,
+    workspace_output_mime,
+)
 from kokoro_agent.generated.kokoro.common.v1.common_pb import CommandIdentity
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.clients.storage_transport import DeliveryTransport
@@ -367,10 +372,15 @@ class StorageDeliveryClient:
         self, request: DeliveryRequest, method: str, message: object
     ) -> object:
         run = await self._canonical(request)
+        return await self._owner_call(run, request.request_id, method, message)
+
+    async def _owner_call(
+        self, run: RunRequest, request_id: str, method: str, message: object
+    ) -> object:
         headers = {
             "x-kokoro-tenant-id": run.execution_identity.tenant_ref,
             "x-kokoro-subject-id": run.execution_identity.subject.opaque_ref,
-            "x-kokoro-request-id": request.request_id,
+            "x-kokoro-request-id": request_id,
             "x-kokoro-scope-kind": "conversation",
             "x-kokoro-scope-id": run.session_id,
         }
@@ -390,6 +400,108 @@ class StorageDeliveryClient:
             raise StorageClientError(
                 f"STORAGE_{method.upper()}_{exc.code.name}", retryable=retryable
             ) from None
+
+    async def upload_workspace_output(
+        self,
+        run: RunRequest,
+        lease: LeaseFence,
+        version_id: str,
+        path: str,
+        content_sha256: str,
+        content: bytes,
+        selected: tuple[str, str] | None,
+        freeze: Callable[[str, str], Awaitable[bool]],
+    ) -> str:
+        """Complete one exact process Asset; never create an Artifact."""
+        if (
+            output_path_digest(path) is None
+            or len(content) > MAX_OUTPUT_BYTES
+            or hashlib.sha256(content).hexdigest() != content_sha256
+            or run.execution_identity.subject.kind != "user"
+            or run.feature_key != "chat"
+            or await self._runs.get_request(run.run_id) != run
+        ):
+            raise StorageClientError("WORKSPACE_OUTPUT_BINDING_INVALID")
+
+        async def current() -> None:
+            if not await self._runs.is_lease_current(run.run_id, lease):
+                raise StorageClientError("WORKSPACE_OUTPUT_LEASE_STALE")
+
+        request_id = _digest(["workspace-output:v1", run.run_id, version_id])
+        filename, mime = PurePosixPath(path).name, workspace_output_mime(path)
+        await current()
+        if selected is None:
+            created = _expect(
+                await self._owner_call(
+                    run,
+                    request_id,
+                    "create_upload",
+                    pb.CreateUploadRequest(
+                        command=_command(
+                            request_id,
+                            "create_upload",
+                            [
+                                filename,
+                                mime,
+                                len(content),
+                                content_sha256,
+                                int(pb.UploadPurpose.WORKSPACE_OUTPUT),
+                            ],
+                        ),
+                        filename=filename,
+                        mime_type=mime,
+                        size_bytes=len(content),
+                        content_sha256=content_sha256,
+                        upload_purpose=pb.UploadPurpose.WORKSPACE_OUTPUT,
+                    ),
+                ),
+                pb.CreateUploadResponse,
+            )
+            if not created.upload_id or created.upload_reference is None:
+                raise StorageClientError("WORKSPACE_OUTPUT_UPLOAD_MISMATCH")
+            if created.upload_reference.required_headers.get("content-type") != mime:
+                raise StorageClientError("WORKSPACE_OUTPUT_UPLOAD_MISMATCH")
+            await current()
+            try:
+                source_version = await self._transport.put(
+                    created.upload_reference, content
+                )
+            except (httpx.HTTPError, TimeoutError) as exc:
+                raise StorageClientError(
+                    "STORAGE_UPLOAD_PUT_FAILED", retryable=True
+                ) from exc
+            selected = (created.upload_id, _source_version(source_version))
+            if not await freeze(*selected):
+                raise StorageClientError("WORKSPACE_OUTPUT_LEASE_STALE")
+        upload_id, source_version = selected
+        await current()
+        completed = _expect(
+            await self._owner_call(
+                run,
+                request_id,
+                "complete_upload",
+                pb.CompleteUploadRequest(
+                    command=_command(
+                        request_id,
+                        "complete_upload",
+                        [upload_id, content_sha256, len(content), source_version],
+                    ),
+                    upload_id=upload_id,
+                    content_sha256=content_sha256,
+                    size_bytes=len(content),
+                    source_version_id=source_version,
+                ),
+            ),
+            pb.CompleteUploadResponse,
+        )
+        if (
+            completed.upload_id != upload_id
+            or not completed.asset_id
+            or completed.scan_state != pb.ScanState.CLEAN
+        ):
+            raise StorageClientError("WORKSPACE_OUTPUT_NOT_CLEAN")
+        await current()
+        return completed.asset_id
 
     async def _read_canonical(
         self, request: InputResourceReadRequest

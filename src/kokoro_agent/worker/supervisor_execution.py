@@ -27,6 +27,7 @@ from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.chat.models import ChatEventRecord, ChatMessageDraft
 from kokoro_agent.domain.run.repository import LeaseFence, OutboxFrame
 from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.domain.run.workspace_output import OUTPUT_METADATA
 from kokoro_agent.domain.run.models import (
     StaticRecipeAuthorityLost,
     StaticRecipeIncompatible,
@@ -107,6 +108,12 @@ class SupervisorExecutionMixin(SupervisorContext):
                 # An already-saved pause releases the active lease without
                 # invoking the graph. Recover steer evidence before that branch.
                 await self._recover_steers(request, lease)
+            if (
+                built.workspace_output_root
+                and self._recover_workspace_outputs is not None
+                and lease.generation > 1
+            ):
+                await self._recover_workspace_outputs(request, lease)
             # A committed native pause may precede the Run/Chat pause transaction.
             # Recover that fact without another graph invocation.
             try:
@@ -307,6 +314,10 @@ class SupervisorExecutionMixin(SupervisorContext):
                 "kokoro_run_id": run_id,
                 "kokoro_generation": lease.generation,
             }
+            if built.workspace_output_root:
+                checkpoint_metadata[OUTPUT_METADATA] = built.workspace_output_root
+                if resume is not None and self._recover_workspace_outputs is not None:
+                    await self._recover_workspace_outputs(request, lease)
             if resume is not None:
                 checkpoint_metadata["kokoro_command_id"] = resume[0]
                 checkpoint_metadata["kokoro_attempt_id"] = resume[1].attempt_id
@@ -317,6 +328,11 @@ class SupervisorExecutionMixin(SupervisorContext):
                 # Reached only after interrupted() exhausts the official async
                 # iterator and its executor exit waits all child/write tasks.
                 # Cancellation never reaches this marker (task.done is insufficient).
+                if (
+                    built.workspace_output_root
+                    and self._recover_workspace_outputs is not None
+                ):
+                    await self._recover_workspace_outputs(request, lease)
                 if self._recover_steers is not None:
                     await self._recover_steers(request, lease)
                 if resume is not None:

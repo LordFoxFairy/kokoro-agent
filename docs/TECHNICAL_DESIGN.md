@@ -1,3 +1,9 @@
+## Task A A‑10：State 过程输出捕获
+
+仅正常 Chat 单 State peer 的冻结配方启用 `/outputs/`；官方原生 write/edit 无审批/结果改写时，由真实 ToolNode/ToolRuntime 记录成功返回对应规范路径的 SHA 标记（私有 ToolMessage response metadata），不改回执正文或 artifact。独立 reader 只接受同 Run/代、根 namespace 且实际已提交的精确 parent→child files 版本变化，匹配同一 task 唯一成功标记和唯一 UTF‑8 后像。旧无标记不回填，临时、隐藏、敏感路径及冲突写不产版本。
+
+`aput` 后只写 Agent PostgreSQL 原始事实，不做 Storage I/O。现 Worker native settlement/接管复读实际主 lineage，在活跃租约下由同一 Storage client 用 `WORKSPACE_OUTPUT` 上传，PUT 后先冻结确切对象版本再 Complete；Storage 合约要求 CLEAN 才承认完成。晚到回复不会把过期租约变成可见文件，下一代重放同一 Complete，不重做工具或重 PUT 已冻结的源。原资产回执只写原版本行，不建 Artifact、事件或第二索引。现 identity-scoped RunDisplay 读取仅此 Run 的已发布版本。
+
 ## 2026-11-10 · A‑10 成果展示来源
 
 只从成功 `deliver` 冻结的文件版本投影。复用已有真实 backend 判定：原生 State、虚拟 local/docker 及其官方 Skills/inputs wrapper 的 default；未知 backend/route 不授予路径展示。已有词法检查之上排隐藏路径段，原参数与规范路径不同则省略。首个 V2 intent 写入可选证明后保持原存在性和值，后继 Worker 或恢复调用不以当前 backend 重判；同一个 `DeliverResult` 构建 live/recovery 事件。无 Storage RPC、读取 API、状态机或文件保存改造；未交付文件不属于这条链。

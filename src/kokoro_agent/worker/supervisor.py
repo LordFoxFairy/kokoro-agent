@@ -42,7 +42,7 @@ from kokoro_agent.worker.supervisor_context import (
     ProcessFatal,
     SandboxTeardown,
     SourceResolver,
-    SteerCheckpointRecovery,
+    CheckpointRecovery,
     TraceFactory,
 )
 from kokoro_agent.model.call_scope import (
@@ -87,7 +87,8 @@ class RunSupervisor(
         *,
         agent_builder: AgentBuilder,
         interaction_reader: InteractionReader,
-        recover_steers: SteerCheckpointRecovery | None = None,
+        recover_steers: CheckpointRecovery | None = None,
+        recover_workspace_outputs: CheckpointRecovery | None = None,
         run_repository: RunRepository,
         approval_tool_names: ApprovalToolNames,
         trace_factory: TraceFactory,
@@ -113,6 +114,7 @@ class RunSupervisor(
             raise ValueError("model-call settle timeout must be positive and finite")
         self._interaction_reader = interaction_reader
         self._recover_steers = recover_steers
+        self._recover_workspace_outputs = recover_workspace_outputs
         self._resume_attempts = {}
         self._boot_id = uuid4().hex
         self._drained_attempts = {}

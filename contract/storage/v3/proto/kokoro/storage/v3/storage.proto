@@ -6,11 +6,12 @@
 // Platform-owned resource ID; skill_cover and connector_icon use exact owner bindings.
 // Storage does not decide Skill authorization; Platform must freshly admit every read.
 // Scope is asserted by an authenticated, permitted business owner; body identity is forbidden.
-// kokoro-agent has only conversation/artifact-purpose delivery operations and
+// kokoro-agent has conversation artifact delivery and workspace-output upload operations and
 // may read a final artifact only when the request includes the exact source
 // Run identity; it never receives generic personal/project Asset access.
 // web-bff retains ordinary personal/project Asset operations and conversation
-// final-Artifact reads, not Artifact writes or package access. kokoro-platform
+// final-Artifact reads, exact workspace-output downloads and workspace-output release,
+// not Artifact writes or package access. kokoro-platform
 // has only six package operations in skill_package scope: CreateUpload,
 // CompleteUpload, AbortUpload, GetUploadStatus, GetScanStatus, and
 // GetPackageReference. In skill_cover and connector_icon it has CreateUpload, CompleteUpload, AbortUpload,
@@ -59,6 +60,7 @@ enum UploadPurpose {
   UPLOAD_PURPOSE_ARTIFACT = 3;
   UPLOAD_PURPOSE_SKILL_COVER = 4;
   UPLOAD_PURPOSE_CONNECTOR_ICON = 5;
+  UPLOAD_PURPOSE_WORKSPACE_OUTPUT = 6;
 }
 
 enum UploadState {
@@ -407,6 +409,19 @@ message ReleaseConversationScopeResponse {
   uint64 queued_object_cleanup_count = 5;
 }
 
+// Releases only the workspace-output purpose, never the whole conversation.
+message ReleaseConversationWorkspaceOutputsRequest {
+  kokoro.common.v1.CommandIdentity command = 1;
+}
+
+message ReleaseConversationWorkspaceOutputsResponse {
+  bool workspace_outputs_released = 1;
+  bool replayed = 2;
+  uint64 aborted_upload_count = 3;
+  uint64 released_asset_count = 4;
+  uint64 queued_object_cleanup_count = 5;
+}
+
 message DeleteAssetRequest {
   kokoro.common.v1.CommandIdentity command = 1;
   string asset_id = 2;
@@ -437,4 +452,5 @@ service StorageService {
   rpc GetFinalArtifactDownloadReference(kokoro.storage.v3.GetFinalArtifactDownloadReferenceRequest) returns (kokoro.storage.v3.GetFinalArtifactDownloadReferenceResponse);
   rpc ReleaseProjectScope(kokoro.storage.v3.ReleaseProjectScopeRequest) returns (kokoro.storage.v3.ReleaseProjectScopeResponse);
   rpc ReleaseConversationScope(kokoro.storage.v3.ReleaseConversationScopeRequest) returns (kokoro.storage.v3.ReleaseConversationScopeResponse);
+  rpc ReleaseConversationWorkspaceOutputs(kokoro.storage.v3.ReleaseConversationWorkspaceOutputsRequest) returns (kokoro.storage.v3.ReleaseConversationWorkspaceOutputsResponse);
 }

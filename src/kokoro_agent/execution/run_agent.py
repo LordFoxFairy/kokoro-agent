@@ -31,6 +31,7 @@ from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
 from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
+from kokoro_agent.domain.run.workspace_output import OUTPUT_METADATA
 from kokoro_agent.model.call_scope import (
     DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
     ModelCallScope,
@@ -49,6 +50,7 @@ class CheckpointMetadata(TypedDict):
     kokoro_generation: int
     kokoro_command_id: NotRequired[str]
     kokoro_attempt_id: NotRequired[str]
+    kokoro_workspace_output_root: NotRequired[str]
 
 
 async def invoke_once(
@@ -237,6 +239,7 @@ def _config(
         "kokoro_generation",
         "kokoro_command_id",
         "kokoro_attempt_id",
+        OUTPUT_METADATA,
     ):
         metadata.pop(key, None)
     if checkpoint_metadata is not None:

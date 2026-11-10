@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.domain.run.models import LeaseFence
-from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity
+from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity, RunRequest
 from kokoro_agent.protocol.control import StorageResourceRef
 
 
@@ -111,3 +112,17 @@ class InputResourceReadClient(Protocol):
     async def read_input(
         self, request: InputResourceReadRequest
     ) -> InputResourceReadReceipt: ...
+
+
+class WorkspaceOutputUploadClient(Protocol):
+    async def upload_workspace_output(
+        self,
+        run: RunRequest,
+        lease: LeaseFence,
+        version_id: str,
+        path: str,
+        content_sha256: str,
+        content: bytes,
+        selected: tuple[str, str] | None,
+        freeze: Callable[[str, str], Awaitable[bool]],
+    ) -> str: ...

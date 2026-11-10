@@ -1,3 +1,7 @@
+## Task A A‑10：State 过程输出（HTTP 8.17.0）
+
+现 `/v1/runs/{run_id}/display` 内部 owner 事实新增可省略的 `workspace_outputs`，仅当前身份范围内该 Run 已有 CLEAN 回执时返回；1–128 个严格 exact `version_id/virtual_path/asset_id/content_sha256/size_bytes/mime_type`，无 URL、对象版本或内容。Storage `asset_id` 只供 BFF exact 准入读取，不是浏览器凭据。8.16 父字节不变。Worker 生成消费 Storage v3 `b60931e9e4e92d596b0678cbdabd9116e898b432` 的现有 CreateUpload/CompleteUpload 与 `WORKSPACE_OUTPUT`，不写 Artifact；原 Redis 和公开事件不变。
+
 ## 2026-11-10 · A‑10 已交付成果目录来源（HTTP 8.16.0）
 
 现 `ChatEvent.payload_json` 的 `delivery` 明确绑定闭合 `ChatDelivery`，既有字段和原 `path` 不变。可省略的 `display_path` 非 null，精确等于可证明的原虚拟绝对路径；NFC/4096 UTF‑8 字节上限，无控制、敏感名、宿主路径前缀或隐藏路径段。旧/未知路径缺字段，不返回替代值。路径只用于显示已交付 Artifact 的出处，不授权打开文件，不改变 Artifact、Run 或 Storage wire。Agent HTTP 路由集不变，8.15 完整父件由精确逆证保护。

@@ -660,3 +660,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_checkpoint_observation_probe
   ON kokoro_agent_run_checkpoint_observation(run_id,command_id,attempt_id,probe_read_id) WHERE kind='probe';
 CREATE INDEX IF NOT EXISTS idx_checkpoint_observation_target
   ON kokoro_agent_run_checkpoint_observation(run_id,command_id,attempt_id,generation,observation_digest);
+
+
+CREATE TABLE IF NOT EXISTS kokoro_agent_workspace_output_version (
+  run_id TEXT NOT NULL,
+  version_id TEXT NOT NULL,
+  checkpoint_id TEXT NOT NULL,
+  parent_checkpoint_id TEXT NOT NULL,
+  source_generation BIGINT NOT NULL,
+  task_id TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  created_at TIMESTAMPTZ(3) NOT NULL DEFAULT clock_timestamp(),
+  upload_id TEXT,
+  source_version_id TEXT,
+  asset_id TEXT,
+  PRIMARY KEY (run_id, version_id),
+  CONSTRAINT ck_workspace_output_storage CHECK (
+    ((upload_id IS NULL AND source_version_id IS NULL) OR
+     (upload_id IS NOT NULL AND source_version_id IS NOT NULL
+       AND length(upload_id) BETWEEN 1 AND 255
+       AND length(source_version_id) BETWEEN 1 AND 512))
+    AND (asset_id IS NULL OR (upload_id IS NOT NULL AND length(asset_id) BETWEEN 1 AND 255))
+  ),
+  CONSTRAINT ck_workspace_output_version CHECK (
+    version_id ~ '^wsv_[0-9a-f]{64}$' AND source_generation > 0
+    AND checkpoint_id <> parent_checkpoint_id AND length(run_id) > 0
+    AND length(checkpoint_id) > 0 AND length(parent_checkpoint_id) > 0
+    AND length(task_id) > 0 AND length(tool_call_id) > 0
+    AND octet_length(path) BETWEEN 10 AND 4096 AND left(path, 9) = '/outputs/'
+    AND size_bytes BETWEEN 0 AND 8388608 AND content_sha256 ~ '^[0-9a-f]{64}$'
+  )
+);

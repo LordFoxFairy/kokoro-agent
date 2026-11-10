@@ -42,6 +42,7 @@ from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.action_display import ActionDisplayMiddleware
 from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.tools.toolset import build_toolset, resolve_declared_mcp
+from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
 from kokoro_agent.clients.mcp import McpDisplayDeclaration
 from kokoro_agent.clients.mcp import McpClient, McpConnectionRef
@@ -92,7 +93,11 @@ from kokoro_agent.skills.backend import (
     SKILLS_ROOT,
 )
 from kokoro_agent.skills.middleware import RunSkillsMiddleware
-from kokoro_agent.tools.middleware import ToolPolicyMiddleware, TerminalGuardMiddleware
+from kokoro_agent.tools.middleware import (
+    ToolPolicyMiddleware,
+    TerminalGuardMiddleware,
+    WorkspaceOutputProofMiddleware,
+)
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.features.catalog import FEATURE_CATALOG, FeatureCatalog
 from kokoro_agent.features.definition import Feature
@@ -121,6 +126,7 @@ class AgentHandle:
     model_clients: tuple[ModelHttpClients, ...] = ()
     tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = ()
     tool_display_sources: tuple[ToolDisplaySource, ...] = ()
+    workspace_output_root: str | None = None
 
     def describe_tool(self, name: str) -> str | None:
         return self.tool_descriptions.get(name)
@@ -429,6 +435,11 @@ async def build_deep_agent(
             ),
             model_guard(plan.peer_path),
             *base_main_chain[offset:],
+            *(
+                (WorkspaceOutputProofMiddleware(RunScope.of(request).scoped_thread_id),)
+                if plan.workspace_output_root
+                else ()
+            ),
         )
         # DeepAgents is the runtime.  This call must remain a direct call to the
         # upstream constructor; this module only translates GA's static Agent
@@ -440,7 +451,15 @@ async def build_deep_agent(
         # official-constructor boundary; the returned value is validated below.
         native_constructor: Any = getattr(deepagents, "create_deep_agent")
         validate_native_registry()
-        system_prompt = system_material(agent.prompt + capabilities.custom_api_prompt)
+        workspace_guidance = (
+            f"\n\nWrite user-facing process files under {plan.workspace_output_root} using write_file or edit_file. "
+            "Keep drafts, inputs, and secrets outside that directory."
+            if plan.workspace_output_root
+            else ""
+        )
+        system_prompt = system_material(
+            agent.prompt + capabilities.custom_api_prompt + workspace_guidance
+        )
         if private_material:
             # System material cannot be compacted. Reject it before even a summary can acquire funds.
             validate_personal_context_window(
@@ -507,6 +526,7 @@ async def build_deep_agent(
             tool_descriptions=toolset.descriptions,
             tool_display_codes=toolset.mounted_display_codes(candidate),
             tool_display_sources=toolset.mounted_display_sources(candidate),
+            workspace_output_root=plan.workspace_output_root,
             resources=resources,
             model_clients=(clients,),
         )

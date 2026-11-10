@@ -49,6 +49,11 @@ from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.features.catalog import get_feature
 from kokoro_agent.hitl.request import HumanRequest
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
+from kokoro_agent.infrastructure.checkpoint_workspace_outputs import (
+    CheckpointWorkspaceOutputs,
+)
+from kokoro_agent.clients.storage import WorkspaceOutputUploadClient
+from kokoro_agent.domain.run.workspace_output import OUTPUT_METADATA, OUTPUT_ROOT
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all
 from kokoro_agent.protocol import RunRequest
@@ -187,6 +192,7 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
         reader: BaseCheckpointSaver[str],
         repository: RunRepository,
         settings: CheckpointSettings | None = None,
+        workspace_storage: WorkspaceOutputUploadClient | None = None,
     ) -> None:
         if saver is reader:
             raise ValueError("checkpoint evidence requires an independent reader")
@@ -195,6 +201,11 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
         self._reader = reader
         self._repository = repository
         self._settings = settings
+        self._workspace_outputs = (
+            CheckpointWorkspaceOutputs(settings, repository, reader, workspace_storage)
+            if settings is not None
+            else None
+        )
         self._writes: dict[tuple[str, str, str], int] = {}
         self._write_stages: deque[tuple[str, tuple[str, str, str]]] = deque(maxlen=64)
         # Candidate locators only; the independent committed read is authority.
@@ -242,7 +253,27 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
                 # Evidence is supplemental. No successful receipt or Run
                 # failure is inferred if the independent read/write fails.
                 _LOGGER.exception("steer checkpoint confirmation deferred")
+        if (
+            self._workspace_outputs is not None
+            and "files" in (checkpoint.get("updated_channels") or ())
+            and config.get("metadata", {}).get(OUTPUT_METADATA) == OUTPUT_ROOT
+        ):
+            try:
+                await self._workspace_outputs.capture(config, saved)
+            except Exception as error:
+                # The committed checkpoint remains authoritative; the same
+                # Run's settling/recovery path re-reads it without redoing the tool.
+                _LOGGER.warning(
+                    "workspace output capture deferred",
+                    extra={"error_type": type(error).__name__},
+                )
         return saved
+
+    async def recover_workspace_outputs(
+        self, request: RunRequest, lease: LeaseFence
+    ) -> None:
+        if self._workspace_outputs is not None:
+            await self._workspace_outputs.recover(request, lease)
 
     async def _confirm_steer_checkpoint(
         self,
@@ -1184,9 +1215,14 @@ def make_interaction_checkpointer(
     reader: BaseCheckpointSaver[str],
     repository: RunRepository,
     settings: CheckpointSettings | None = None,
+    workspace_storage: WorkspaceOutputUploadClient | None = None,
 ) -> InteractionCheckpointer:
     return InteractionCheckpointer(
-        saver=saver, reader=reader, repository=repository, settings=settings
+        saver=saver,
+        reader=reader,
+        repository=repository,
+        settings=settings,
+        workspace_storage=workspace_storage,
     )
 
 

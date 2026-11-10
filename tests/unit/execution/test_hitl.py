@@ -702,3 +702,94 @@ def test_swarm_root_witness_never_overrides_unproven_leaf(defect: str | None) ->
     else:
         with pytest.raises(InteractionCorrupt):
             _require_swarm_root_handoff(observation, run, recipe)
+
+
+async def test_native_ask_pause_projects_only_exact_question_and_keeps_old_description() -> (
+    None
+):
+    from langchain.agents.middleware import InterruptOnConfig
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL
+    from kokoro_agent.tools.permissions import build_interrupt_on
+    from support.deepagents import create_test_deep_agent
+    from support.local_fake import LocalFakeChatModel
+
+    question = "这份简报面向哪类读者？"
+    private_choice = "not-public-tool-option"
+    static = "Static tool instructions"
+    for legacy in (False, True):
+        repo = FakeRunRepository()
+        run = request("ask-legacy" if legacy else "ask-current")
+        lease = await repo.try_claim(run)
+        assert lease is not None
+        saver, reader = InMemorySaver(), InMemorySaver()
+        reader.storage, reader.writes, reader.blobs = (
+            saver.storage,
+            saver.writes,
+            saver.blobs,
+        )
+        bridge = make_interaction_checkpointer(
+            saver=saver, reader=reader, repository=repo
+        )
+        # This is the exact pre-fix SDK config, not a fake legacy description.
+        config = (
+            {"ask_user_question": InterruptOnConfig(allowed_decisions=["respond"])}
+            if legacy
+            else build_interrupt_on(frozenset())
+        )
+        runnable = create_test_deep_agent(
+            model=LocalFakeChatModel.with_script(
+                [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "ask_user_question",
+                                "id": "ask-1",
+                                "args": {
+                                    "question": question,
+                                    "choices": [private_choice],
+                                    "allow_free_text": True,
+                                },
+                            },
+                        ],
+                    )
+                ]
+            ),
+            tools=[ASK_USER_TOOL],
+            interrupt_on=config,
+            checkpointer=bridge,
+        )
+        handle = AgentHandle(
+            runnable=runnable, tool_descriptions={"ask_user_question": static}
+        )
+        native_config: RunnableConfig = {
+            "configurable": {"thread_id": RunScope.of(run).scoped_thread_id},
+            "metadata": {
+                "kokoro_run_id": run.run_id,
+                "kokoro_generation": lease.generation,
+            },
+        }
+        stream = await runnable.astream_events(
+            {"messages": [HumanMessage(content="Prepare a briefing")]},
+            version="v3",
+            config=native_config,
+            transformers=[],
+        )
+        async with stream:
+            assert await stream.interrupted()
+        target = PauseReadTarget(command_id=None, attempt_id=None)
+        pause = await bridge.read_interaction(
+            request=run, lease=lease, handle=handle, target=target
+        )
+        assert isinstance(pause, NativePauseRead)
+        item = decode_pause_snapshot(pause.pause).groups[0].items[0]
+        assert item.display.description == (static if legacy else question)
+        assert item.allowed_decisions == ["respond"] and item.display.input_schema == {}
+        assert private_choice.encode() not in pause.pause.canonical_bytes
+        # The same independently read pause preserves the entire identity.
+        again = await bridge.read_interaction(
+            request=run, lease=lease, handle=handle, target=target
+        )
+        assert isinstance(again, NativePauseRead) and again.pause == pause.pause

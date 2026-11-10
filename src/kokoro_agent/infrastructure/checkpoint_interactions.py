@@ -29,6 +29,7 @@ from langgraph.types import Command
 from pydantic import JsonValue, TypeAdapter
 
 from kokoro_agent.agent_factory import AgentHandle
+from kokoro_agent.domain.chat.display_text import public_action_title
 from kokoro_agent.domain.run.interactions import (
     CheckpointObservation,
     ConsumedPauseEvidence,
@@ -57,6 +58,7 @@ from kokoro_agent.domain.run.workspace_output import OUTPUT_METADATA, OUTPUT_ROO
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_all
 from kokoro_agent.protocol import RunRequest
+from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
 from kokoro_agent.protocol.events import (
     InteractionGroup,
     InteractionItem,
@@ -575,6 +577,19 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
                 name = action["name"]
                 if not isinstance(name, str):
                     raise InteractionCorrupt("invalid native action name")
+                allowed = configs[name]["allowed_decisions"]
+                description = handle.describe_tool(name) or ""
+                if name == ASK_USER_TOOL_NAME and allowed == ["respond"]:
+                    args = action.get("args")
+                    question = (
+                        public_action_title(args.get("question"))
+                        if isinstance(args, dict)
+                        else None
+                    )
+                    # An older native description contains a multiline args repr.
+                    # Never promote old pauses or change their collection identity.
+                    if question is not None and action.get("description") == question:
+                        description = question
                 item_id = _digest([group_id, index])
                 items.append(
                     InteractionItem.model_validate(
@@ -582,10 +597,10 @@ class InteractionCheckpointer(BaseCheckpointSaver[str]):
                             "item_id": item_id,
                             "request_id": item_id,
                             "kind": "tool_approval",
-                            "allowed_decisions": configs[name]["allowed_decisions"],
+                            "allowed_decisions": allowed,
                             "display": {
                                 "name": name,
-                                "description": handle.describe_tool(name) or "",
+                                "description": description,
                                 "editable": True,
                                 "input_schema": {},
                             },

@@ -32,9 +32,13 @@ async def test_exact_stopped_docker_output_recovery_never_reexecutes(
     scratch = tmp_path / (".kokoro-output-" + key)
     state = "absent"
     starts = 0
+    ordinary_calls = 0
 
     def run(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        nonlocal state, starts
+        nonlocal state, starts, ordinary_calls
+        if args[0] == "exec":
+            ordinary_calls += 1
+            return subprocess.CompletedProcess(args, 0, "ordinary stdout", "")
         assert secret not in str(args) and secret not in str(kwargs.get("env"))
         if args[0] == "inspect" and args[-1] == "owned-run-container":
             return subprocess.CompletedProcess(args, 0, "sha256:" + "a" * 64, "")
@@ -100,18 +104,36 @@ async def test_exact_stopped_docker_output_recovery_never_reexecutes(
         docker_cli_environment={},
     )
 
+    other = DockerShellBackend(
+        root=normal, container_id="other", timeout=4, max_output_bytes=128
+    )
+    with backend.capture_workspace_output("/outputs/report.md", key) as output:
+        foreign = await other.aexecute("ordinary")
+        assert foreign.output == "ordinary stdout" and output.content is None
+        native = await backend.aexecute("print-fixture", timeout=4)
+        assert (native.exit_code, native.output) == (0, "")
+        assert output.content == original
+        with pytest.raises(ValueError, match="^sandbox_workspace_output_unavailable$"):
+            await backend.aexecute("print-fixture", timeout=4)
+    assert output.content == original
+    assert (await backend.aexecute("ordinary")).output == "ordinary stdout"
+    assert ordinary_calls == 2
+
     capture = backend.aexecute_workspace_output
-    assert await capture("print-fixture", "/outputs/report.md", key, 4) == original
     assert await capture("print-fixture", "/outputs/report.md", key, 4) is None
-    assert (
-        await capture("print-fixture", "/outputs/report.md", key, 4, recover=True)
-        == original
-    )
+    with backend.capture_workspace_output(
+        "/outputs/report.md", key, recover=True
+    ) as recovered:
+        native = await backend.aexecute("print-fixture", timeout=4)
+    assert (native.exit_code, native.output) == (0, "")
+    assert recovered.content == original
     state = "running"
-    assert (
-        await capture("print-fixture", "/outputs/report.md", key, 4, recover=True)
-        is None
-    )
+    with backend.capture_workspace_output(
+        "/outputs/report.md", key, recover=True
+    ) as unresolved:
+        with pytest.raises(ValueError, match="^sandbox_workspace_output_unavailable$"):
+            await backend.aexecute("print-fixture", timeout=4)
+    assert unresolved.content is None
     state = "exited"
     artifact = scratch / "report.md"
     artifact.write_bytes(secret.encode())

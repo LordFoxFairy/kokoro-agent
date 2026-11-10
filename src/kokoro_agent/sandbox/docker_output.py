@@ -9,8 +9,10 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Mapping
-from contextlib import ExitStack
+from collections.abc import Generator, Mapping
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, TypedDict
 
@@ -20,6 +22,50 @@ from kokoro_agent.sandbox.execution_environment import ExecutionBoundaryError
 from kokoro_agent.sandbox.file_egress import open_local_directory
 
 _MOUNT_POINT = "/workspace"
+
+
+@dataclass(slots=True)
+class WorkspaceOutputCapture:
+    owner: object = field(repr=False)
+    path: str
+    key: str
+    recover: bool
+    content: bytes | None = field(default=None, repr=False, init=False)
+    _closed: bool = field(default=False, init=False)
+    _used: bool = field(default=False, init=False)
+
+    def claim(self) -> bool:
+        if self._closed or self._used:
+            return False
+        self._used = True
+        return True
+
+    def close(self) -> None:
+        self._closed = True
+
+
+_WORKSPACE_OUTPUT_CAPTURE: ContextVar[WorkspaceOutputCapture | None] = ContextVar(
+    "docker_workspace_output_capture", default=None
+)
+
+
+@contextmanager
+def capture_workspace_output(
+    owner: object, path: str, key: str, *, recover: bool
+) -> Generator[WorkspaceOutputCapture]:
+    capture = WorkspaceOutputCapture(owner=owner, path=path, key=key, recover=recover)
+    token = _WORKSPACE_OUTPUT_CAPTURE.set(capture)
+    try:
+        yield capture
+    finally:
+        # A spawned task may inherit this object even after our context resets.
+        capture.close()
+        _WORKSPACE_OUTPUT_CAPTURE.reset(token)
+
+
+def current_workspace_output(owner: object) -> WorkspaceOutputCapture | None:
+    capture = _WORKSPACE_OUTPUT_CAPTURE.get()
+    return capture if capture is not None and capture.owner is owner else None
 
 
 class DockerOperation(Protocol):

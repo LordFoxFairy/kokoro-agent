@@ -1257,7 +1257,7 @@ async def test_state_output_versions_recover_committed_edit_without_borrowing_ne
         CheckpointWorkspaceOutputs,
     )
     from kokoro_agent.infrastructure.schema import WORKSPACE_OUTPUT_VERSIONS_TABLE
-    from kokoro_agent.tools.middleware import WorkspaceOutputProofMiddleware
+    from kokoro_agent.tools.workspace_output import WorkspaceOutputProofMiddleware
     from support.local_fake import LocalFakeChatModel
 
     run = request("workspace-output-recovery")

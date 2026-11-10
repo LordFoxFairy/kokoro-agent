@@ -99,8 +99,8 @@ from kokoro_agent.skills.middleware import RunSkillsMiddleware
 from kokoro_agent.tools.middleware import (
     ToolPolicyMiddleware,
     TerminalGuardMiddleware,
-    WorkspaceOutputProofMiddleware,
 )
+from kokoro_agent.tools.workspace_output import WorkspaceOutputProofMiddleware
 from kokoro_agent.tools.permissions import build_interrupt_on
 from kokoro_agent.features.catalog import FEATURE_CATALOG, FeatureCatalog
 from kokoro_agent.features.definition import Feature

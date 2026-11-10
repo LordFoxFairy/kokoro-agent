@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Any, TypeGuard
+from typing import Any
 
 from deepagents.middleware.filesystem import (
     EditFileSchema,
@@ -26,7 +26,6 @@ from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationEr
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
-from langgraph.prebuilt import ToolRuntime
 
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
@@ -34,10 +33,8 @@ from kokoro_agent.domain.run.repository import LeaseFence, RunRepository
 from kokoro_agent.domain.run.workspace_output import (
     MAX_OUTPUT_BYTES,
     NativeWorkspaceWrite,
-    OUTPUT_PROOF,
     WorkspaceExecuteIntent,
     WorkspaceOutputGuard,
-    output_path_digest,
 )
 from kokoro_agent.protocol.events import DeliveryCreatedPayload
 from kokoro_agent.sandbox.backend import (
@@ -48,6 +45,7 @@ from kokoro_agent.sandbox.docker_backend import DockerShellBackend
 from kokoro_agent.sandbox.execution_environment import ExecutionBoundaryError
 from kokoro_agent.sandbox.output_edit import capture_output_edit
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
+from kokoro_agent.tools.workspace_output import native_output_path
 
 _logger = logging.getLogger(__name__)
 
@@ -74,79 +72,6 @@ _MCP_CALL: ContextVar[tuple[str, str] | None] = ContextVar(
 def current_mcp_tool_call_id(run_id: str) -> str | None:
     current = _MCP_CALL.get()
     return current[1] if current is not None and current[0] == run_id else None
-
-
-def _is_mapping(value: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(value, dict)
-
-
-def _native_output_path(
-    request: ToolCallRequest,
-    thread_id: str,
-    schema: type[BaseModel] | None,
-    *,
-    field: str = "file_path",
-) -> str | None:
-    call = request.tool_call
-    name, call_id, path = call["name"], call.get("id"), call["args"].get(field)
-    runtime: object = getattr(request, "runtime", None)
-    runtime_call_id: object = getattr(runtime, "tool_call_id", None)
-    config: object = getattr(runtime, "config", None)
-    configurable = config.get("configurable") if _is_mapping(config) else None
-    if (
-        schema is None
-        or request.tool is None
-        or request.tool.name != name
-        or request.tool.args_schema is not schema
-        or not isinstance(call_id, str)
-        or not call_id
-        or not isinstance(runtime, ToolRuntime)
-        or runtime_call_id != call_id
-        or not _is_mapping(configurable)
-        or configurable.get("thread_id") != thread_id
-        or not isinstance(path, str)
-        or output_path_digest(path) is None
-    ):
-        return None
-    return path
-
-
-class WorkspaceOutputProofMiddleware(AgentMiddleware):
-    """Mark only the actual pinned native tools on this assembled State peer."""
-
-    def __init__(self, thread_id: str) -> None:
-        super().__init__()
-        self._thread_id = thread_id
-
-    async def awrap_tool_call(
-        self, request: ToolCallRequest, handler: _ToolHandler
-    ) -> ToolMessage | Command[Any]:
-        call = request.tool_call
-        name, call_id = call["name"], call.get("id")
-        path = _native_output_path(
-            request,
-            self._thread_id,
-            {"write_file": WriteFileSchema, "edit_file": EditFileSchema}.get(name),
-        )
-        result = await handler(request)
-        if (
-            path is None
-            or not isinstance(result, ToolMessage)
-            or (result.name, result.tool_call_id, result.status)
-            != (name, call_id, "success")
-        ):
-            return result
-        metadata: object = getattr(result, "response_metadata")
-        if not _is_mapping(metadata):
-            return result
-        return result.model_copy(
-            update={
-                "response_metadata": {
-                    **metadata,
-                    OUTPUT_PROOF: output_path_digest(path),
-                }
-            }
-        )
 
 
 class ToolPolicyMiddleware(AgentMiddleware):
@@ -451,7 +376,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
     def _native_write(self, request: ToolCallRequest) -> NativeWorkspaceWrite | None:
         if self._workspace_thread is None or request.tool_call["name"] != "write_file":
             return None
-        path = _native_output_path(request, self._workspace_thread, WriteFileSchema)
+        path = native_output_path(request, self._workspace_thread, WriteFileSchema)
         content = request.tool_call["args"].get("content")
         if (
             path is None
@@ -465,7 +390,9 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             return None
         return NativeWorkspaceWrite(path, raw) if len(raw) <= MAX_OUTPUT_BYTES else None
 
-    async def _execute_workspace_script(self, request: ToolCallRequest) -> ToolMessage:
+    async def _execute_workspace_script(
+        self, request: ToolCallRequest, handler: _ToolHandler
+    ) -> ToolMessage:
         call, backend, thread = (
             request.tool_call,
             self._workspace_script,
@@ -475,7 +402,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         args = call["args"]
         command, timeout = args.get("command"), args.get("timeout")
         path = (
-            _native_output_path(request, thread, ExecuteSchema, field="output_path")
+            native_output_path(request, thread, ExecuteSchema, field="output_path")
             if thread is not None
             else None
         )
@@ -540,8 +467,23 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             cleanup_id = cleanup.cleanup_id
         await _require_current_lease(self._run_repository, self._run_id, self._lease)
         try:
-            raw = await backend.aexecute_workspace_output(
-                command, path, key, timeout, recover=recover
+            with backend.capture_workspace_output(
+                path, key, recover=recover
+            ) as capture:
+                native = await handler(
+                    request.override(
+                        tool_call={
+                            **call,
+                            "args": {"command": command, "timeout": timeout},
+                        }
+                    )
+                )
+            raw = (
+                capture.content
+                if isinstance(native, ToolMessage)
+                and (native.name, native.tool_call_id, native.status)
+                == ("execute", tool_id, "success")
+                else None
             )
         except ExecutionBoundaryError:
             return self._replay(recorded, tool_id=tool_id, name="execute")
@@ -591,7 +533,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         name = call["name"]
         await _require_current_lease(self._run_repository, self._run_id, self._lease)
         if name == "execute" and call["args"].get("output_path") is not None:
-            return await self._execute_workspace_script(request)
+            return await self._execute_workspace_script(request, handler)
         if name in self._exempt:
             # 纯读/幂等 / Command 形态工具：不落 journal，直接放行（重执行安全）。
             return await handler(request)
@@ -635,7 +577,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         )
         write = self._native_write(request)
         edit_path = (
-            _native_output_path(request, self._workspace_thread, EditFileSchema)
+            native_output_path(request, self._workspace_thread, EditFileSchema)
             if self._workspace_edit
             and self._workspace_thread is not None
             and name == "edit_file"

@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Mapping
-from contextlib import ExitStack
+from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import Annotated
 
@@ -26,7 +26,10 @@ from kokoro_agent.domain.run.workspace_output import OUTPUT_ROOT, output_path_di
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin, S3Archiver
 from kokoro_agent.sandbox.docker_output import (
     OUTPUT_UNAVAILABLE,
+    WorkspaceOutputCapture,
+    capture_workspace_output,
     cleanup_workspace_output,
+    current_workspace_output,
     inspect_workspace_output,
     output_names,
     remaining,
@@ -310,7 +313,15 @@ class DockerShellBackend(WorkspaceOutputLocalShellBackend):
         # 统一生命周期面（ADR-010）：编排层据此落 run_repository 记录，各档同一属性名。
         return self.container_id
 
+    def capture_workspace_output(
+        self, path: str, key: str, *, recover: bool = False
+    ) -> AbstractContextManager[WorkspaceOutputCapture]:
+        return capture_workspace_output(self, path, key, recover=recover)
+
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if current_workspace_output(self) is not None:
+            # Only the official async tool path may consume this capture.
+            raise ValueError(OUTPUT_UNAVAILABLE)
         effective = timeout if timeout is not None else self._exec_timeout
         if self._environment is not None:
             return self._environment.execute(
@@ -324,6 +335,18 @@ class DockerShellBackend(WorkspaceOutputLocalShellBackend):
     async def aexecute(
         self, command: str, *, timeout: int | None = None
     ) -> ExecuteResponse:
+        capture = current_workspace_output(self)
+        if capture is not None:
+            if not capture.claim():
+                raise ValueError(OUTPUT_UNAVAILABLE)
+            capture.content = await self.aexecute_workspace_output(
+                command, capture.path, capture.key, timeout, recover=capture.recover
+            )
+            if capture.content is None:
+                # DeepAgents marks nonzero ExecuteResponse as a ToolMessage
+                # success. Its ValueError path carries the genuine error status.
+                raise ValueError(OUTPUT_UNAVAILABLE)
+            return ExecuteResponse(output="", exit_code=0, truncated=False)
         if self._environment is None:
             return await super().aexecute(command, timeout=timeout)
         return await self._environment.aexecute(
@@ -691,6 +714,14 @@ def connect_docker_sandbox(
 
 class ArchivingDockerShellBackend(ArchivingWritesMixin, DockerShellBackend):
     """docker 执行隔离 + S3 写时归档（多 pod 无共享卷 + 容器隔离的组合档）。"""
+
+    async def aexecute(
+        self, command: str, *, timeout: int | None = None
+    ) -> ExecuteResponse:
+        if current_workspace_output(self) is not None:
+            # The private output is not the regular workspace archive.
+            return await DockerShellBackend.aexecute(self, command, timeout=timeout)
+        return await super().aexecute(command, timeout=timeout)
 
     def __init__(
         self,

@@ -89,6 +89,7 @@ from kokoro_agent.sandbox import build_filesystem_permissions, make_backend_for_
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin
 from kokoro_agent.sandbox.backend import backend_resource
 from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+from kokoro_agent.sandbox.e2b_backend import E2BSandboxBackend
 from kokoro_agent.domain.run.workspace_output import WorkspaceOutputGuard
 from kokoro_agent.skills.backend import (
     TypedSkillBackend,
@@ -428,10 +429,13 @@ async def build_deep_agent(
         )
         workspace_output_guard = (
             backend.guard_workspace_output
-            if native_workspace_write and isinstance(backend, DockerShellBackend)
+            if native_workspace_write
+            and isinstance(backend, (DockerShellBackend, E2BSandboxBackend))
             else None
         )
-        if native_workspace_write and not isinstance(backend, LocalShellBackend):
+        if native_workspace_write and not isinstance(
+            backend, (LocalShellBackend, E2BSandboxBackend)
+        ):
             raise ValueError("native workspace output backend unavailable")
         if (
             native_workspace_write

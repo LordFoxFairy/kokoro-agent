@@ -1,3 +1,7 @@
+## A‑10 native E2B output write
+
+The existing Custom API E2B Chat can use native `write_file` under `/outputs/`. The pinned E2B SDK starts one bounded write in the existing sandbox, does not follow links or overwrite an existing path, and proves the bytes through the original file descriptor before the existing journal and credential guard can publish them. No new HTTP contract, Storage path or credentials flow. The local regression uses the actual writer with an E2B protocol double. Focused checks passed for the new behavior, with one existing metadata oversize fixture failure reproduced unchanged at parent `c14c47d` (the peer reset did not mark the fixture closed). Cloud, edit and script output are not accepted by this evidence.
+
 ## A-10 native Docker edit postimages
 
 The scoped native edit freezes the bytes installed by the mutation itself, not a later read of the workspace. The controller verified the locked SDK path in real Docker and PostgreSQL, then changed the mounted path: the replacement lease recovered the original edit bytes through Storage/MinIO/ClamAV with one CLEAN upload and cleared pending content. Credential guard was checked again on recovery. No separate Worker, browser, script output, or E2B was tested; the model and credential source were fixtures.

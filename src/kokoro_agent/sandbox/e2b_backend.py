@@ -7,12 +7,15 @@ SDK 调用面按 e2b 2.30 真实签名；受保护文件沿公开 download_url �
 from __future__ import annotations
 
 import asyncio
+import base64
+from hashlib import sha256
+import secrets
 import logging
 import math
 import threading
 import time
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
 from typing import Annotated, Literal, Protocol, runtime_checkable
 
@@ -25,11 +28,20 @@ from deepagents.backends.protocol import (
     GrepResult,
     LsResult,
     GlobResult,
+    WriteResult,
 )
 from deepagents.backends.sandbox import BaseSandbox
 from e2b import CommandExitException, Sandbox, SandboxException
+from e2b.api.client_async import AsyncEnvdTransportWithLogger
+from e2b.connection_config import (
+    KEEPALIVE_PING_HEADER,
+    KEEPALIVE_PING_INTERVAL_SEC,
+    default_username,
+)
+from e2b.envd.process import process_connect, process_pb2
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 import httpx
+from kokoro_agent.domain.run.workspace_output import OUTPUT_ROOT, output_path_digest
 from kokoro_agent.sandbox.execution_environment import (
     ExecutionEnvironmentProvider,
     ExecutionEnvironmentRunner,
@@ -38,15 +50,222 @@ from kokoro_agent.sandbox.execution_environment import (
 from kokoro_agent.sandbox.file_egress import (
     FileEgress,
     FILE_UNAVAILABLE,
+    MAX_FILE_BYTES,
     SnapshotFileTools,
     relative_path,
 )
-from kokoro_agent.sandbox.e2b_metadata import E2BMetadata
+from kokoro_agent.sandbox.e2b_metadata import E2BMetadata, FilesystemSandbox
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.e2b")
 
 # sandbox 即隔离边界（一 run 一箱）：箱内工作目录固定，无需再按 session 分桶。
 _WORKDIR = "/home/user"
+
+
+# Direct envd process: no login shell, source file readback, or user text in
+# argv. The stdin digest is checked before the exclusive directory-fd write.
+_WORKSPACE_WRITE = """
+from contextlib import ExitStack
+from hashlib import sha256
+import os, secrets, signal, sys
+
+signal.alarm(30)
+path, size, digest = sys.argv[1:]
+size = int(size)
+raw = sys.stdin.buffer.read(size)
+if len(raw) != size or sha256(raw).hexdigest() != digest:
+    sys.exit(1)
+parts = path.split("/")
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+def parent(stack, root, create):
+    for part in parts[:-1]:
+        if create:
+            try:
+                os.mkdir(part, 0o700, dir_fd=root)
+            except FileExistsError:
+                pass
+        root = os.open(part, flags, dir_fd=root)
+        stack.callback(os.close, root)
+    return root
+
+try:
+    with ExitStack() as stack:
+        root = os.open(".", flags)
+        stack.callback(os.close, root)
+        dest = parent(stack, root, True)
+        temp = ".kokoro-write-" + secrets.token_hex(16)
+        fd = os.open(temp, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=dest)
+        try:
+            with os.fdopen(fd, "w+b") as output:
+                if output.write(raw) != size:
+                    sys.exit(1)
+                output.flush()
+                written = os.fstat(output.fileno())
+                if written.st_size != size:
+                    sys.exit(1)
+                os.link(temp, parts[-1], src_dir_fd=dest, dst_dir_fd=dest,
+                        follow_symlinks=False)
+                linked = os.fstat(output.fileno())
+                output.seek(0)
+                actual = output.read(size + 1)
+                verified_digest = sha256(actual).hexdigest()
+                current = os.stat(parts[-1], dir_fd=parent(stack, root, False),
+                                  follow_symlinks=False)
+                if len(actual) != size or verified_digest != digest or (
+                    current.st_dev, current.st_ino, current.st_size,
+                    current.st_mtime_ns, current.st_ctime_ns
+                ) != (
+                    written.st_dev, written.st_ino, size,
+                    written.st_mtime_ns, linked.st_ctime_ns
+                ):
+                    sys.exit(1)
+        finally:
+            os.unlink(temp, dir_fd=dest)
+except OSError:
+    sys.exit(1)
+
+print(f"{size}:{verified_digest}")
+"""
+_WORKSPACE_WRITE_TIMEOUT = 30
+_INPUT_CHUNK_BYTES = 64 * 1024
+
+
+class _WriteProcessClient(Protocol):
+    def astart(
+        self,
+        request: process_pb2.StartRequest,
+        *,
+        timeout: float,
+        request_timeout: float,
+        headers: dict[str, str],
+    ) -> AsyncGenerator[process_pb2.StartResponse]: ...
+
+    async def asend_input(
+        self,
+        request: process_pb2.SendInputRequest,
+        *,
+        request_timeout: float,
+    ) -> process_pb2.SendInputResponse: ...
+
+    async def asend_signal(
+        self,
+        request: process_pb2.SendSignalRequest,
+        *,
+        request_timeout: float,
+    ) -> process_pb2.SendSignalResponse: ...
+
+
+async def _write_workspace_file(
+    sandbox: FilesystemSandbox, path: str, raw: bytes
+) -> bool:
+    origin = httpx.URL(sandbox.envd_api_url)
+    if (
+        origin.scheme not in {"http", "https"}
+        or not origin.host
+        or origin.userinfo
+        or origin.query
+        or origin.fragment
+        or origin.path not in {"", "/"}
+    ):
+        return False
+    user = base64.b64encode((default_username + ":").encode()).decode("ascii")
+    digest = sha256(raw).hexdigest()
+    expected = f"{len(raw)}:{digest}\n".encode("ascii")
+    pb = process_pb2
+    tag = "kokoro-workspace-write-" + secrets.token_hex(16)
+    request = pb.StartRequest(
+        process=pb.ProcessConfig(
+            cmd="/usr/bin/python3",
+            args=["-I", "-S", "-c", _WORKSPACE_WRITE, path, str(len(raw)), digest],
+            cwd=_WORKDIR,
+        ),
+        tag=tag,
+        stdin=True,
+    )
+    with _file_io_logs():
+        async with AsyncEnvdTransportWithLogger(
+            trust_env=False,
+            retries=0,
+            limits=httpx.Limits(max_connections=2, max_keepalive_connections=0),
+        ) as transport:
+            # Generated Connect methods expose untyped **opts; declare only
+            # the exact pinned SDK calls this one mutation uses.
+            constructor: Callable[..., _WriteProcessClient] = getattr(
+                process_connect, "ProcessClient"
+            )
+            client = constructor(
+                str(origin).rstrip("/"),
+                async_pool=transport.pool,
+                json=True,
+                headers=sandbox.connection_config.sandbox_headers,
+            )
+            async with aclosing(
+                client.astart(
+                    request,
+                    timeout=_WORKSPACE_WRITE_TIMEOUT,
+                    request_timeout=5,
+                    headers={
+                        "Authorization": "Basic " + user,
+                        KEEPALIVE_PING_HEADER: str(KEEPALIVE_PING_INTERVAL_SEC),
+                    },
+                )
+            ) as events:
+                process = pb.ProcessSelector(tag=tag)
+                ended = False
+                try:
+                    async with asyncio.timeout(_WORKSPACE_WRITE_TIMEOUT):
+                        start = (await anext(events)).event
+                        if not start.HasField("start") or start.start.pid <= 0:
+                            return False
+                        for offset in range(0, len(raw), _INPUT_CHUNK_BYTES):
+                            await client.asend_input(
+                                pb.SendInputRequest(
+                                    process=process,
+                                    input=pb.ProcessInput(
+                                        stdin=raw[offset : offset + _INPUT_CHUNK_BYTES]
+                                    ),
+                                ),
+                                request_timeout=5,
+                            )
+                        proof = bytearray()
+                        async for response in events:
+                            event = response.event
+                            if ended:
+                                return False
+                            if event.HasField("keepalive"):
+                                continue
+                            if event.HasField("end"):
+                                ended = True
+                                if (
+                                    not event.end.exited
+                                    or event.end.exit_code != 0
+                                    or event.end.error
+                                ):
+                                    return False
+                                continue
+                            if not event.HasField("data") or not event.data.HasField(
+                                "stdout"
+                            ):
+                                return False
+                            if len(proof) + len(event.data.stdout) > len(expected):
+                                return False
+                            proof.extend(event.data.stdout)
+                        return ended and bytes(proof) == expected
+                finally:
+                    if not ended:
+                        try:
+                            async with asyncio.timeout(2):
+                                await client.asend_signal(
+                                    pb.SendSignalRequest(
+                                        process=process, signal=pb.SIGNAL_SIGKILL
+                                    ),
+                                    request_timeout=2,
+                                )
+                        except Exception:
+                            # The fixed program has its own lifetime bound; no retry.
+                            pass
 
 
 # e2b SDK 的最小依赖面（依赖倒置）：backend 只认这些子代理，测试注入 fake 无需真箱。
@@ -284,6 +503,40 @@ class E2BSandboxBackend(BaseSandbox):
                     return bytes(content)
                 finally:
                     await response.aclose()
+
+    async def guard_workspace_output(self, path: str, content: bytes) -> bool:
+        if self._file_egress is None:
+            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        return await self._file_egress.aguard_snapshot(path, content)
+
+    async def _write_product_output(self, file_path: str, content: str) -> WriteResult:
+        try:
+            if (
+                not isinstance(self._sandbox, FilesystemSandbox)
+                or output_path_digest(file_path) is None
+                or len(content) > MAX_FILE_BYTES
+            ):
+                return WriteResult(error=FILE_UNAVAILABLE)
+            path = relative_path(file_path)
+            raw = content.encode("utf-8")
+            if len(raw) <= MAX_FILE_BYTES and await _write_workspace_file(
+                self._sandbox, path, raw
+            ):
+                return WriteResult(path=file_path)
+        except Exception:
+            # The provider exception or stderr can contain private material.
+            pass
+        return WriteResult(error=FILE_UNAVAILABLE)
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        if self._file_egress is not None and file_path.startswith(OUTPUT_ROOT):
+            return asyncio.run(self._write_product_output(file_path, content))
+        return super().write(file_path, content)
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        if self._file_egress is not None and file_path.startswith(OUTPUT_ROOT):
+            return await self._write_product_output(file_path, content)
+        return await super().awrite(file_path, content)
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         if self._file_egress is not None:

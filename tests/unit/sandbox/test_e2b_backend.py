@@ -5,15 +5,22 @@ execute 映射。SDK 边界以 fake 注入验证我们的编排语义；SDK 真�
 from __future__ import annotations
 
 from typing import Self
+from collections.abc import AsyncIterator
+from pathlib import Path
+import subprocess
+import sys
 import asyncio
 import time
 import logging
 
 import pytest
 from e2b import CommandExitException, SandboxException
+from e2b.connection_config import ConnectionConfig
+from e2b.envd.process import process_connect, process_pb2
 from pydantic import SecretStr
 
 from support.fakes import FakeRunRepository, request
+from support.file_egress import Environment
 from kokoro_agent.sandbox.backend import SandboxSettings, make_backend_for_run
 from kokoro_agent.sandbox.e2b_backend import (
     E2BSandboxBackend,
@@ -495,3 +502,113 @@ async def test_e2b_without_api_keeps_original_native_file_tools(
     assert (await instance.agrep("needle", "/native")).matches == [
         {"path": "/native/file", "line": 1, "text": "needle"}
     ]
+
+
+async def test_protected_e2b_write_owns_exact_bytes_without_readback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class LocalSandbox(FakeSandbox):
+        envd_api_url = "https://envd.fixture.invalid"
+        connection_config = ConnectionConfig(api_key="fixture")
+
+    tamper = False
+
+    class Process:
+        def __init__(self, origin: str, **_: object) -> None:
+            assert origin == LocalSandbox.envd_api_url
+            self.data = bytearray()
+
+        async def astart(
+            self, request: process_pb2.StartRequest, **_: object
+        ) -> AsyncIterator[process_pb2.StartResponse]:
+            config = request.process
+            assert config.cwd == "/home/user" and request.stdin
+            assert request.tag.startswith("kokoro-workspace-write-")
+            self.tag = request.tag
+            assert config.cmd == "/usr/bin/python3" and not config.envs
+            assert list(config.args)[:3] == ["-I", "-S", "-c"]
+            assert "原文" not in "".join(config.args)
+            yield process_pb2.StartResponse(
+                event=process_pb2.ProcessEvent(
+                    start=process_pb2.ProcessEvent.StartEvent(pid=73)
+                )
+            )
+            args = list(config.args)
+            if tamper:
+                args[3] = """
+import os
+real_link = os.link
+def tamper_link(src, dst, *, src_dir_fd, dst_dir_fd, follow_symlinks):
+    fd = os.open(src, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=src_dir_fd)
+    try:
+        info = os.fstat(fd)
+        os.write(fd, b"X" * info.st_size)
+        os.utime(fd, ns=(info.st_atime_ns, info.st_mtime_ns))
+    finally:
+        os.close(fd)
+    real_link(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd,
+              follow_symlinks=follow_symlinks)
+os.link = tamper_link
+""" + args[3]
+            result = subprocess.run(
+                [sys.executable, *args],
+                cwd=tmp_path,
+                input=bytes(self.data),
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            assert not result.stderr
+            if result.stdout:
+                yield process_pb2.StartResponse(
+                    event=process_pb2.ProcessEvent(
+                        data=process_pb2.ProcessEvent.DataEvent(stdout=result.stdout)
+                    )
+                )
+            yield process_pb2.StartResponse(
+                event=process_pb2.ProcessEvent(
+                    end=process_pb2.ProcessEvent.EndEvent(
+                        exited=True, exit_code=result.returncode
+                    )
+                )
+            )
+
+        async def asend_input(
+            self, request: process_pb2.SendInputRequest, **_: object
+        ) -> process_pb2.SendInputResponse:
+            assert request.process.tag == self.tag
+            self.data.extend(request.input.stdin)
+            return process_pb2.SendInputResponse()
+
+    monkeypatch.setattr(process_connect, "ProcessClient", Process)
+    sandbox = LocalSandbox()
+    environment = Environment()
+    backend = E2BSandboxBackend(
+        sandbox,
+        environment_provider=environment,
+        environment_loop=asyncio.get_running_loop(),
+    )
+    text = "原文🦉\r\n"
+    path = "/outputs/proof.md"
+    file = tmp_path / "outputs" / "proof.md"
+    result = await backend.awrite(path, text)
+    assert result.error is None and result.path == path
+    assert file.read_bytes() == text.encode()
+    assert (await backend.awrite(path, "replace")).error
+    assert file.read_bytes() == text.encode()
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (file.parent / "alias").symlink_to(outside, target_is_directory=True)
+    assert (await backend.awrite("/outputs/alias/escape.md", text)).error
+    assert not (outside / "escape.md").exists()
+
+    tamper = True
+    assert (await backend.awrite("/outputs/tampered.md", text)).error
+    assert not sandbox.commands_run
+
+    assert await backend.guard_workspace_output(path, text.encode())
+    assert not await backend.guard_workspace_output(
+        path, "private-原值-marker".encode()
+    )
+    assert environment.calls == 2

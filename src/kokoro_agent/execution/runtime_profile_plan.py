@@ -305,9 +305,12 @@ def prepare_feature(
             | set(permissions.review_tools)
             | set(agent.pause_tools)
         )
-        native_write = (
+        mounted_workspace = (
             agent.backend in {"docker", "local_shell"}
             and runtime_policy.workspace_root_configured
+        )
+        native_write = mounted_workspace or (
+            agent.backend == "e2b" and custom_api_selected
         )
         output_root = (
             OUTPUT_ROOT
@@ -322,7 +325,9 @@ def prepare_feature(
             )
             else None
         )
-        native_edit = bool(output_root and native_write and "edit_file" not in gated)
+        native_edit = bool(
+            output_root and mounted_workspace and "edit_file" not in gated
+        )
         native_script = bool(
             output_root
             and custom_api_selected

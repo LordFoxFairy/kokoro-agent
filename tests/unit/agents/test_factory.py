@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from functools import partial
 from unittest.mock import AsyncMock, Mock
-from deepagents.backends.state import StateBackend
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import SystemMessage
 import kokoro_agent.agent_factory as assembly
@@ -3262,17 +3261,22 @@ async def test_real_factory_describes_once_before_model_and_keeps_recipe_static(
         isolate_model_call_gate_for_unrelated_unit_scope=True,
     )
     from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+    from kokoro_agent.sandbox.e2b_backend import E2BSandboxBackend
 
-    # Exercise the real factory capability check without starting a container.
-    backend = AsyncMock(
-        return_value=(
-            DockerShellBackend(
+    def make_isolated_backend(
+        _: str, _settings: object, **kwargs: Any
+    ) -> DockerShellBackend | E2BSandboxBackend:
+        if kind == "docker":
+            return DockerShellBackend(
                 root=tmp_path, container_id="fixture", timeout=10, max_output_bytes=4096
             )
-            if kind == "docker"
-            else StateBackend()
+        return E2BSandboxBackend(
+            Mock(),
+            environment_provider=kwargs["environment_provider"],
+            environment_loop=asyncio.get_running_loop(),
         )
-    )
+
+    backend = AsyncMock(side_effect=make_isolated_backend)
     monkeypatch.setattr(assembly, "make_backend_for_run", backend)
 
     class CaptureModel(BaseCallbackHandler):
@@ -3294,7 +3298,8 @@ async def test_real_factory_describes_once_before_model_and_keeps_recipe_static(
     try:
         assert calls == ["describe"] and model_messages == []
         assert factory.backend_for(first) == kind
-        assert handle.native_workspace_write is (kind == "docker")
+        assert handle.native_workspace_write
+        assert handle.workspace_output_guard is not None
         assert backend.await_count == 1 and backend.call_args.args[0] == kind
         first_arguments = backend.call_args.kwargs
         provider = first_arguments["environment_provider"]

@@ -14,7 +14,6 @@ import boto3
 import yaml
 from botocore.config import Config as BotoConfig
 from mypy_boto3_s3 import S3Client
-from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import (
     EditResult,
     ExecuteResponse,
@@ -22,6 +21,7 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
+from kokoro_agent.sandbox.output_edit import WorkspaceOutputLocalShellBackend
 from kokoro_agent.sandbox.file_egress import FileEgress, local_archive_paths
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.archive")
@@ -138,7 +138,7 @@ class S3Archiver:
             raise RuntimeError("workspace archiver is closed")
 
 
-class ArchivingWritesMixin(LocalShellBackend):
+class ArchivingWritesMixin(WorkspaceOutputLocalShellBackend):
     """写时归档层（叠加于 LocalShellBackend 系，含 docker 变体；C3 线性化保证
     super() 落在真正的执行基类上）：write/edit 增量上传；execute/upload_files 后
     全量兜底（shell 直写无法逐文件感知）。归档失败 log 可见、绝不打断工具结果

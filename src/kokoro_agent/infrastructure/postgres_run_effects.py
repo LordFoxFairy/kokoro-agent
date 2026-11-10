@@ -420,7 +420,7 @@ class PostgresRunEffects:
             or not tool_call_id
             or output_path_digest(workspace_write.path) is None
             or len(workspace_write.content) > MAX_OUTPUT_BYTES
-            or result != f"Updated file {workspace_write.path}"
+            or result != workspace_write.acknowledgement
         ):
             raise ValueError("invalid native workspace write completion")
         async with connect_pg(self._context.database_url) as conn:
@@ -434,7 +434,7 @@ class PostgresRunEffects:
                         UPDATE {}
                         SET status = %s, result = %s, is_error = %s
                         WHERE run_id = %s AND tool_call_id = %s AND status = 'started'
-                        AND (NOT %s OR name = 'write_file') RETURNING tool_call_id
+                        AND (NOT %s OR name = %s) RETURNING tool_call_id
                         """.format(qualified(self._context.schema, TOOL_JOURNAL_TABLE)),
                         (
                             "failed" if is_error else "succeeded",
@@ -443,6 +443,9 @@ class PostgresRunEffects:
                             run_id,
                             tool_call_id,
                             workspace_write is not None,
+                            workspace_write.tool_name
+                            if workspace_write is not None
+                            else "",
                         ),
                     )
                     if await fetch_one(cur) is None:
@@ -454,7 +457,11 @@ class PostgresRunEffects:
                             + hashlib.sha256(
                                 json.dumps(
                                     [
-                                        "native-workspace-write:v1",
+                                        (
+                                            "native-workspace-write:v1"
+                                            if workspace_write.occurrences is None
+                                            else "native-workspace-edit:v1"
+                                        ),
                                         run_id,
                                         tool_call_id,
                                         workspace_write.path,

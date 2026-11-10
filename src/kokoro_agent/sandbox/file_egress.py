@@ -54,32 +54,54 @@ def relative_path(path: str) -> str:
     return "/".join(parts)
 
 
+def open_local_directory(
+    path: str | Path, stack: ExitStack, *, parent: int | None = None
+) -> int:
+    descriptor = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=parent
+    )
+    stack.callback(os.close, descriptor)
+    return descriptor
+
+
+def open_local_parent(root: int, parts: list[str], stack: ExitStack) -> int:
+    directory = root
+    for part in parts[:-1]:
+        directory = open_local_directory(part, stack, parent=directory)
+    return directory
+
+
+def read_local_bytes(
+    descriptor: int, maximum: int, deadline: float | None = None
+) -> bytes:
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
+        raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+    chunks: list[bytes] = []
+    count = 0
+    while count <= maximum:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+        chunk = os.read(descriptor, min(65536, maximum + 1 - count))
+        if not chunk:
+            return b"".join(chunks)
+        count += len(chunk)
+        if count <= maximum:
+            chunks.append(chunk)
+    raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+
+
 def local_reader(root: Path) -> Reader:
     def read(path: str, maximum: int, deadline: float) -> bytes:
         parts = relative_path(path).split("/")
-        flags = os.O_RDONLY | os.O_NOFOLLOW
         with ExitStack() as stack:
-            descriptor = os.open(root, flags | os.O_DIRECTORY)
+            root_fd = open_local_directory(root, stack)
+            parent = open_local_parent(root_fd, parts, stack)
+            descriptor = os.open(
+                parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+            )
             stack.callback(os.close, descriptor)
-            for part in parts[:-1]:
-                descriptor = os.open(part, flags | os.O_DIRECTORY, dir_fd=descriptor)
-                stack.callback(os.close, descriptor)
-            descriptor = os.open(parts[-1], flags | os.O_NONBLOCK, dir_fd=descriptor)
-            stack.callback(os.close, descriptor)
-            info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
-                raise ExecutionBoundaryError(FILE_UNAVAILABLE)
-            chunks: list[bytes] = []
-            count = 0
-            while count <= maximum:
-                if time.monotonic() >= deadline:
-                    raise ExecutionBoundaryError(FILE_UNAVAILABLE)
-                chunk = os.read(descriptor, min(65536, maximum + 1 - count))
-                if not chunk:
-                    return b"".join(chunks)
-                chunks.append(chunk)
-                count += len(chunk)
-            raise ExecutionBoundaryError(FILE_UNAVAILABLE)
+            return read_local_bytes(descriptor, maximum, deadline)
 
     return read
 

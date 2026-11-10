@@ -447,7 +447,9 @@ async def build_deep_agent(
                 subagent_create=policy.subagent_create,
             ),
             workspace_journal=(
-                chains.journal.for_workspace_output(thread, workspace_output_guard)
+                chains.journal.for_workspace_output(
+                    thread, workspace_output_guard, edit=plan.native_workspace_edit
+                )
                 if native_workspace_write
                 else None
             ),
@@ -480,7 +482,7 @@ async def build_deep_agent(
         validate_native_registry()
         workspace_guidance = (
             f"\n\nWrite user-facing process files under {plan.workspace_output_root} using "
-            f"{'write_file' if native_workspace_write else 'write_file or edit_file'}. "
+            f"{'write_file' if native_workspace_write and not plan.native_workspace_edit else 'write_file or edit_file'}. "
             "Keep drafts, inputs, and secrets outside that directory."
             if plan.workspace_output_root
             else ""

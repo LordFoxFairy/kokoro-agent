@@ -84,10 +84,10 @@ execution/mcp_runtime_request_binding.py execution/custom_api_request_binding.py
         "tools/deliver.py clients/storage.py clients/storage_delivery.py clients/storage_transport.py",
     ),
     ("backend", "sandbox/__init__.py sandbox/backend.py sandbox/workspace.py"),
-    ("local_shell", "sandbox/archive.py"),
+    ("local_shell", "sandbox/archive.py sandbox/output_edit.py sandbox/file_egress.py"),
     (
         "docker",
-        "sandbox/docker_backend.py sandbox/archive.py sandbox/execution_environment.py sandbox/file_egress.py",
+        "sandbox/docker_backend.py sandbox/archive.py sandbox/execution_environment.py sandbox/file_egress.py sandbox/output_edit.py",
     ),
     (
         "e2b",

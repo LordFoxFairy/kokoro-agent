@@ -514,3 +514,146 @@ async def test_native_workspace_write_freezes_input_not_mutable_disk_or_credenti
     }
     assert (await store.get_tool_journal(run.run_id, "private")) is not None
     assert marker not in str(store.tool_journal)
+
+
+async def test_native_workspace_edit_captures_written_postimage_and_refuses_parent_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
+    from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+    from support.deepagents import create_test_deep_agent
+    from support.local_fake import LocalFakeChatModel
+
+    root = tmp_path / "mounted"
+    outputs = root / "outputs"
+    outputs.mkdir(parents=True)
+    source = outputs / "report.md"
+    source.write_bytes("旧标题\r\n保留\r最后  \r\n".encode())
+    outside = root / "private"
+    outside.mkdir()
+    unrelated = outside / "volatile.md"
+    unrelated.write_bytes(source.read_bytes())
+    moving = outputs / "moving"
+    moving.mkdir()
+    (moving / "volatile.md").write_bytes(source.read_bytes())
+    replace = os.replace
+    replaced_parent = False
+
+    def move_parent_at_commit(
+        src: str,
+        dst: str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        nonlocal replaced_parent
+        if dst == "volatile.md":
+            os.rename(moving, root / "relocated")
+            moving.symlink_to(outside, target_is_directory=True)
+            replaced_parent = True
+        replace(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+    # Move the real parent at the owner atomic boundary; the native SDK is unchanged.
+    monkeypatch.setattr(os, "replace", move_parent_at_commit)
+    old, new = "旧标题\r\n", "新版🦉\r\n"
+    expected = "新版🦉\n保留\n最后  \n".encode()
+    path = "/outputs/report.md"
+
+    class Captured(FakeRunRepository):
+        captures: dict[str, NativeWorkspaceWrite]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.captures = {}
+
+        async def journal_tool_finished(
+            self,
+            run_id: str,
+            lease: LeaseFence,
+            tool_call_id: str,
+            result: str,
+            is_error: bool,
+            *,
+            workspace_write: NativeWorkspaceWrite | None = None,
+        ) -> bool:
+            ok = await super().journal_tool_finished(
+                run_id, lease, tool_call_id, result, is_error
+            )
+            if ok and workspace_write is not None:
+                self.captures[tool_call_id] = workspace_write
+            return ok
+
+    repo = Captured()
+    run = request("workspace-native-edit")
+    lease = await repo.try_claim(run)
+    assert lease is not None
+    thread = RunScope.of(run).scoped_thread_id
+    backend = DockerShellBackend(
+        root=root, container_id="not-started", timeout=2, max_output_bytes=2048
+    )
+    journal = ToolEffectJournalMiddleware(
+        run_repository=repo, run_id=run.run_id, lease=lease
+    )
+    graph = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "edit_file",
+                            "id": "good-edit",
+                            "args": {
+                                "file_path": path,
+                                "old_string": old,
+                                "new_string": new,
+                            },
+                        },
+                        {
+                            "name": "edit_file",
+                            "id": "linked-edit",
+                            "args": {
+                                "file_path": "/outputs/moving/volatile.md",
+                                "old_string": old,
+                                "new_string": new,
+                            },
+                        },
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        ),
+        backend=backend,
+        checkpointer=InMemorySaver(),
+        middleware=[
+            journal.for_workspace_output(
+                thread, backend.guard_workspace_output, edit=True
+            )
+        ],
+    )
+    stream = await graph.astream_events(
+        {"messages": [HumanMessage(content="Edit the process report")]},
+        version="v3",
+        config={"configurable": {"thread_id": thread}},
+        transformers=[],
+    )
+    async with stream:
+        assert not await stream.interrupted()
+    assert source.read_bytes() == expected
+    source.write_bytes(b"unrelated later mutation")
+    assert [
+        (key, value.path, value.content) for key, value in repo.captures.items()
+    ] == [
+        ("good-edit", path, expected),
+    ]
+    assert replaced_parent
+    assert unrelated.read_bytes() == "旧标题\r\n保留\r最后  \r\n".encode()
+    rejected = await repo.get_tool_journal(run.run_id, "linked-edit")
+    assert rejected is not None and rejected.is_error

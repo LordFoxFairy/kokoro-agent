@@ -9,7 +9,6 @@ from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, Callable, Protocol
 
-from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemPermission
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
@@ -39,6 +38,7 @@ from kokoro_agent.sandbox.e2b_backend import (
     connect_e2b_sandbox,
     kill_e2b_sandbox,
 )
+from kokoro_agent.sandbox.output_edit import WorkspaceOutputLocalShellBackend
 from kokoro_agent.sandbox.execution_environment import ExecutionEnvironmentProvider
 from kokoro_agent.domain.run.repository import (
     LeaseFence,
@@ -138,7 +138,7 @@ def make_backend(
                 max_output_bytes=settings.local_shell_max_output_bytes,
                 inherit_env=settings.local_shell_inherit_env,
             )
-        return LocalShellBackend(
+        return WorkspaceOutputLocalShellBackend(
             root_dir=root,
             # 虚拟根：模型的绝对路径（"/note.md"）映射进工作区，绝不触宿主真实根（越界即安全缺陷）。
             virtual_mode=True,

@@ -1,6 +1,6 @@
-## 2026-11-10 · A‑10 Docker/Local 原生 write_file 过程版本
+## 2026-11-10 · A‑10 Docker/Local 原生 write_file / edit_file 过程版本
 
-受信配置、普通单 peer Chat 的 Docker/Local 虚拟工作区才开 `/outputs/`。锁定 SDK `write_file` 的实际 ToolRuntime、原规范路径与成功 ACK 必须相符；原 UTF‑8 输入就是该原生写入的后像，不回读可变盘。Custom API Docker 复用现 FileEgress，原路径与原 bytes 在写入版本和接管上传前重新查凭据；拒绝不生成公开版本。`edit_file`、脚本和 E2B 不接本片。
+受信配置、普通单 peer Chat 的 Docker/Local 虚拟工作区才开 `/outputs/`。锁定 SDK `write_file` 的实际 ToolRuntime、原规范路径与成功 ACK 必须相符；直接写的后像是原 UTF‑8 输入；编辑使用锁定 SDK 的换行与替换规则，在无跟随父目录描述符下将同文件系统的暂存后像原子替换，从同次 mutation 捕获实际写入字节，不回读可变盘。链接、不可信类型或父目录替换不产生版本；这不承诺与外部写进程互斥。Custom API Docker 复用现 FileEgress，原路径与原 bytes 在写入版本和接管上传前重新查凭据；拒绝不生成公开版本。脚本和 E2B 不接本片。
 
 同一原 tool journal 完成事务在现活跃租约下冻结版本及 ≤8 MiB pending bytes；非 State 不造 checkpoint locator。接管只读同 Run 已成功 journal 的 exact bytes，再用原 Storage 命令及当前 lease 发布。CLEAN 绑定同一事务擦除 pending；失败、取消等终态删未公开 native 暂存，不碰 State 或已发布版本。无 API、第二表、事件或工作进程。
 

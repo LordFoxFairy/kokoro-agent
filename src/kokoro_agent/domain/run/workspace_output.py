@@ -20,6 +20,43 @@ WorkspaceOutputGuard: TypeAlias = Callable[[str, bytes], Awaitable[bool]]
 class NativeWorkspaceWrite:
     path: str
     content: bytes = field(repr=False)
+    occurrences: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.occurrences is not None and (
+            type(self.occurrences) is not int or self.occurrences < 1
+        ):
+            raise ValueError("invalid native workspace edit occurrence count")
+
+    @property
+    def tool_name(self) -> Literal["write_file", "edit_file"]:
+        return "edit_file" if self.occurrences is not None else "write_file"
+
+    @property
+    def acknowledgement(self) -> str:
+        if self.occurrences is None:
+            return f"Updated file {self.path}"
+        return f"Successfully replaced {self.occurrences} instance(s) of the string in '{self.path}'"
+
+
+def matches_native_output_ack(name: object, path: str, result: object) -> bool:
+    if name == "write_file":
+        return result == f"Updated file {path}"
+    prefix = "Successfully replaced "
+    if (
+        name != "edit_file"
+        or not isinstance(result, str)
+        or not result.startswith(prefix)
+    ):
+        return False
+    count, _, rest = result[len(prefix) :].partition(" instance(s) of the string in ")
+    return (
+        rest == f"'{path}'"
+        and 1 <= len(count) <= 10
+        and count.isascii()
+        and count.isdecimal()
+        and not count.startswith("0")
+    )
 
 
 WorkspaceOutputMime: TypeAlias = Literal[

@@ -17,7 +17,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
 
-from deepagents.backends.local_shell import LocalShellBackend
 
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin, S3Archiver
 from kokoro_agent.sandbox.execution_environment import (
@@ -32,6 +31,7 @@ from deepagents.backends.protocol import (
     LsResult,
     GlobResult,
 )
+from kokoro_agent.sandbox.output_edit import WorkspaceOutputLocalShellBackend
 from kokoro_agent.sandbox.file_egress import FileEgress, LocalFileTools, local_reader
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -123,7 +123,7 @@ def _docker_in_context(
     return _docker(*args, timeout=timeout, env=_cli_environment(docker_cli_environment))
 
 
-class DockerShellBackend(LocalShellBackend):
+class DockerShellBackend(WorkspaceOutputLocalShellBackend):
     """文件面=宿主 workspace 虚拟根（继承）；execute 重定向进容器。"""
 
     def __init__(

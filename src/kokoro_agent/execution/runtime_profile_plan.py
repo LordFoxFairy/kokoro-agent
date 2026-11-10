@@ -145,6 +145,7 @@ class PreparedPeerPlan:
     handoffs: tuple[BaseTool, ...]
     tool_metadata: bytes
     workspace_output_root: str | None = None
+    native_workspace_edit: bool = False
 
     def verify_tools(self, tools: Sequence[BaseTool]) -> None:
         actual = tuple(
@@ -296,6 +297,11 @@ def prepare_feature(
             for descriptor in selected_tools
         )
         permissions = agent.permissions
+        gated = (
+            set(permissions.approval_tools)
+            | set(permissions.review_tools)
+            | set(agent.pause_tools)
+        )
         native_write = (
             agent.backend in {"docker", "local_shell"}
             and runtime_policy.workspace_root_configured
@@ -309,14 +315,11 @@ def prepare_feature(
                 or (native_write and permissions.filesystem == "workspace_write")
             )
             and not (OUTPUT_TOOLS if not native_write else {"write_file"}).intersection(
-                (
-                    *permissions.approval_tools,
-                    *permissions.review_tools,
-                    *agent.pause_tools,
-                )
+                gated
             )
             else None
         )
+        native_edit = bool(output_root and native_write and "edit_file" not in gated)
         peers.append(
             PreparedPeerPlan(
                 agent=agent,
@@ -326,6 +329,7 @@ def prepare_feature(
                 handoffs=handoffs,
                 tool_metadata=canonical_json(metadata),
                 workspace_output_root=output_root,
+                native_workspace_edit=native_edit,
             )
         )
         model = agent.model
@@ -338,6 +342,7 @@ def prepare_feature(
                     if output_root is not None
                     else {}
                 ),
+                **({"native_workspace_edit": True} if native_edit else {}),
                 "public_action_intent": {
                     "field": "_kokoro_action",
                     "max_utf8_bytes": 256,

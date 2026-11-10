@@ -35,6 +35,7 @@ from kokoro_agent.domain.run.workspace_output import (
     output_path_digest,
 )
 from kokoro_agent.protocol.events import DeliveryCreatedPayload
+from kokoro_agent.sandbox.output_edit import capture_output_edit
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
 _logger = logging.getLogger(__name__)
@@ -400,6 +401,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         exempt: frozenset[str] = JOURNAL_EXEMPT_TOOLS,
         workspace_thread: str | None = None,
         workspace_guard: WorkspaceOutputGuard | None = None,
+        workspace_edit: bool = False,
     ) -> None:
         super().__init__()
         self._run_repository = run_repository
@@ -408,9 +410,10 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         self._exempt = exempt
         self._workspace_thread = workspace_thread
         self._workspace_guard = workspace_guard
+        self._workspace_edit = workspace_edit
 
     def for_workspace_output(
-        self, thread_id: str, guard: WorkspaceOutputGuard | None
+        self, thread_id: str, guard: WorkspaceOutputGuard | None, *, edit: bool = False
     ) -> ToolEffectJournalMiddleware:
         return ToolEffectJournalMiddleware(
             run_repository=self._run_repository,
@@ -419,6 +422,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             exempt=self._exempt,
             workspace_thread=thread_id,
             workspace_guard=guard,
+            workspace_edit=edit,
         )
 
     def _native_write(self, request: ToolCallRequest) -> NativeWorkspaceWrite | None:
@@ -486,8 +490,18 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             _MCP_CALL.set((self._run_id, tool_id)) if name == "mcp_call" else None
         )
         write = self._native_write(request)
+        edit_path = (
+            _native_output_path(request, self._workspace_thread, EditFileSchema)
+            if self._workspace_edit
+            and self._workspace_thread is not None
+            and name == "edit_file"
+            else None
+        )
         try:
-            result = await handler(request)
+            with capture_output_edit(edit_path) as capture:
+                result = await handler(request)
+            if capture is not None:
+                write = capture.postimage
         except GraphInterrupt:
             # MCP elicitation is inside an already-sent tools/call. Preserve started:
             # teardown cannot prove zero effects, so resume must not resend the call.
@@ -509,7 +523,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。
             if write is not None and (
                 (result.name, result.tool_call_id, result.status, result.text)
-                != ("write_file", tool_id, "success", f"Updated file {write.path}")
+                != (write.tool_name, tool_id, "success", write.acknowledgement)
                 or (
                     self._workspace_guard is not None
                     and not await self._workspace_guard(write.path, write.content)

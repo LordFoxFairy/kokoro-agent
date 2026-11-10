@@ -1,3 +1,7 @@
+## A-10 native Docker edit postimages
+
+The scoped native edit freezes the bytes installed by the mutation itself, not a later read of the workspace. The controller verified the locked SDK path in real Docker and PostgreSQL, then changed the mounted path: the replacement lease recovered the original edit bytes through Storage/MinIO/ClamAV with one CLEAN upload and cleared pending content. Credential guard was checked again on recovery. No separate Worker, browser, script output, or E2B was tested; the model and credential source were fixtures.
+
 ## A-10 native Docker write versions
 
 Configured Docker/Local native `write_file` records the exact successful UTF-8 input in the existing leased tool transaction; it does not read the mutable path after success. The main controller verified Docker mount bytes, isolated PostgreSQL, and real Storage/MinIO/ClamAV: the path then changed, generation 2 recovered the original CLEAN bytes, stale generation did not publish, replay did not upload again, and pending bytes were cleared. The model and Custom API credential provider were fixtures; this was a native SDK graph, not an independent Worker or browser journey. State and the public RunDisplay contract are unchanged. Native edit, scripts and E2B are not claimed.

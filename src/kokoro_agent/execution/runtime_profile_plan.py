@@ -325,9 +325,7 @@ def prepare_feature(
             )
             else None
         )
-        native_edit = bool(
-            output_root and mounted_workspace and "edit_file" not in gated
-        )
+        native_edit = bool(output_root and native_write and "edit_file" not in gated)
         native_script = bool(
             output_root
             and custom_api_selected

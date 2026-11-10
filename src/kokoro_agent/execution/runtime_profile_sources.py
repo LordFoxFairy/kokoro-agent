@@ -91,7 +91,7 @@ execution/mcp_runtime_request_binding.py execution/custom_api_request_binding.py
     ),
     (
         "e2b",
-        "sandbox/e2b_backend.py sandbox/archive.py sandbox/execution_environment.py sandbox/file_egress.py sandbox/e2b_metadata.py",
+        "sandbox/e2b_backend.py sandbox/archive.py sandbox/execution_environment.py sandbox/file_egress.py sandbox/e2b_metadata.py sandbox/output_edit.py",
     ),
     ("custom", "sandbox/custom_backend.py"),
     ("swarm", "swarm.py"),

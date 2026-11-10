@@ -19,6 +19,7 @@ def prepare(
     budget: int = 17,
     recursion: int = 43,
     config: AppConfig | None = None,
+    custom_api_selected: bool = False,
 ):
     module = import_module("kokoro_agent.execution.runtime_profile_plan")
     source = import_module("kokoro_agent.execution.runtime_profile_sources")
@@ -36,6 +37,7 @@ def prepare(
         toolbox=build_toolbox(fetch_allow_private=False, search=None),
         subagent_catalog=build_subagent_catalog(None),
         delivery_available=False,
+        custom_api_selected=custom_api_selected,
     )
 
 
@@ -86,6 +88,20 @@ def test_workspace_output_root_supports_state_and_configured_docker_chat(
     recipe = json.loads(plan.recipe_bytes)["feature"]["agents"][0]
     assert recipe["workspace_output_root"] == "/outputs/"
     assert recipe["native_workspace_edit"] is True
+
+
+def test_e2b_workspace_edit_requires_selected_custom_api() -> None:
+    chat = replace(
+        CHAT_FEATURE, agents=(replace(CHAT_FEATURE.agents[0], backend="e2b"),)
+    )
+    assert prepare(chat).peers[0].workspace_output_root is None
+    plan = prepare(chat, custom_api_selected=True)
+    assert plan.peers[0].workspace_output_root == "/outputs/"
+    assert plan.peers[0].native_workspace_edit
+    assert (
+        json.loads(plan.recipe_bytes)["feature"]["agents"][0]["native_workspace_edit"]
+        is True
+    )
 
 
 def test_handoff_instances_are_real_ordered_and_retained() -> None:

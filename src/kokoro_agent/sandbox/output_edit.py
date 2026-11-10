@@ -52,6 +52,11 @@ def capture_output_edit(path: str | None) -> Generator[_EditCapture | None]:
         _EDIT_CAPTURE.reset(token)
 
 
+def current_output_edit(path: str) -> _EditCapture | None:
+    capture = _EDIT_CAPTURE.get()
+    return capture if capture is not None and capture.path == path else None
+
+
 def _identity(info: os.stat_result) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
@@ -168,8 +173,8 @@ class WorkspaceOutputLocalShellBackend(LocalShellBackend):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        capture = _EDIT_CAPTURE.get()
-        if capture is None or capture.path != file_path:
+        capture = current_output_edit(file_path)
+        if capture is None:
             return super().edit(file_path, old_string, new_string, replace_all)
         if not self.virtual_mode or capture.postimage is not None:
             return EditResult(error=FILE_UNAVAILABLE)
@@ -177,3 +182,124 @@ class WorkspaceOutputLocalShellBackend(LocalShellBackend):
             return _edit(self.cwd, capture, old_string, new_string, replace_all)
         except (OSError, UnicodeError, ExecutionBoundaryError):
             return EditResult(error=FILE_UNAVAILABLE)
+
+
+# Shared E2B mutation program: no login shell or user text in argv.
+# Both operations verify the installed bytes on the same open descriptor.
+E2B_OUTPUT_MUTATION = r"""
+from contextlib import ExitStack
+from hashlib import sha256
+import os, secrets, signal, stat, sys
+
+signal.alarm(30)
+path, size, digest, *edit = sys.argv[1:]
+size = int(size)
+raw = sys.stdin.buffer.read(size)
+if len(raw) != size or sha256(raw).hexdigest() != digest:
+    sys.exit(1)
+parts = path.split("/")
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+maximum = 8 * 1024 * 1024
+
+def revision(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+def parent(stack, root, create):
+    for part in parts[:-1]:
+        if create:
+            try:
+                os.mkdir(part, 0o700, dir_fd=root)
+            except FileExistsError:
+                pass
+        root = os.open(part, flags, dir_fd=root)
+        stack.callback(os.close, root)
+    return root
+
+def edited(stack, dest, name, raw):
+    fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dest)
+    source = stack.enter_context(os.fdopen(fd, "rb"))
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > maximum:
+        sys.exit(1)
+    text = source.read(maximum + 1)
+    if len(text) != info.st_size or revision(os.fstat(fd)) != revision(info):
+        sys.exit(1)
+    text = text.decode("utf-8")
+    offset = int(edit[0])
+    old, new = raw[:offset].decode("utf-8"), raw[offset:].decode("utf-8")
+    def crlf(value):
+        return value.replace("\r\n", "\n").replace("\n", "\r\n")
+    for find, replace in ((old, new), (crlf(old), crlf(new)),
+                          (old.replace("\r\n", "\n"), new.replace("\r\n", "\n"))):
+        count = text.count(find)
+        if count:
+            break
+    if not count or (count != 1 and edit[1] != "1"):
+        sys.exit(1)
+    if len(text) + count * (len(replace) - len(find)) > maximum:
+        sys.exit(1)
+    updated = text.replace(find, replace, count).encode("utf-8")
+    if len(updated) > maximum:
+        sys.exit(1)
+    return updated, count, info
+
+try:
+    with ExitStack() as stack:
+        root = os.open(".", flags)
+        stack.callback(os.close, root)
+        dest = parent(stack, root, not edit)
+        if edit:
+            raw, count, initial = edited(stack, dest, parts[-1], raw)
+            size, digest = len(raw), sha256(raw).hexdigest()
+        temp = ".kokoro-write-" + secrets.token_hex(16)
+        fd = os.open(temp, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=dest)
+        try:
+            with os.fdopen(fd, "w+b") as output:
+                if output.write(raw) != size:
+                    sys.exit(1)
+                output.flush()
+                if edit:
+                    os.fchmod(output.fileno(), stat.S_IMODE(initial.st_mode) & 0o777)
+                written = os.fstat(output.fileno())
+                if written.st_size != size:
+                    sys.exit(1)
+                if edit:
+                    current = os.stat(parts[-1], dir_fd=parent(stack, root, False),
+                                      follow_symlinks=False)
+                    staging = os.stat(temp, dir_fd=dest, follow_symlinks=False)
+                    if revision(current) != revision(initial) or revision(staging) != revision(written):
+                        sys.exit(1)
+                    os.replace(temp, parts[-1], src_dir_fd=dest, dst_dir_fd=dest)
+                else:
+                    os.link(temp, parts[-1], src_dir_fd=dest, dst_dir_fd=dest,
+                            follow_symlinks=False)
+                linked = os.fstat(output.fileno())
+                output.seek(0)
+                actual = output.read(size + 1)
+                verified_digest = sha256(actual).hexdigest()
+                current = os.stat(parts[-1], dir_fd=parent(stack, root, False),
+                                  follow_symlinks=False)
+                if len(actual) != size or verified_digest != digest or (
+                    current.st_dev, current.st_ino, current.st_size,
+                    current.st_mtime_ns, current.st_ctime_ns
+                ) != (
+                    written.st_dev, written.st_ino, size,
+                    written.st_mtime_ns, linked.st_ctime_ns
+                ):
+                    sys.exit(1)
+        finally:
+            try:
+                os.unlink(temp, dir_fd=dest)
+            except FileNotFoundError:
+                if not edit:
+                    raise
+except (OSError, UnicodeError):
+    sys.exit(1)
+
+if edit:
+    sys.stdout.buffer.write(f"{count}:{size}:{verified_digest}\n".encode("ascii"))
+    sys.stdout.buffer.write(actual)
+else:
+    print(f"{size}:{verified_digest}")
+"""

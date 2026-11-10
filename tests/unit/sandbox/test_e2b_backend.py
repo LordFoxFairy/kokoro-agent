@@ -28,6 +28,7 @@ from kokoro_agent.sandbox.e2b_backend import (
     connect_e2b_sandbox,
 )
 from kokoro_agent.domain.run.repository import RunRepository
+from kokoro_agent.sandbox.output_edit import capture_output_edit
 
 
 def _e2b_settings(api_key: str | None = "e2b-key") -> E2BSettings:
@@ -504,7 +505,7 @@ async def test_e2b_without_api_keeps_original_native_file_tools(
     ]
 
 
-async def test_protected_e2b_write_owns_exact_bytes_without_readback(
+async def test_protected_e2b_write_and_edit_own_exact_bytes_without_path_readback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class LocalSandbox(FakeSandbox):
@@ -537,18 +538,19 @@ async def test_protected_e2b_write_owns_exact_bytes_without_readback(
             if tamper:
                 args[3] = """
 import os
-real_link = os.link
-def tamper_link(src, dst, *, src_dir_fd, dst_dir_fd, follow_symlinks):
-    fd = os.open(src, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=src_dir_fd)
-    try:
-        info = os.fstat(fd)
-        os.write(fd, b"X" * info.st_size)
-        os.utime(fd, ns=(info.st_atime_ns, info.st_mtime_ns))
-    finally:
-        os.close(fd)
-    real_link(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd,
-              follow_symlinks=follow_symlinks)
-os.link = tamper_link
+def tamper_install(real):
+    def install(src, dst, *, src_dir_fd, **options):
+        fd = os.open(src, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=src_dir_fd)
+        try:
+            info = os.fstat(fd)
+            os.write(fd, b"X" * info.st_size)
+            os.utime(fd, ns=(info.st_atime_ns, info.st_mtime_ns))
+        finally:
+            os.close(fd)
+        real(src, dst, src_dir_fd=src_dir_fd, **options)
+    return install
+os.link = tamper_install(os.link)
+os.replace = tamper_install(os.replace)
 """ + args[3]
             result = subprocess.run(
                 [sys.executable, *args],
@@ -603,8 +605,22 @@ os.link = tamper_link
     assert (await backend.awrite("/outputs/alias/escape.md", text)).error
     assert not (outside / "escape.md").exists()
 
+    with capture_output_edit(path) as capture:
+        assert capture is not None
+        edited = await backend.aedit(path, "原文🦉\n", "编辑🪁\n")
+    postimage = "编辑🪁\r\n".encode()
+    assert (edited.error, edited.path, edited.occurrences) == (None, path, 1)
+    assert capture.postimage is not None and capture.postimage.content == postimage
+    assert file.read_bytes() == postimage
+    file.write_bytes(b"later mutable bytes")
+    assert capture.postimage.content == postimage
+
     tamper = True
     assert (await backend.awrite("/outputs/tampered.md", text)).error
+    with capture_output_edit(path) as rejected:
+        assert rejected is not None
+        assert (await backend.aedit(path, "later mutable bytes", "second edit")).error
+    assert rejected.postimage is None
     assert not sandbox.commands_run
 
     assert await backend.guard_workspace_output(path, text.encode())

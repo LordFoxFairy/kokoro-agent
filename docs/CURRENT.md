@@ -1,4 +1,8 @@
-## A‑10 native E2B output write
+## A‑10 native E2B output write and edit
+
+The existing E2B Chat also uses native `edit_file` on a protected output. It verifies the exact UTF-8 postimage on the installed file descriptor and passes it only to the existing private edit capture and publish guard. The public tool result remains the path and occurrence count. Local write/edit, profile and the related Docker output regression passed; the E2B provider was a protocol double. Live cloud and script output remain open.
+
+## A‑10 native E2B output write (earlier checkpoint)
 
 The existing Custom API E2B Chat can use native `write_file` under `/outputs/`. The pinned E2B SDK starts one bounded write in the existing sandbox, does not follow links or overwrite an existing path, and proves the bytes through the original file descriptor before the existing journal and credential guard can publish them. No new HTTP contract, Storage path or credentials flow. The local regression uses the actual writer with an E2B protocol double. Focused checks passed for the new behavior, with one existing metadata oversize fixture failure reproduced unchanged at parent `c14c47d` (the peer reset did not mark the fixture closed). Cloud, edit and script output are not accepted by this evidence.
 

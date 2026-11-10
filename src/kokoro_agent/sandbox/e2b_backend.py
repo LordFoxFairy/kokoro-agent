@@ -10,6 +10,7 @@ import asyncio
 import base64
 from hashlib import sha256
 import secrets
+import re
 import logging
 import math
 import threading
@@ -20,6 +21,7 @@ from contextvars import ContextVar
 from typing import Annotated, Literal, Protocol, runtime_checkable
 
 from deepagents.backends.protocol import (
+    EditResult,
     ExecuteResponse,
     FileInfo,
     FileDownloadResponse,
@@ -41,7 +43,11 @@ from e2b.connection_config import (
 from e2b.envd.process import process_connect, process_pb2
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 import httpx
-from kokoro_agent.domain.run.workspace_output import OUTPUT_ROOT, output_path_digest
+from kokoro_agent.domain.run.workspace_output import (
+    OUTPUT_ROOT,
+    NativeWorkspaceWrite,
+    output_path_digest,
+)
 from kokoro_agent.sandbox.execution_environment import (
     ExecutionEnvironmentProvider,
     ExecutionEnvironmentRunner,
@@ -55,6 +61,7 @@ from kokoro_agent.sandbox.file_egress import (
     relative_path,
 )
 from kokoro_agent.sandbox.e2b_metadata import E2BMetadata, FilesystemSandbox
+from kokoro_agent.sandbox.output_edit import E2B_OUTPUT_MUTATION, current_output_edit
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.e2b")
 
@@ -62,72 +69,6 @@ LOGGER = logging.getLogger("kokoro_agent.sandbox.e2b")
 _WORKDIR = "/home/user"
 
 
-# Direct envd process: no login shell, source file readback, or user text in
-# argv. The stdin digest is checked before the exclusive directory-fd write.
-_WORKSPACE_WRITE = """
-from contextlib import ExitStack
-from hashlib import sha256
-import os, secrets, signal, sys
-
-signal.alarm(30)
-path, size, digest = sys.argv[1:]
-size = int(size)
-raw = sys.stdin.buffer.read(size)
-if len(raw) != size or sha256(raw).hexdigest() != digest:
-    sys.exit(1)
-parts = path.split("/")
-flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-
-def parent(stack, root, create):
-    for part in parts[:-1]:
-        if create:
-            try:
-                os.mkdir(part, 0o700, dir_fd=root)
-            except FileExistsError:
-                pass
-        root = os.open(part, flags, dir_fd=root)
-        stack.callback(os.close, root)
-    return root
-
-try:
-    with ExitStack() as stack:
-        root = os.open(".", flags)
-        stack.callback(os.close, root)
-        dest = parent(stack, root, True)
-        temp = ".kokoro-write-" + secrets.token_hex(16)
-        fd = os.open(temp, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                     0o600, dir_fd=dest)
-        try:
-            with os.fdopen(fd, "w+b") as output:
-                if output.write(raw) != size:
-                    sys.exit(1)
-                output.flush()
-                written = os.fstat(output.fileno())
-                if written.st_size != size:
-                    sys.exit(1)
-                os.link(temp, parts[-1], src_dir_fd=dest, dst_dir_fd=dest,
-                        follow_symlinks=False)
-                linked = os.fstat(output.fileno())
-                output.seek(0)
-                actual = output.read(size + 1)
-                verified_digest = sha256(actual).hexdigest()
-                current = os.stat(parts[-1], dir_fd=parent(stack, root, False),
-                                  follow_symlinks=False)
-                if len(actual) != size or verified_digest != digest or (
-                    current.st_dev, current.st_ino, current.st_size,
-                    current.st_mtime_ns, current.st_ctime_ns
-                ) != (
-                    written.st_dev, written.st_ino, size,
-                    written.st_mtime_ns, linked.st_ctime_ns
-                ):
-                    sys.exit(1)
-        finally:
-            os.unlink(temp, dir_fd=dest)
-except OSError:
-    sys.exit(1)
-
-print(f"{size}:{verified_digest}")
-"""
 _WORKSPACE_WRITE_TIMEOUT = 30
 _INPUT_CHUNK_BYTES = 64 * 1024
 
@@ -157,9 +98,13 @@ class _WriteProcessClient(Protocol):
     ) -> process_pb2.SendSignalResponse: ...
 
 
-async def _write_workspace_file(
-    sandbox: FilesystemSandbox, path: str, raw: bytes
-) -> bool:
+async def _mutate_workspace_file(
+    sandbox: FilesystemSandbox,
+    path: str,
+    raw: bytes,
+    stdout_limit: int,
+    edit_args: tuple[str, ...] = (),
+) -> bytes | None:
     origin = httpx.URL(sandbox.envd_api_url)
     if (
         origin.scheme not in {"http", "https"}
@@ -169,16 +114,24 @@ async def _write_workspace_file(
         or origin.fragment
         or origin.path not in {"", "/"}
     ):
-        return False
+        return None
     user = base64.b64encode((default_username + ":").encode()).decode("ascii")
     digest = sha256(raw).hexdigest()
-    expected = f"{len(raw)}:{digest}\n".encode("ascii")
     pb = process_pb2
     tag = "kokoro-workspace-write-" + secrets.token_hex(16)
     request = pb.StartRequest(
         process=pb.ProcessConfig(
             cmd="/usr/bin/python3",
-            args=["-I", "-S", "-c", _WORKSPACE_WRITE, path, str(len(raw)), digest],
+            args=[
+                "-I",
+                "-S",
+                "-c",
+                E2B_OUTPUT_MUTATION,
+                path,
+                str(len(raw)),
+                digest,
+                *edit_args,
+            ],
             cwd=_WORKDIR,
         ),
         tag=tag,
@@ -218,7 +171,7 @@ async def _write_workspace_file(
                     async with asyncio.timeout(_WORKSPACE_WRITE_TIMEOUT):
                         start = (await anext(events)).event
                         if not start.HasField("start") or start.start.pid <= 0:
-                            return False
+                            return None
                         for offset in range(0, len(raw), _INPUT_CHUNK_BYTES):
                             await client.asend_input(
                                 pb.SendInputRequest(
@@ -233,7 +186,7 @@ async def _write_workspace_file(
                         async for response in events:
                             event = response.event
                             if ended:
-                                return False
+                                return None
                             if event.HasField("keepalive"):
                                 continue
                             if event.HasField("end"):
@@ -243,16 +196,16 @@ async def _write_workspace_file(
                                     or event.end.exit_code != 0
                                     or event.end.error
                                 ):
-                                    return False
+                                    return None
                                 continue
                             if not event.HasField("data") or not event.data.HasField(
                                 "stdout"
                             ):
-                                return False
-                            if len(proof) + len(event.data.stdout) > len(expected):
-                                return False
+                                return None
+                            if len(proof) + len(event.data.stdout) > stdout_limit:
+                                return None
                             proof.extend(event.data.stdout)
-                        return ended and bytes(proof) == expected
+                        return bytes(proof) if ended else None
                 finally:
                     if not ended:
                         try:
@@ -519,10 +472,13 @@ class E2BSandboxBackend(BaseSandbox):
                 return WriteResult(error=FILE_UNAVAILABLE)
             path = relative_path(file_path)
             raw = content.encode("utf-8")
-            if len(raw) <= MAX_FILE_BYTES and await _write_workspace_file(
-                self._sandbox, path, raw
-            ):
-                return WriteResult(path=file_path)
+            if len(raw) <= MAX_FILE_BYTES:
+                proof = f"{len(raw)}:{sha256(raw).hexdigest()}\n".encode("ascii")
+                if (
+                    await _mutate_workspace_file(self._sandbox, path, raw, len(proof))
+                    == proof
+                ):
+                    return WriteResult(path=file_path)
         except Exception:
             # The provider exception or stderr can contain private material.
             pass
@@ -537,6 +493,57 @@ class E2BSandboxBackend(BaseSandbox):
         if self._file_egress is not None and file_path.startswith(OUTPUT_ROOT):
             return await self._write_product_output(file_path, content)
         return await super().awrite(file_path, content)
+
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        capture = current_output_edit(file_path)
+        if capture is None:
+            return await super().aedit(file_path, old_string, new_string, replace_all)
+        error = EditResult(error=FILE_UNAVAILABLE)
+        try:
+            if (
+                self._file_egress is None
+                or capture.postimage is not None
+                or not isinstance(self._sandbox, FilesystemSandbox)
+                or output_path_digest(file_path) is None
+                or len(old_string) + len(new_string) > MAX_FILE_BYTES
+            ):
+                return error
+            old, new = old_string.encode("utf-8"), new_string.encode("utf-8")
+            if len(old) + len(new) > MAX_FILE_BYTES:
+                return error
+            result = await _mutate_workspace_file(
+                self._sandbox,
+                relative_path(file_path),
+                old + new,
+                MAX_FILE_BYTES + 96,
+                (str(len(old)), str(int(replace_all))),
+            )
+            if result is None:
+                return error
+            header, separator, raw = result.partition(b"\n")
+            proof = re.fullmatch(
+                rb"([1-9][0-9]{0,7}):(0|[1-9][0-9]{0,7}):([0-9a-f]{64})", header
+            )
+            if (
+                not separator
+                or proof is None
+                or not 1 <= int(proof[1]) <= MAX_FILE_BYTES + 1
+                or not len(raw) == int(proof[2]) <= MAX_FILE_BYTES
+                or sha256(raw).hexdigest().encode("ascii") != proof[3]
+            ):
+                return error
+            occurrences = int(proof[1])
+            capture.postimage = NativeWorkspaceWrite(file_path, raw, occurrences)
+            return EditResult(path=file_path, occurrences=occurrences)
+        except Exception:
+            # Never attach provider diagnostics or the original postimage.
+            return error
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         if self._file_egress is not None:

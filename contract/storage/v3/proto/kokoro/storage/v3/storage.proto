@@ -182,6 +182,14 @@ message GetAssetResponse {
   string filename = 12;
 }
 
+enum PersonalLibraryFileType {
+  PERSONAL_LIBRARY_FILE_TYPE_UNSPECIFIED = 0;
+  PERSONAL_LIBRARY_FILE_TYPE_DOCUMENTS = 1;
+  PERSONAL_LIBRARY_FILE_TYPE_IMAGES = 2;
+  PERSONAL_LIBRARY_FILE_TYPE_MEDIA = 3;
+  PERSONAL_LIBRARY_FILE_TYPE_OTHER = 4;
+}
+
 // Personal files or project resources: the server fixes purpose=ASSET and scan=CLEAN before pagination.
 // Caller must be web-bff; personal scope must match authenticated subject.
 // Personal and project cursors use distinct kinds and are not access grants.
@@ -189,6 +197,11 @@ message ListAssetsRequest {
   // Required; 1..100. Zero is invalid rather than an implicit default.
   uint32 limit = 1;
   string cursor = 2;
+  // Personal only when nonempty after trim/NFC. At most 200 Unicode code points before normalization, without C0/DEL.
+  // Match a literal case-insensitive substring of filename or MIME before pagination.
+  string query = 3;
+  // Personal only when specified; UNSPECIFIED is all types.
+  PersonalLibraryFileType file_type = 4;
 }
 
 message ListAssetItem {

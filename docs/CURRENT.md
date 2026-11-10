@@ -1,3 +1,7 @@
+## 2026-11-10 A‑09 Storage 消费者精确配对
+
+Agent 仅从 Storage `0f91535a488a45379b567efd378c6cb4808f1206` 的 Git blobs 重钉 v3 Proto、owner provenance 并正规生成。该 owner 增量只扩个人 `ListAssets` 筛选，Agent 不调用该方法；运行时、公开契约和依赖锁不变。
+
 ## 2026-11-10 A‑08 私有材料原生暂停归属
 
 私有材料关闭可选追踪时误删可信 checkpoint 归属，导致真实 Project 附件 Run 的原生等待态无法回读。可信 Run/generation/恢复 command/attempt 与 trace 分开传递；私有 Run 仍屏蔽回调、任意追踪元数据和外部追踪，普通 trace 同名字段不能写入归属。原生 reader、持久模型、HTTP 契约及工具权限不变。

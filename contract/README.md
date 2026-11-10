@@ -35,11 +35,11 @@ identity-scoped session history/replay，以及本仓 Redis control/event envelo
 ## Pinned Storage consumer input
 
 `storage/v3/provenance.json` 固定 kokoro-storage commit
-`4a990617ffe36d739b5a3e622132c304d4d48d41` 的 common v1 与 Storage v3 Proto；owner
-组合 SHA-256 为 `c8e9c5c975b2f2c0035b486dd1295c36603e1ad12fa6bc22dc26b94264becd78`。
+`0f91535a488a45379b567efd378c6cb4808f1206` 的 common v1 与 Storage v3 Proto；owner
+组合 SHA-256 为 `6267053089767691f9a0da3e12cbc5012a703c0c6948f1307ef38b165c8e7e3b`。
 `scripts/generate_storage_consumer.py --check` 在隔离 Python 3.11 环境重生成并逐字节比较
-`generated/kokoro/storage/v3`。生成面含 owner 全部 17 RPC，生产 Artifact delivery dispatch
-只开放原七操作；新增 `UPLOAD_PURPOSE_CONNECTOR_ICON = 5` 不授予 Agent 图标访问。
+`generated/kokoro/storage/v3`。生成面含 owner 全部 17 RPC；A‑09 只增 `ListAssets` 可选字段，
+Agent 运行时不调用该方法，既有交付与选中输入资格不变。
 v2 pin/generated 已删除；无 alias、fallback 或双 pin。
 
 ## Pinned Platform consumer input

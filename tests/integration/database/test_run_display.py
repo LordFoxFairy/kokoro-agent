@@ -1042,3 +1042,184 @@ async def test_native_file_loop_details_without_journal_survive_reopen_and_stay_
     assert (
         await read_run_display(run_chat_database_url, run_chat_schema, foreign)
     ).activity_details == []
+
+
+@pytest.mark.asyncio
+async def test_native_state_file_postimages_bind_committed_run_versions(
+    run_chat_schema: str,
+    run_chat_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native UTF-8 postimages come from the exact committed step, not its ACK."""
+    from typing import cast
+
+    import deepagents
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_core.runnables import RunnableConfig
+    from langgraph.checkpoint.base import (
+        ChannelVersions,
+        Checkpoint,
+        CheckpointMetadata,
+        CheckpointTuple,
+    )
+
+    from kokoro_agent.domain.chat.projection import safe_delivery_display_path
+    from support.local_fake import LocalFakeChatModel
+
+    # Candidate path for this probe only; no product output namespace is installed.
+    path = "/outputs/probe.txt"
+    assert safe_delivery_display_path(path)
+    first = "版本一\r\nunchanged tail  \r\n"
+    second = "版本二🦉\r\nunchanged tail  \r\n"
+    first_run = request("native-file-write")
+    second_run = request("native-file-edit")
+    scope = RunScope.of(first_run)
+    assert RunScope.of(second_run) == scope
+    settings = CheckpointSettings(
+        database_url=run_chat_database_url, schema_name=run_chat_schema
+    )
+    steps = (
+        (first_run, "write_file", {"file_path": path, "content": first}, first),
+        (
+            second_run,
+            "edit_file",
+            {"file_path": path, "old_string": "版本一", "new_string": "版本二🦉"},
+            second,
+        ),
+    )
+    locators: dict[str, RunnableConfig] = {}
+    tools = {run.run_id: tool for run, tool, _, _ in steps}
+
+    def postimage(parent: CheckpointTuple, tool: str, call_id: str) -> bytes:
+        # The original SDK tool's successful result and the files write share
+        # a native task, but the result message does not carry the file bytes.
+        tasks: set[str] = set()
+        writes: list[tuple[str, object]] = []
+        for task, channel, value in parent.pending_writes or ():
+            if channel == "messages":
+                messages: list[object] = (
+                    cast(list[object], value) if isinstance(value, list) else [value]
+                )
+                if any(
+                    isinstance(message, ToolMessage)
+                    and (message.name, message.tool_call_id, message.status)
+                    == (tool, call_id, "success")
+                    for message in messages
+                ):
+                    tasks.add(task)
+            if channel == "files" and isinstance(value, dict):
+                delta = cast(dict[str, object], value)
+                if path in delta:
+                    writes.append((task, delta[path]))
+        assert len(writes) == 1
+        task, file_data = writes[0]
+        assert tasks == {task}
+        assert isinstance(file_data, dict)
+        fields = cast(dict[str, object], file_data)
+        assert fields.get("encoding") == "utf-8"
+        content = fields.get("content")
+        assert isinstance(content, str)
+        return content.encode("utf-8")
+
+    async with (
+        make_checkpointer(settings) as saver,
+        make_checkpointer(settings) as reader,
+    ):
+        put = saver.aput
+
+        async def observe_put(
+            config: RunnableConfig,
+            checkpoint: Checkpoint,
+            metadata: CheckpointMetadata,
+            new_versions: ChannelVersions,
+        ) -> RunnableConfig:
+            if "files" not in (checkpoint.get("updated_channels") or ()):
+                return await put(config, checkpoint, metadata, new_versions)
+            config_values = config.get("configurable", {})
+            locator_keys = ("thread_id", "checkpoint_ns", "checkpoint_id")
+            parent_locator: RunnableConfig = {
+                "configurable": {key: config_values[key] for key in locator_keys}
+            }
+            parent = await reader.aget_tuple(parent_locator)
+            assert parent is not None and parent.config == parent_locator
+            child: RunnableConfig = {
+                "configurable": {
+                    **parent_locator.get("configurable", {}),
+                    "checkpoint_id": checkpoint["id"],
+                }
+            }
+            run_id = parent.metadata.get("kokoro_run_id")
+            assert isinstance(run_id, str) and run_id not in locators
+            assert config_values["thread_id"] == scope.scoped_thread_id
+            assert config_values["checkpoint_ns"] == ""
+            assert parent.metadata.get("kokoro_generation") == 1
+            # A second connection sees real durable pending writes, but no
+            # committed version exists until the unmodified saver puts the child.
+            assert postimage(parent, tools[run_id], run_id)
+            assert await reader.aget_tuple(child) is None
+            saved = await put(config, checkpoint, metadata, new_versions)
+            assert saved == child
+            locators[run_id] = saved
+            return saved
+
+        monkeypatch.setattr(saver, "aput", observe_put)
+        create: Any = getattr(deepagents, "create_deep_agent")
+        # The deterministic fixture indexes by all AI messages in this thread,
+        # including the first Run's two messages when the second graph opens.
+        script = [
+            message
+            for run, tool, args, _ in steps
+            for message in (
+                AIMessage(
+                    id=f"{run.run_id}-model",
+                    content="",
+                    tool_calls=[{"id": run.run_id, "name": tool, "args": args}],
+                ),
+                AIMessage(id=f"{run.run_id}-final", content="Done"),
+            )
+        ]
+        for run, _, _, _ in steps:
+            graph = create(
+                model=LocalFakeChatModel.with_script(script),
+                checkpointer=saver,
+            )
+            await graph.ainvoke(
+                {
+                    "messages": [
+                        HumanMessage(id=run.input.message_id, content=run.input.content)
+                    ]
+                },
+                {
+                    "configurable": {
+                        "thread_id": scope.scoped_thread_id,
+                        "checkpoint_ns": "",
+                    },
+                    "metadata": {"kokoro_run_id": run.run_id, "kokoro_generation": 1},
+                },
+            )
+
+    assert set(locators) == {first_run.run_id, second_run.run_id}
+    assert locators[first_run.run_id] != locators[second_run.run_id]
+    async with make_checkpointer(settings) as reopened:
+        for run, tool, _, expected in steps:
+            locator = locators[run.run_id]
+            child = await reopened.aget_tuple(locator)
+            assert child is not None and child.config == locator
+            assert child.parent_config is not None
+            parent = await reopened.aget_tuple(child.parent_config)
+            assert parent is not None and parent.config == child.parent_config
+            for committed in (parent, child):
+                config_values = committed.config.get("configurable", {})
+                assert config_values.get("thread_id") == scope.scoped_thread_id
+                assert config_values.get("checkpoint_ns") == ""
+                assert committed.metadata.get("kokoro_run_id") == run.run_id
+                assert committed.metadata.get("kokoro_generation") == 1
+            assert child.checkpoint["channel_versions"]["files"] != parent.checkpoint[
+                "channel_versions"
+            ].get("files")
+            raw = postimage(parent, tool, run.run_id)
+            expected_raw = expected.encode("utf-8")
+            assert (len(raw), hashlib.sha256(raw).hexdigest()) == (
+                len(expected_raw),
+                hashlib.sha256(expected_raw).hexdigest(),
+            )

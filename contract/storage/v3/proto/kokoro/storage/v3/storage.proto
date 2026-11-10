@@ -325,6 +325,21 @@ message GetFinalArtifactResponse {
   kokoro.storage.v3.FinalArtifactItem item = 1;
 }
 
+// Retires one exact FINAL artifact. Only web-bff in its conversation scope.
+message DeleteFinalArtifactRequest {
+  kokoro.common.v1.CommandIdentity command = 1;
+  string artifact_id = 2;
+  string asset_id = 3;
+  string content_sha256 = 4;
+  string source_run_id = 5;
+}
+
+message DeleteFinalArtifactResponse {
+  string artifact_id = 1;
+  google.protobuf.Timestamp retired_at = 2;
+  bool replayed = 3;
+}
+
 message GetFinalArtifactDownloadReferenceRequest {
   kokoro.common.v1.CommandIdentity command = 1;
   string artifact_id = 2;
@@ -418,6 +433,7 @@ service StorageService {
   rpc GetDownloadReference(kokoro.storage.v3.GetDownloadReferenceRequest) returns (kokoro.storage.v3.GetDownloadReferenceResponse);
   rpc ListFinalArtifacts(kokoro.storage.v3.ListFinalArtifactsRequest) returns (kokoro.storage.v3.ListFinalArtifactsResponse);
   rpc GetFinalArtifact(kokoro.storage.v3.GetFinalArtifactRequest) returns (kokoro.storage.v3.GetFinalArtifactResponse);
+  rpc DeleteFinalArtifact(kokoro.storage.v3.DeleteFinalArtifactRequest) returns (kokoro.storage.v3.DeleteFinalArtifactResponse);
   rpc GetFinalArtifactDownloadReference(kokoro.storage.v3.GetFinalArtifactDownloadReferenceRequest) returns (kokoro.storage.v3.GetFinalArtifactDownloadReferenceResponse);
   rpc ReleaseProjectScope(kokoro.storage.v3.ReleaseProjectScopeRequest) returns (kokoro.storage.v3.ReleaseProjectScopeResponse);
   rpc ReleaseConversationScope(kokoro.storage.v3.ReleaseConversationScopeRequest) returns (kokoro.storage.v3.ReleaseConversationScopeResponse);

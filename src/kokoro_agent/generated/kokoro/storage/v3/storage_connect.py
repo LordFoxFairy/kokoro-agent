@@ -14,7 +14,7 @@ from connectrpc.errors import ConnectError
 from connectrpc.method import IdempotencyLevel, MethodInfo
 from connectrpc.server import ConnectASGIApplication, Endpoint
 
-from .storage_pb import AbortUploadRequest, AbortUploadResponse, CompleteUploadRequest, CompleteUploadResponse, CreateArtifactRequest, CreateArtifactResponse, CreateUploadRequest, CreateUploadResponse, DeleteAssetRequest, DeleteAssetResponse, FinalizeArtifactRequest, FinalizeArtifactResponse, GetAssetRequest, GetAssetResponse, GetDownloadReferenceRequest, GetDownloadReferenceResponse, GetFinalArtifactDownloadReferenceRequest, GetFinalArtifactDownloadReferenceResponse, GetFinalArtifactRequest, GetFinalArtifactResponse, GetPackageReferenceRequest, GetPackageReferenceResponse, GetScanStatusRequest, GetScanStatusResponse, GetUploadStatusRequest, GetUploadStatusResponse, ListAssetsRequest, ListAssetsResponse, ListFinalArtifactsRequest, ListFinalArtifactsResponse, ReleaseConversationScopeRequest, ReleaseConversationScopeResponse, ReleaseProjectScopeRequest, ReleaseProjectScopeResponse
+from .storage_pb import AbortUploadRequest, AbortUploadResponse, CompleteUploadRequest, CompleteUploadResponse, CreateArtifactRequest, CreateArtifactResponse, CreateUploadRequest, CreateUploadResponse, DeleteAssetRequest, DeleteAssetResponse, DeleteFinalArtifactRequest, DeleteFinalArtifactResponse, FinalizeArtifactRequest, FinalizeArtifactResponse, GetAssetRequest, GetAssetResponse, GetDownloadReferenceRequest, GetDownloadReferenceResponse, GetFinalArtifactDownloadReferenceRequest, GetFinalArtifactDownloadReferenceResponse, GetFinalArtifactRequest, GetFinalArtifactResponse, GetPackageReferenceRequest, GetPackageReferenceResponse, GetScanStatusRequest, GetScanStatusResponse, GetUploadStatusRequest, GetUploadStatusResponse, ListAssetsRequest, ListAssetsResponse, ListFinalArtifactsRequest, ListFinalArtifactsResponse, ReleaseConversationScopeRequest, ReleaseConversationScopeResponse, ReleaseProjectScopeRequest, ReleaseProjectScopeResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -66,6 +66,9 @@ class StorageService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def get_final_artifact(self, request: GetFinalArtifactRequest, ctx: RequestContext[GetFinalArtifactRequest, GetFinalArtifactResponse]) -> GetFinalArtifactResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def delete_final_artifact(self, request: DeleteFinalArtifactRequest, ctx: RequestContext[DeleteFinalArtifactRequest, DeleteFinalArtifactResponse]) -> DeleteFinalArtifactResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def get_final_artifact_download_reference(self, request: GetFinalArtifactDownloadReferenceRequest, ctx: RequestContext[GetFinalArtifactDownloadReferenceRequest, GetFinalArtifactDownloadReferenceResponse]) -> GetFinalArtifactDownloadReferenceResponse:
@@ -230,6 +233,16 @@ class StorageServiceASGIApplication(ConnectASGIApplication[StorageService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.get_final_artifact,
+                ),
+                "/kokoro.storage.v3.StorageService/DeleteFinalArtifact": Endpoint.unary(
+                    method=MethodInfo(
+                        name="DeleteFinalArtifact",
+                        service_name="kokoro.storage.v3.StorageService",
+                        input=DeleteFinalArtifactRequest,
+                        output=DeleteFinalArtifactResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.delete_final_artifact,
                 ),
                 "/kokoro.storage.v3.StorageService/GetFinalArtifactDownloadReference": Endpoint.unary(
                     method=MethodInfo(
@@ -549,6 +562,26 @@ class StorageServiceClient(ConnectClient):
                 service_name="kokoro.storage.v3.StorageService",
                 input=GetFinalArtifactRequest,
                 output=GetFinalArtifactResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def delete_final_artifact(
+        self,
+        request: DeleteFinalArtifactRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DeleteFinalArtifactResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DeleteFinalArtifact",
+                service_name="kokoro.storage.v3.StorageService",
+                input=DeleteFinalArtifactRequest,
+                output=DeleteFinalArtifactResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

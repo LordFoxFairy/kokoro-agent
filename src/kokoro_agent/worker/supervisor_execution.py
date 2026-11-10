@@ -40,7 +40,7 @@ from kokoro_agent.execution.events import (
     persist_outbox_chat_event,
 )
 from kokoro_agent.execution.failures import run_failed_payload
-from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.execution.run_agent import CheckpointMetadata, invoke_once
 from kokoro_agent.model.call_scope import ModelCallSettlementTimeout
 from kokoro_agent.protocol import (
     RunErrorCode,
@@ -303,20 +303,13 @@ class SupervisorExecutionMixin(SupervisorContext):
             if self._recover_steers is not None and resume is not None:
                 # Resume assembles a graph without going through _start_run.
                 await self._recover_steers(request, lease)
-            metadata = dict((trace or {}).get("metadata", {}))
-            for key in (
-                "kokoro_run_id",
-                "kokoro_generation",
-                "kokoro_command_id",
-                "kokoro_attempt_id",
-            ):
-                metadata.pop(key, None)
-            metadata.update(kokoro_run_id=run_id, kokoro_generation=lease.generation)
+            checkpoint_metadata: CheckpointMetadata = {
+                "kokoro_run_id": run_id,
+                "kokoro_generation": lease.generation,
+            }
             if resume is not None:
-                metadata.update(
-                    kokoro_command_id=resume[0], kokoro_attempt_id=resume[1].attempt_id
-                )
-            trusted_trace: RunnableConfig = {**(trace or {}), "metadata": metadata}
+                checkpoint_metadata["kokoro_command_id"] = resume[0]
+                checkpoint_metadata["kokoro_attempt_id"] = resume[1].attempt_id
 
             async def on_native_settled(
                 seal_usage: Callable[[], Awaitable[tuple[int, int]]],
@@ -388,7 +381,8 @@ class SupervisorExecutionMixin(SupervisorContext):
                     tool_display_codes=built.tool_display_codes,
                     tool_display_sources=built.tool_display_sources,
                     source_for=self._source_for,
-                    trace=trusted_trace,
+                    trace=trace,
+                    checkpoint_metadata=checkpoint_metadata,
                     private_material=built.private_material,
                     on_native_settled=on_native_settled,
                     recursion_limit=self._recursion_limit,

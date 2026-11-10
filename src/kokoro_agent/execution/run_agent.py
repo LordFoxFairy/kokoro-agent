@@ -7,7 +7,7 @@ import logging
 from contextlib import AbstractContextManager, nullcontext
 import langsmith
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Literal, TypeGuard
+from typing import Any, Literal, NotRequired, TypedDict, TypeGuard
 
 from langchain_core.globals import get_debug, get_verbose
 from langchain_core.tracers.context import tracing_v2_callback_var
@@ -44,6 +44,13 @@ _tracing_context: Callable[..., AbstractContextManager[None]] = getattr(
 )
 
 
+class CheckpointMetadata(TypedDict):
+    kokoro_run_id: str
+    kokoro_generation: int
+    kokoro_command_id: NotRequired[str]
+    kokoro_attempt_id: NotRequired[str]
+
+
 async def invoke_once(
     emitter: RunEmitter,
     agent: AgentRunnable,
@@ -65,6 +72,7 @@ async def invoke_once(
         Awaitable[Literal["active", "waiting", "unknown"]],
     ],
     trace: RunnableConfig | None = None,
+    checkpoint_metadata: CheckpointMetadata | None = None,
     private_material: bool = False,
     recursion_limit: int = 100,
     model_call_settle_timeout_s: float = DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
@@ -76,7 +84,13 @@ async def invoke_once(
     """
     emitter.bind_tool_display_codes(tool_display_codes)
     emitter.bind_tool_display_sources(tool_display_sources)
-    config = _config(thread_id, None if private_material else trace, recursion_limit)
+    # Private Runs still need durable ownership attribution, not trace observers.
+    config = _config(
+        thread_id,
+        None if private_material else trace,
+        recursion_limit,
+        checkpoint_metadata,
+    )
     if initial:
         # run.started eligibility is explicit; the Run-locked outbox deduplicates retries.
         await emitter.emit(RunStartedPayload())
@@ -203,18 +217,30 @@ def _usage_totals(per_model: Mapping[str, UsageMetadata]) -> tuple[int, int]:
 
 
 def _config(
-    thread_id: str, trace: RunnableConfig | None, recursion_limit: int
+    thread_id: str,
+    trace: RunnableConfig | None,
+    recursion_limit: int,
+    checkpoint_metadata: CheckpointMetadata | None,
 ) -> RunnableConfig:
     # 失控熔断：无限工具循环在限额处炸成 GraphRecursionError → run.failed fail-loud。
     config: RunnableConfig = {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": recursion_limit,
     }
-    if trace is not None:
-        callbacks = trace.get("callbacks")
-        metadata = trace.get("metadata")
-        if callbacks is not None:
-            config["callbacks"] = callbacks
-        if metadata is not None:
-            config["metadata"] = metadata
+    callbacks = trace.get("callbacks") if trace is not None else None
+    if callbacks is not None:
+        config["callbacks"] = callbacks
+    trace_metadata = trace.get("metadata") if trace is not None else None
+    metadata = dict(trace_metadata or {})
+    for key in (
+        "kokoro_run_id",
+        "kokoro_generation",
+        "kokoro_command_id",
+        "kokoro_attempt_id",
+    ):
+        metadata.pop(key, None)
+    if checkpoint_metadata is not None:
+        metadata.update(checkpoint_metadata)
+    if metadata:
+        config["metadata"] = metadata
     return config

@@ -74,7 +74,7 @@ from kokoro_agent.execution.events import (
     tool_returned_payload,
     subagent_tool_returned_payload,
 )
-from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.execution.run_agent import CheckpointMetadata, invoke_once
 from kokoro_agent.execution.failures import failure_code, run_failed_payload
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
@@ -210,6 +210,7 @@ async def _invoke(
     approval_tool_names: frozenset[str] = frozenset(),
     claim: Callable[[], Awaitable[bool]] = _always_claim,
     trace: RunnableConfig | None = None,
+    checkpoint_metadata: CheckpointMetadata | None = None,
     private_material: bool = False,
 ) -> bool:
     emitter = await RunEmitter.attach(bus, run_id)
@@ -224,6 +225,7 @@ async def _invoke(
         finalize_terminal=terminal_emitter(emitter, claim, usage_recorder()[0]),
         record_usage=usage_recorder()[0],
         trace=trace,
+        checkpoint_metadata=checkpoint_metadata,
         private_material=private_material,
         on_native_settled=settled_state_callback(agent, "c1"),
     )
@@ -784,16 +786,28 @@ async def test_trace_config_merged() -> None:
     handler = _Handler()
     trace: RunnableConfig = {
         "callbacks": [handler],
-        "metadata": {"langfuse_session_id": "s1", "kokoro_run_id": "r1"},
+        "metadata": {
+            "langfuse_session_id": "s1",
+            "kokoro_run_id": "forged-run",
+            "kokoro_generation": 99,
+            "kokoro_command_id": "forged-command",
+            "kokoro_attempt_id": "forged-attempt",
+        },
     }
     bus = FakeBus()
     agent = FakeAgent(run=text_run("hi"))
-    await _invoke(bus, agent, trace=trace)
+    await _invoke(
+        bus,
+        agent,
+        trace=trace,
+        checkpoint_metadata={"kokoro_run_id": "r1", "kokoro_generation": 1},
+    )
     assert agent.seen_config.get("configurable") == {"thread_id": "c1"}
     assert agent.seen_config.get("callbacks") == [handler]
     assert agent.seen_config.get("metadata") == {
         "langfuse_session_id": "s1",
         "kokoro_run_id": "r1",
+        "kokoro_generation": 1,
     }
 
 
@@ -2176,6 +2190,12 @@ async def test_private_material_disables_global_tracing_only_inside_owned_run(
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     seen: list[bool] = []
+    checkpoint_metadata: CheckpointMetadata = {
+        "kokoro_run_id": "r1",
+        "kokoro_generation": 2,
+        "kokoro_command_id": "command",
+        "kokoro_attempt_id": "attempt",
+    }
 
     class PrivateAgent(FakeAgent):
         async def astream_events(self, *args: Any, **kwargs: Any) -> Any:
@@ -2186,12 +2206,24 @@ async def test_private_material_disables_global_tracing_only_inside_owned_run(
             assert get_tracing_context()["enabled"] is False
             return await super().astream_events(*args, **kwargs)
 
+    agent = PrivateAgent(run=text_run("ordinary answer"))
     with tracing_context(enabled=True):
         bus = FakeBus()
         task = asyncio.create_task(
             _invoke(
                 bus,
-                PrivateAgent(run=text_run("ordinary answer")),
+                agent,
+                trace={
+                    "callbacks": [BaseCallbackHandler()],
+                    "metadata": {
+                        "arbitrary_trace": "private",
+                        "kokoro_run_id": "forged-run",
+                        "kokoro_generation": 99,
+                        "kokoro_command_id": "forged-command",
+                        "kokoro_attempt_id": "forged-attempt",
+                    },
+                },
+                checkpoint_metadata=checkpoint_metadata,
                 private_material=True,
             )
         )
@@ -2199,6 +2231,8 @@ async def test_private_material_disables_global_tracing_only_inside_owned_run(
         await task
         assert get_tracing_context()["enabled"] is True
     assert seen == [False]
+    assert agent.seen_config.get("metadata") == checkpoint_metadata
+    assert "callbacks" not in agent.seen_config
     assert bus.kinds("r1")[-1] == "run.completed"
 
 

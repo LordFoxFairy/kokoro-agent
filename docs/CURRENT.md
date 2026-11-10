@@ -1,3 +1,9 @@
+## 2026-11-10 A‑08 私有材料原生暂停归属
+
+私有材料关闭可选追踪时误删可信 checkpoint 归属，导致真实 Project 附件 Run 的原生等待态无法回读。可信 Run/generation/恢复 command/attempt 与 trace 分开传递；私有 Run 仍屏蔽回调、任意追踪元数据和外部追踪，普通 trace 同名字段不能写入归属。原生 reader、持久模型、HTTP 契约及工具权限不变。
+
+主控停写后复验：invoke/supervisor/subagent HITL 226 PASS、7 按原标记未选；全 Pyright 0 错、受影响 Ruff/format、契约和 wheel/sdist 构建通过，独审 CLEAR。真实 Worker 替换与浏览器恢复由 Root 精确组合验收，不把定向通过当产品收据。
+
 ## 2026-11-09 A-08 选中输入运行接线（未提交候选）
 基线 `55beed29`；Storage 正规消费固定 `c31a0657`。统一 `read_input` 承接 personal/project Asset 和历史 FINAL Artifact；当前持久 Run exact membership、consumer lease 与 source provenance 分开，RPC/GET 后重验并检查真实 bytes。现 CompositeBackend 提供稳定索引只读 `/.inputs/`，Worker 共用原 transport；旧 FinalArtifactRead 接口已删除，无新增协议、Schema、token 或兼容层。
 

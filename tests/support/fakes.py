@@ -96,7 +96,10 @@ from kokoro_agent.protocol.control import control_request_digest
 from kokoro_agent.protocol import REQUESTS_STREAM, RUN_EVENTS_MAXLEN
 from kokoro_agent.domain.run.models import RunUsageSegment
 from kokoro_agent.domain.run.repository import RunRepository
-from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
+from kokoro_agent.domain.run.workspace_output import (
+    NativeWorkspaceWrite,
+    WorkspaceExecuteIntent,
+)
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.execution.protocols import AgentRunnable, ModelStream, PeerRunStream
@@ -1599,8 +1602,20 @@ class FakeRunRepository:
         return self.tool_results.get((run_id, tool_id))
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool:
+        if intent and (
+            name != "execute"
+            or not tool_call_id
+            or WorkspaceExecuteIntent.from_journal(intent) is None
+        ):
+            return False
         if not await self.is_lease_current(run_id, lease):
             return False
         key = (run_id, tool_call_id)
@@ -1609,7 +1624,7 @@ class FakeRunRepository:
         self.tool_journal[key] = {
             "name": name,
             "status": "started",
-            "result": None,
+            "result": intent or None,
             "is_error": None,
         }
         return True
@@ -1635,12 +1650,19 @@ class FakeRunRepository:
         *,
         workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool:
-        del workspace_write
         if not await self.is_lease_current(run_id, lease):
             return False
         entry = self.tool_journal.get((run_id, tool_call_id))
         if entry is None or entry["status"] != "started":
             return False
+        if workspace_write is not None and workspace_write.script:
+            intent = WorkspaceExecuteIntent.from_journal(entry["result"])
+            if (
+                entry["name"] != "execute"
+                or intent is None
+                or intent.path != workspace_write.path
+            ):
+                return False
         entry["status"] = "failed" if is_error else "succeeded"
         entry["result"] = result
         entry["is_error"] = is_error
@@ -1711,7 +1733,10 @@ class FakeRunRepository:
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent:
+        if type(defer_ms) is not int or not 0 <= defer_ms <= 600_000:
+            raise ValueError("sandbox cleanup delay must be between 0 and 600000ms")
         cleanup_id = f"cleanup:{run_id}:{lease_generation}:{backend_kind}:{sandbox_id}"
         row = self.sandbox_cleanups.setdefault(
             cleanup_id,
@@ -1724,7 +1749,7 @@ class FakeRunRepository:
                 "teardown_ref": teardown_ref,
                 "status": "pending",
                 "attempt_count": 0,
-                "next_attempt_at": self.clock_ms,
+                "next_attempt_at": self.clock_ms + defer_ms,
             },
         )
         if row["teardown_ref"] != teardown_ref:

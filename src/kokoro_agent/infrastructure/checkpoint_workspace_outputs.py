@@ -27,6 +27,7 @@ from kokoro_agent.domain.run.workspace_output import (
     OUTPUT_TOOLS,
     output_path_digest,
     matches_native_output_ack,
+    native_output_version_id,
 )
 from kokoro_agent.infrastructure.checkpoints import CheckpointSettings
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
@@ -433,10 +434,10 @@ class CheckpointWorkspaceOutputs:
             ):
                 await execute_sql(
                     cur,
-                    f"""SELECT v.path,v.content_sha256,v.size_bytes,v.pending_bytes,j.name,j.result
+                    f"""SELECT v.path,v.content_sha256,v.size_bytes,v.pending_bytes,v.tool_call_id,j.name,j.result
                     FROM {self._table} v JOIN {journal} j USING (run_id,tool_call_id)
                     WHERE v.run_id=%s AND v.version_id=%s AND v.pending_bytes IS NOT NULL
-                    AND v.source_generation<=%s AND j.name IN ('write_file','edit_file')
+                    AND v.source_generation<=%s AND j.name IN ('write_file','edit_file','execute')
                     AND j.status='succeeded' AND j.is_error=FALSE""",
                     (request.run_id, version_id, lease.generation),
                 )
@@ -449,6 +450,17 @@ class CheckpointWorkspaceOutputs:
                 or not isinstance(path, str)
                 or output_path_digest(path) is None
                 or not matches_native_output_ack(row["name"], path, row["result"])
+                or (
+                    row["name"] == "execute"
+                    and (
+                        not isinstance(row["tool_call_id"], str)
+                        or not row["tool_call_id"]
+                        or version_id
+                        != native_output_version_id(
+                            request.run_id, row["tool_call_id"], path, "execute"
+                        )
+                    )
+                )
                 or not isinstance(digest, str)
                 or not isinstance(raw, bytes)
                 or len(raw) != row["size_bytes"]

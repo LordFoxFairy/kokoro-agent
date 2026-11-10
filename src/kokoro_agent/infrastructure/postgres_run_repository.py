@@ -375,10 +375,16 @@ class PostgresRunRepository:
         return await self._effects.get_tool_result(run_id, tool_id)
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool:
         return await self._effects.journal_tool_started(
-            run_id, lease, tool_call_id, name
+            run_id, lease, tool_call_id, name, intent=intent
         )
 
     async def journal_delivery_intent(
@@ -450,6 +456,7 @@ class PostgresRunRepository:
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent:
         return await self._sandbox.register_sandbox_cleanup(
             run_id=run_id,
@@ -457,6 +464,7 @@ class PostgresRunRepository:
             backend_kind=backend_kind,
             sandbox_id=sandbox_id,
             teardown_ref=teardown_ref,
+            defer_ms=defer_ms,
         )
 
     async def claim_sandbox_cleanups(

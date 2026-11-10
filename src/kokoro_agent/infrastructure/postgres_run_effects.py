@@ -12,6 +12,8 @@ from kokoro_agent.domain.run.workspace_output import (
     MAX_OUTPUT_BYTES,
     MAX_OUTPUT_VERSIONS,
     NativeWorkspaceWrite,
+    WorkspaceExecuteIntent,
+    native_output_version_id,
     output_path_digest,
 )
 from kokoro_agent.domain.run.repository import LeaseFence, ToolJournalRecord
@@ -318,8 +320,20 @@ class PostgresRunEffects:
         return str(row["result"]), bool(row["is_error"])
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool:
+        if intent and (
+            name != "execute"
+            or not tool_call_id
+            or WorkspaceExecuteIntent.from_journal(intent) is None
+        ):
+            return False
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
@@ -329,11 +343,11 @@ class PostgresRunEffects:
                         cur,
                         """
                         INSERT INTO {} (run_id, tool_call_id, name, status, result, is_error)
-                        VALUES (%s, %s, %s, 'started', '', FALSE)
+                        VALUES (%s, %s, %s, 'started', %s, FALSE)
                         ON CONFLICT (run_id, tool_call_id) DO NOTHING
                         RETURNING tool_call_id
                         """.format(qualified(self._context.schema, TOOL_JOURNAL_TABLE)),
-                        (run_id, tool_call_id, name),
+                        (run_id, tool_call_id, name, intent),
                     )
                     return await fetch_one(cur) is not None
 
@@ -428,6 +442,26 @@ class PostgresRunEffects:
                 async with conn.cursor() as cur:
                     if not await self._context.lock_active_lease(cur, run_id, lease):
                         return False
+                    if workspace_write is not None and workspace_write.script:
+                        journal = qualified(self._context.schema, TOOL_JOURNAL_TABLE)
+                        versions = qualified(
+                            self._context.schema, WORKSPACE_OUTPUT_VERSIONS_TABLE
+                        )
+                        await execute_sql(
+                            cur,
+                            f"""SELECT result,
+                                (SELECT count(*) FROM {versions} WHERE run_id=%s) < %s AS has_capacity
+                            FROM {journal}
+                            WHERE run_id=%s AND tool_call_id=%s AND name='execute'
+                            AND status='started' AND is_error=FALSE FOR UPDATE""",
+                            (run_id, MAX_OUTPUT_VERSIONS, run_id, tool_call_id),
+                        )
+                        started = await fetch_one(cur)
+                        if started is None or started["has_capacity"] is not True:
+                            return False
+                        intent = WorkspaceExecuteIntent.from_journal(started["result"])
+                        if intent is None or intent.path != workspace_write.path:
+                            return False
                     await execute_sql(
                         cur,
                         """
@@ -452,24 +486,11 @@ class PostgresRunEffects:
                         return False
                     if workspace_write is not None:
                         raw = workspace_write.content
-                        version_id = (
-                            "wsv_"
-                            + hashlib.sha256(
-                                json.dumps(
-                                    [
-                                        (
-                                            "native-workspace-write:v1"
-                                            if workspace_write.occurrences is None
-                                            else "native-workspace-edit:v1"
-                                        ),
-                                        run_id,
-                                        tool_call_id,
-                                        workspace_write.path,
-                                    ],
-                                    ensure_ascii=True,
-                                    separators=(",", ":"),
-                                ).encode("ascii")
-                            ).hexdigest()
+                        version_id = native_output_version_id(
+                            run_id,
+                            tool_call_id,
+                            workspace_write.path,
+                            workspace_write.tool_name,
                         )
                         versions = qualified(
                             self._context.schema, WORKSPACE_OUTPUT_VERSIONS_TABLE

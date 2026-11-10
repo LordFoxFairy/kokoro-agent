@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any, TypeGuard
 
+from deepagents.middleware.filesystem import ExecuteSchema
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import (
     ModelRequest,
@@ -22,7 +23,7 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolM
 from langchain_core.tools import BaseTool
 from langchain_core.utils import function_calling
 from langgraph.types import Command
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from kokoro_agent.domain.chat.display_text import public_action_title
 
 from kokoro_agent.domain.chat.action_intent import (
@@ -103,6 +104,17 @@ def model_action_tools(
     return [_decorated(tool, selected) or tool for tool in tools]
 
 
+class _WorkspaceExecuteSchema(ExecuteSchema):
+    output_path: str | None = Field(
+        default=None,
+        description=(
+            "Optional direct file under /outputs/. If set, the command runs once "
+            "with a read-only workspace and a private writable /outputs. "
+            "Write the exact named file and exit successfully; an explicit timeout must be 1–300 seconds."
+        ),
+    )
+
+
 class ActionDisplayMiddleware(AgentMiddleware):
     """Preserve native calls/checkpoints; strip only our selected UI extension."""
 
@@ -112,6 +124,7 @@ class ActionDisplayMiddleware(AgentMiddleware):
         observe: Callable[[ActionObservation], None],
         *,
         run_id: str,
+        workspace_script: bool = False,
     ) -> None:
         super().__init__()
         if not run_id:
@@ -119,6 +132,7 @@ class ActionDisplayMiddleware(AgentMiddleware):
         self._run_id = run_id
         self._selected = selected
         self._observe = observe
+        self._workspace_script = workspace_script
 
     async def awrap_model_call(
         self,
@@ -128,6 +142,13 @@ class ActionDisplayMiddleware(AgentMiddleware):
         visible: list[BaseTool | dict[str, Any]] = []
         qualified: set[str] = set()
         for tool in request.tools:
+            if (
+                self._workspace_script
+                and isinstance(tool, BaseTool)
+                and tool.name == "execute"
+                and tool.args_schema is ExecuteSchema
+            ):
+                tool = tool.model_copy(update={"args_schema": _WorkspaceExecuteSchema})
             decorated = _decorated(tool, self._selected)
             visible.append(decorated if decorated is not None else tool)
             if decorated is not None:

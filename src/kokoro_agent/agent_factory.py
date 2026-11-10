@@ -439,6 +439,13 @@ async def build_deep_agent(
             and workspace_output_guard is None
         ):
             raise ValueError("native workspace output credential guard unavailable")
+        script_backend = (
+            backend
+            if plan.native_workspace_script and isinstance(backend, DockerShellBackend)
+            else None
+        )
+        if plan.native_workspace_script and script_backend is None:
+            raise ValueError("native workspace script backend unavailable")
         thread = RunScope.of(request).scoped_thread_id
         base_main_chain = chains.main(
             ToolPolicyMiddleware(
@@ -448,7 +455,10 @@ async def build_deep_agent(
             ),
             workspace_journal=(
                 chains.journal.for_workspace_output(
-                    thread, workspace_output_guard, edit=plan.native_workspace_edit
+                    thread,
+                    workspace_output_guard,
+                    edit=plan.native_workspace_edit,
+                    script=script_backend,
                 )
                 if native_workspace_write
                 else None
@@ -461,6 +471,7 @@ async def build_deep_agent(
                 toolset.authorized - {"task", "write_todos", "ask_user_question"},
                 action_observer,
                 run_id=request.run_id,
+                workspace_script=script_backend is not None,
             ),
             model_guard(plan.peer_path),
             *base_main_chain[offset:],
@@ -484,6 +495,13 @@ async def build_deep_agent(
             f"\n\nWrite user-facing process files under {plan.workspace_output_root} using "
             f"{'write_file' if native_workspace_write and not plan.native_workspace_edit else 'write_file or edit_file'}. "
             "Keep drafts, inputs, and secrets outside that directory."
+            + (
+                " For a script that produces one file, set execute.output_path to its exact "
+                "/outputs/ path; that command reads the workspace but can only write in its "
+                "private outputs directory."
+                if script_backend is not None
+                else ""
+            )
             if plan.workspace_output_root
             else ""
         )
@@ -665,6 +683,7 @@ class AgentFactory:
             toolbox=self._dependencies.toolbox,
             subagent_catalog=self._dependencies.subagent_catalog,
             delivery_available=self._dependencies.delivery is not None,
+            custom_api_selected=bool(request.selected_custom_api_profiles),
         )
         await self._dependencies.run_repository.freeze_or_verify_static_recipe(
             request,

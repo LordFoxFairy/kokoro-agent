@@ -194,6 +194,7 @@ class RunSandboxCleanupPort(Protocol):
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent: ...
 
     async def claim_sandbox_cleanups(
@@ -235,7 +236,13 @@ class RunEffectPort(Protocol):
     ) -> tuple[str, bool] | None: ...
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool: ...
 
     async def journal_delivery_intent(

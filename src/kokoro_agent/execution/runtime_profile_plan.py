@@ -147,6 +147,7 @@ class PreparedPeerPlan:
     tool_metadata: bytes
     workspace_output_root: str | None = None
     native_workspace_edit: bool = False
+    native_workspace_script: bool = False
 
     def verify_tools(self, tools: Sequence[BaseTool]) -> None:
         actual = tuple(
@@ -238,6 +239,7 @@ def prepare_feature(
     toolbox: ProcessToolbox,
     subagent_catalog: SubagentCatalog,
     delivery_available: bool,
+    custom_api_selected: bool = False,
 ) -> PreparedFeaturePlan:
     """Validate every peer before the first external preflight, then retain its plan."""
     # This gate precedes all metadata imports that could invoke native lazy loading.
@@ -321,6 +323,12 @@ def prepare_feature(
             else None
         )
         native_edit = bool(output_root and native_write and "edit_file" not in gated)
+        native_script = bool(
+            output_root
+            and custom_api_selected
+            and agent.backend == "docker"
+            and "execute" not in gated
+        )
         peers.append(
             PreparedPeerPlan(
                 agent=agent,
@@ -331,6 +339,7 @@ def prepare_feature(
                 tool_metadata=canonical_json(metadata),
                 workspace_output_root=output_root,
                 native_workspace_edit=native_edit,
+                native_workspace_script=native_script,
             )
         )
         model = agent.model
@@ -344,6 +353,11 @@ def prepare_feature(
                     else {}
                 ),
                 **({"native_workspace_edit": True} if native_edit else {}),
+                **(
+                    {"native_workspace_script": "docker-execute-output-path-v1"}
+                    if native_script
+                    else {}
+                ),
                 "public_action_intent": {
                     "field": "_kokoro_action",
                     "max_utf8_bytes": 256,

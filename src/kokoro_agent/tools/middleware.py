@@ -7,7 +7,11 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import Any, TypeGuard
 
-from deepagents.middleware.filesystem import EditFileSchema, WriteFileSchema
+from deepagents.middleware.filesystem import (
+    EditFileSchema,
+    ExecuteSchema,
+    WriteFileSchema,
+)
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import (
     ModelRequest,
@@ -31,10 +35,17 @@ from kokoro_agent.domain.run.workspace_output import (
     MAX_OUTPUT_BYTES,
     NativeWorkspaceWrite,
     OUTPUT_PROOF,
+    WorkspaceExecuteIntent,
     WorkspaceOutputGuard,
     output_path_digest,
 )
 from kokoro_agent.protocol.events import DeliveryCreatedPayload
+from kokoro_agent.sandbox.backend import (
+    DOCKER_OUTPUT_ID_PREFIX,
+    DOCKER_OUTPUT_TEARDOWN_PREFIX,
+)
+from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+from kokoro_agent.sandbox.execution_environment import ExecutionBoundaryError
 from kokoro_agent.sandbox.output_edit import capture_output_edit
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
 
@@ -70,10 +81,14 @@ def _is_mapping(value: object) -> TypeGuard[dict[object, object]]:
 
 
 def _native_output_path(
-    request: ToolCallRequest, thread_id: str, schema: type[BaseModel] | None
+    request: ToolCallRequest,
+    thread_id: str,
+    schema: type[BaseModel] | None,
+    *,
+    field: str = "file_path",
 ) -> str | None:
     call = request.tool_call
-    name, call_id, path = call["name"], call.get("id"), call["args"].get("file_path")
+    name, call_id, path = call["name"], call.get("id"), call["args"].get(field)
     runtime: object = getattr(request, "runtime", None)
     runtime_call_id: object = getattr(runtime, "tool_call_id", None)
     config: object = getattr(runtime, "config", None)
@@ -402,6 +417,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         workspace_thread: str | None = None,
         workspace_guard: WorkspaceOutputGuard | None = None,
         workspace_edit: bool = False,
+        workspace_script: DockerShellBackend | None = None,
     ) -> None:
         super().__init__()
         self._run_repository = run_repository
@@ -411,9 +427,15 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         self._workspace_thread = workspace_thread
         self._workspace_guard = workspace_guard
         self._workspace_edit = workspace_edit
+        self._workspace_script = workspace_script
 
     def for_workspace_output(
-        self, thread_id: str, guard: WorkspaceOutputGuard | None, *, edit: bool = False
+        self,
+        thread_id: str,
+        guard: WorkspaceOutputGuard | None,
+        *,
+        edit: bool = False,
+        script: DockerShellBackend | None = None,
     ) -> ToolEffectJournalMiddleware:
         return ToolEffectJournalMiddleware(
             run_repository=self._run_repository,
@@ -423,6 +445,7 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             workspace_thread=thread_id,
             workspace_guard=guard,
             workspace_edit=edit,
+            workspace_script=script,
         )
 
     def _native_write(self, request: ToolCallRequest) -> NativeWorkspaceWrite | None:
@@ -442,12 +465,133 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             return None
         return NativeWorkspaceWrite(path, raw) if len(raw) <= MAX_OUTPUT_BYTES else None
 
+    async def _execute_workspace_script(self, request: ToolCallRequest) -> ToolMessage:
+        call, backend, thread = (
+            request.tool_call,
+            self._workspace_script,
+            self._workspace_thread,
+        )
+        tool_id = call["id"] or ""
+        args = call["args"]
+        command, timeout = args.get("command"), args.get("timeout")
+        path = (
+            _native_output_path(request, thread, ExecuteSchema, field="output_path")
+            if thread is not None
+            else None
+        )
+
+        def error(message: str) -> ToolMessage:
+            return ToolMessage(
+                content=message, name="execute", tool_call_id=tool_id, status="error"
+            )
+
+        if (
+            backend is None
+            or path is None
+            or not isinstance(command, str)
+            or not set(args) <= {"command", "output_path", "timeout"}
+        ):
+            return error("Invalid isolated workspace output request")
+        recorded = await self._run_repository.get_tool_journal(self._run_id, tool_id)
+        if recorded is not None and recorded.name != "execute":
+            return error("Invalid isolated workspace output invocation")
+        if recorded is not None and recorded.status != "started":
+            return self._replay(recorded, tool_id=tool_id, name="execute")
+        try:
+            identity = await backend.aworkspace_output_identity()
+            intent = WorkspaceExecuteIntent.bind(
+                path=path,
+                command=command,
+                timeout=timeout,
+                run_id=self._run_id,
+                tool_call_id=tool_id,
+                identity=identity,
+            )
+        except (ValueError, ExecutionBoundaryError):
+            return error("Isolated workspace output is unavailable")
+        key = intent.key
+
+        recover = recorded is not None
+        cleanup_id: str | None = None
+        if recorded is not None:
+            if WorkspaceExecuteIntent.from_journal(recorded.result) != intent:
+                return self._replay(recorded, tool_id=tool_id, name="execute")
+        else:
+            won = await self._run_repository.journal_tool_started(
+                self._run_id,
+                self._lease,
+                tool_id,
+                "execute",
+                intent=intent.model_dump_json(),
+            )
+            if not won:
+                winner = await self._run_repository.get_tool_journal(
+                    self._run_id, tool_id
+                )
+                return self._replay(winner, tool_id=tool_id, name="execute")
+            cleanup = await self._run_repository.register_sandbox_cleanup(
+                run_id=self._run_id,
+                lease_generation=self._lease.generation,
+                backend_kind="docker",
+                sandbox_id=DOCKER_OUTPUT_ID_PREFIX + key,
+                teardown_ref=DOCKER_OUTPUT_TEARDOWN_PREFIX + identity,
+                defer_ms=600_000,
+            )
+            cleanup_id = cleanup.cleanup_id
+        await _require_current_lease(self._run_repository, self._run_id, self._lease)
+        try:
+            raw = await backend.aexecute_workspace_output(
+                command, path, key, timeout, recover=recover
+            )
+        except ExecutionBoundaryError:
+            return self._replay(recorded, tool_id=tool_id, name="execute")
+        if raw is None and recover:
+            # A missing or running sandbox is not a success receipt. Preserve
+            # started, and never run the old command to manufacture a result.
+            return self._replay(recorded, tool_id=tool_id, name="execute")
+        write = None if raw is None else NativeWorkspaceWrite(path, raw, script=True)
+        result = (
+            error("Isolated command did not produce the requested workspace file")
+            if write is None
+            else ToolMessage(
+                content=write.acknowledgement,
+                name="execute",
+                tool_call_id=tool_id,
+                status="success",
+            )
+        )
+        if not await self._run_repository.journal_tool_finished(
+            self._run_id,
+            self._lease,
+            tool_id,
+            result.text,
+            write is None,
+            workspace_write=write,
+        ):
+            await _require_current_lease(
+                self._run_repository, self._run_id, self._lease
+            )
+            result = error("The workspace output could not be retained")
+            if write is None or not await self._run_repository.journal_tool_finished(
+                self._run_id, self._lease, tool_id, result.text, True
+            ):
+                raise RunSupersededError("Workspace output journal no longer active")
+        try:
+            await backend.acleanup_workspace_output(key)
+            if cleanup_id is not None:
+                await self._run_repository.complete_sandbox_cleanup(cleanup_id)
+        except Exception:
+            _logger.warning("workspace output sandbox cleanup deferred to its owner")
+        return result
+
     async def awrap_tool_call(
         self, request: ToolCallRequest, handler: _ToolHandler
     ) -> ToolMessage | Command[Any]:
         call = request.tool_call
         name = call["name"]
         await _require_current_lease(self._run_repository, self._run_id, self._lease)
+        if name == "execute" and call["args"].get("output_path") is not None:
+            return await self._execute_workspace_script(request)
         if name in self._exempt:
             # 纯读/幂等 / Command 形态工具：不落 journal，直接放行（重执行安全）。
             return await handler(request)

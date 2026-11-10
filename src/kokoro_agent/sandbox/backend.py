@@ -32,6 +32,8 @@ from kokoro_agent.sandbox.docker_backend import (
     ArchivingDockerShellBackend,
     DockerSettings,
     connect_docker_sandbox,
+    cleanup_docker_workspace_output,
+    docker_workspace_output_identity,
 )
 from kokoro_agent.sandbox.e2b_backend import (
     E2BSettings,
@@ -48,6 +50,8 @@ from kokoro_agent.domain.run.repository import (
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox")
 DOCKER_TEARDOWN_REF = "kokoro-agent:builtin:docker:v1"
+DOCKER_OUTPUT_ID_PREFIX = "workspace-output:"
+DOCKER_OUTPUT_TEARDOWN_PREFIX = "kokoro-agent:builtin:docker-output:v1:"
 E2B_TEARDOWN_REF = "kokoro-agent:builtin:e2b:v1"
 
 
@@ -187,6 +191,7 @@ class RunSandboxStore(Protocol):
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent: ...
 
     async def complete_sandbox_cleanup(self, cleanup_id: str) -> bool: ...
@@ -657,6 +662,33 @@ async def teardown_backend_for_run(
         return
     try:
         if kind == "docker":
+            if sandbox_id.startswith(DOCKER_OUTPUT_ID_PREFIX):
+                if settings.local_shell_root is None or teardown_ref is None:
+                    raise ValueError(
+                        "docker workspace output teardown identity is missing"
+                    )
+                root = Path(settings.local_shell_root)
+                cli = dict(settings.docker.cli_environment)
+                identity = await _to_thread_owned(
+                    partial(
+                        docker_workspace_output_identity,
+                        workspace_root=root,
+                        docker_cli_environment=cli,
+                    )
+                )
+                if teardown_ref != DOCKER_OUTPUT_TEARDOWN_PREFIX + identity:
+                    raise ValueError(
+                        "docker workspace output teardown identity differs"
+                    )
+                await _to_thread_owned(
+                    partial(
+                        cleanup_docker_workspace_output,
+                        workspace_root=root,
+                        docker_cli_environment=cli,
+                    ),
+                    sandbox_id.removeprefix(DOCKER_OUTPUT_ID_PREFIX),
+                )
+                return
             if teardown_ref not in {None, DOCKER_TEARDOWN_REF}:
                 raise ValueError("docker sandbox teardown identity is invalid")
             await _to_thread_owned(

@@ -723,3 +723,40 @@ def test_malformed_business_required_is_not_rewritten(required: object) -> None:
     original = deepcopy(schema)
     assert model_action_tools([schema], frozenset({"lookup"})) == [original]
     assert schema == original
+
+
+async def test_only_enabled_native_execute_projects_optional_output_path() -> None:
+    from deepagents.middleware.filesystem import ExecuteSchema
+
+    def echo(command: str) -> str:
+        return command
+
+    tool = StructuredTool(
+        func=echo,
+        name="execute",
+        description="Run a command",
+        args_schema=ExecuteSchema,
+    )
+    original = tool.get_input_schema().model_json_schema()
+    for enabled in (False, True):
+
+        async def verify(request: ModelRequest[Any]) -> ModelResponse:
+            [visible] = request.tools
+            assert isinstance(visible, dict)
+            function = visible["function"]
+            assert function["name"] == "execute"
+            schema = function["parameters"]
+            assert ("output_path" in schema["properties"]) is enabled
+            assert "output_path" not in schema["required"]
+            assert ACTION_FIELD in schema["required"]
+            return ModelResponse(result=[AIMessage(content="ok")])
+
+        await ActionDisplayMiddleware(
+            frozenset({"execute"}),
+            lambda _: None,
+            run_id="rn",
+            workspace_script=enabled,
+        ).awrap_model_call(
+            ModelRequest(model=LocalFakeChatModel(), messages=[], tools=[tool]), verify
+        )
+    assert tool.get_input_schema().model_json_schema() == original

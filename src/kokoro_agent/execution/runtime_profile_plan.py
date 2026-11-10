@@ -117,6 +117,7 @@ class RuntimeAssemblyPolicy:
             backend_recipes=tuple(
                 (name, canonical_json(values)) for name, values in backends
             ),
+            workspace_root_configured=bool(sandbox.local_shell_root),
         )
 
     def backend_recipe(self, kind: str) -> object:

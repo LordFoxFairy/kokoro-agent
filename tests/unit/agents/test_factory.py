@@ -3261,7 +3261,18 @@ async def test_real_factory_describes_once_before_model_and_keeps_recipe_static(
         platform=platform,
         isolate_model_call_gate_for_unrelated_unit_scope=True,
     )
-    backend = AsyncMock(return_value=StateBackend())
+    from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+
+    # Exercise the real factory capability check without starting a container.
+    backend = AsyncMock(
+        return_value=(
+            DockerShellBackend(
+                root=tmp_path, container_id="fixture", timeout=10, max_output_bytes=4096
+            )
+            if kind == "docker"
+            else StateBackend()
+        )
+    )
     monkeypatch.setattr(assembly, "make_backend_for_run", backend)
 
     class CaptureModel(BaseCallbackHandler):
@@ -3283,6 +3294,7 @@ async def test_real_factory_describes_once_before_model_and_keeps_recipe_static(
     try:
         assert calls == ["describe"] and model_messages == []
         assert factory.backend_for(first) == kind
+        assert handle.native_workspace_write is (kind == "docker")
         assert backend.await_count == 1 and backend.call_args.args[0] == kind
         first_arguments = backend.call_args.kwargs
         provider = first_arguments["environment_provider"]

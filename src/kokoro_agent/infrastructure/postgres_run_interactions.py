@@ -527,9 +527,10 @@ class _Observation(_Strict):
     swarm_root_handoff: SwarmRootHandoff | None = None
 
 
-def _require_swarm_root_handoff(
+def require_swarm_root_handoff(
     value: _Observation, request: RunRequest, recipe_bytes: bytes | None
 ) -> None:
+    """Check the witness against the original peer leaf and frozen recipe."""
     witness = value.swarm_root_handoff
     if witness is None:
         return
@@ -1298,7 +1299,7 @@ class PostgresRunInteractions:
         if expected != actual:
             raise InteractionCorrupt("observation differs from original locator")
         if value.kind == "resume":
-            _require_swarm_root_handoff(value, request, recipe_bytes)
+            require_swarm_root_handoff(value, request, recipe_bytes)
             if (value.pause_revision, value.pause_ref, value.collection_digest) != (
                 command.resume_pause_revision,
                 command.resume_pause_ref,

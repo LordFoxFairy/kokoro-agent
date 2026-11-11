@@ -7,6 +7,7 @@ Legacy partial-frame selectors are intentionally absent.
 from __future__ import annotations
 
 from collections.abc import Callable
+from hashlib import sha256
 from typing import TypedDict, Protocol, runtime_checkable
 from dataclasses import dataclass
 
@@ -23,6 +24,8 @@ from kokoro_agent.domain.run.interactions import (
     InteractionConflict,
     InteractionCorrupt,
     AcceptedResume,
+    CheckpointObservation,
+    ObservationTarget,
 )
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.scope import RunScope
@@ -36,11 +39,10 @@ from kokoro_agent.infrastructure.checkpoint_interactions import (
     make_interaction_checkpointer,
 )
 from kokoro_agent.infrastructure.postgres_run_interactions import (
-    # The owner witness is internal; exercise corruption guards without exporting it.
-    _Observation,  # pyright: ignore[reportPrivateUsage]
-    _require_swarm_root_handoff,  # pyright: ignore[reportPrivateUsage]
     canonical_interaction_bytes,
+    decode_checkpoint_observation,
     decode_pause_snapshot,
+    require_swarm_root_handoff,
 )
 from kokoro_agent.protocol import RunRequest, RunResume
 from kokoro_agent.protocol.control import control_request_digest
@@ -662,7 +664,7 @@ def test_swarm_root_witness_never_overrides_unproven_leaf(defect: str | None) ->
         if defect == "multiple_leaves"
         else [leaf]
     )
-    observation = _Observation.model_validate(
+    observation_bytes = canonical_interaction_bytes(
         {
             "format": "kokoro-agent:checkpoint-observation:1",
             "run_id": run.run_id,
@@ -688,6 +690,17 @@ def test_swarm_root_witness_never_overrides_unproven_leaf(defect: str | None) ->
             },
         }
     )
+    observation = decode_checkpoint_observation(
+        CheckpointObservation(
+            target=ObservationTarget(
+                generation=2, command_id="command", attempt_id="attempt"
+            ),
+            kind="resume",
+            canonical_bytes=observation_bytes,
+            digest=sha256(observation_bytes).hexdigest(),
+        ),
+        run,
+    )
     recipe = canonical_interaction_bytes(
         {
             "feature": {
@@ -698,10 +711,10 @@ def test_swarm_root_witness_never_overrides_unproven_leaf(defect: str | None) ->
         }
     )
     if defect is None:
-        _require_swarm_root_handoff(observation, run, recipe)
+        require_swarm_root_handoff(observation, run, recipe)
     else:
         with pytest.raises(InteractionCorrupt):
-            _require_swarm_root_handoff(observation, run, recipe)
+            require_swarm_root_handoff(observation, run, recipe)
 
 
 async def test_native_ask_pause_projects_only_exact_question_and_keeps_old_description() -> (

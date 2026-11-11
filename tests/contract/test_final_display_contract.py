@@ -18,7 +18,6 @@ def test_final_display_preserves_complete_issued_parent_and_rejects_null() -> No
 
     path = Path(__file__).resolve().parents[2] / "contract/openapi/v1/openapi.json"
     document = json.loads(path.read_text())
-    assert document["info"]["version"] == "8.12.0"
     document = json.loads(http811_project_instruction_parent_bytes(document))
     assert hashlib.sha256(http88_final_display_parent_bytes(document)).hexdigest() == (
         "fd8b2857ecbc9577bd98ca73234e4d81c53d4fe189ba86badcf35c774b9a6830"

@@ -171,12 +171,12 @@ async def test_real_worker_composition_sends_same_policy_to_factory_and_supervis
         supervisor_constructor.call_args.kwargs["recursion_limit"]
         == policy.recursion_limit
     )
-    # The unchanged executor passes that exact limit into the native config.
+    # Native config preserves the policy independently of checkpoint attribution.
     from kokoro_agent.execution import run_agent
 
     assert (
-        getattr(run_agent, "_config")("thread", None, policy.recursion_limit)[
-            "recursion_limit"
-        ]
+        getattr(run_agent, "_config")(
+            "thread", None, policy.recursion_limit, checkpoint_metadata=None
+        )["recursion_limit"]
         == 37
     )

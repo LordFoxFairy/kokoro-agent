@@ -393,7 +393,12 @@ class MetadataHTTPServer:
             pass
         finally:
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except ConnectionResetError:
+                # The client may reject headers before draining the body.
+                # A peer reset also confirms that the connection closed.
+                pass
             self.tasks.discard(task)
             self.closed.set()
 

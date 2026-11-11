@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Literal
+from contextlib import AbstractContextManager, nullcontext
+import langsmith
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Literal, NotRequired, TypedDict, TypeGuard
 
+from langchain_core.globals import get_debug, get_verbose
+from langchain_core.tracers.context import tracing_v2_callback_var
+from kokoro_agent.model.call_models import ModelCallInputInvalid
 from langchain_core.callbacks import get_usage_metadata_callback
-from langchain_core.messages import UsageMetadata
+from langchain_core.messages import AIMessage, UsageMetadata
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.stream import CustomTransformer
 
@@ -25,6 +30,8 @@ from kokoro_agent.execution.events import (
 from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution.protocols import AgentRunnable
 from kokoro_agent.execution.publish_agent_events import pump_run
+from kokoro_agent.domain.chat.projection import ToolDisplayCode, ToolDisplaySource
+from kokoro_agent.domain.run.workspace_output import OUTPUT_METADATA
 from kokoro_agent.model.call_scope import (
     DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
     ModelCallScope,
@@ -32,6 +39,18 @@ from kokoro_agent.model.call_scope import (
 )
 
 LOGGER = logging.getLogger(__name__)
+# Only the public SDK context-manager boundary has incomplete upstream annotations.
+_tracing_context: Callable[..., AbstractContextManager[None]] = getattr(
+    langsmith, "tracing_context"
+)
+
+
+class CheckpointMetadata(TypedDict):
+    kokoro_run_id: str
+    kokoro_generation: int
+    kokoro_command_id: NotRequired[str]
+    kokoro_attempt_id: NotRequired[str]
+    kokoro_workspace_output_root: NotRequired[str]
 
 
 async def invoke_once(
@@ -44,6 +63,8 @@ async def invoke_once(
     approval_tool_names: frozenset[str],
     source_for: SourceResolver,
     describe_tool: Callable[[str], str | None] = lambda _name: None,
+    tool_display_codes: tuple[tuple[str, ToolDisplayCode], ...] = (),
+    tool_display_sources: tuple[ToolDisplaySource, ...] = (),
     finalize_terminal: Callable[
         [RunCompletedPayload | RunFailedPayload, tuple[int, int]], Awaitable[bool]
     ],
@@ -53,6 +74,8 @@ async def invoke_once(
         Awaitable[Literal["active", "waiting", "unknown"]],
     ],
     trace: RunnableConfig | None = None,
+    checkpoint_metadata: CheckpointMetadata | None = None,
+    private_material: bool = False,
     recursion_limit: int = 100,
     model_call_settle_timeout_s: float = DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S,
 ) -> bool:
@@ -61,18 +84,44 @@ async def invoke_once(
     终态发射前经 finalize_terminal 同事务提交：cancel/自然完成/异常共用唯一收口，
     多 pod 并发下恰好一个终态落地（认领失败者静默跳过）。
     """
-    config = _config(thread_id, trace, recursion_limit)
+    emitter.bind_tool_display_codes(tool_display_codes)
+    emitter.bind_tool_display_sources(tool_display_sources)
+    # Private Runs still need durable ownership attribution, not trace observers.
+    config = _config(
+        thread_id,
+        None if private_material else trace,
+        recursion_limit,
+        checkpoint_metadata,
+    )
     if initial:
         # run.started eligibility is explicit; the Run-locked outbox deduplicates retries.
         await emitter.emit(RunStartedPayload())
     # 原生 usage callback 经 callback 树跨主/子代理自动聚合 token；每段独立计量。
-    with get_usage_metadata_callback() as usage_cb:
+    with (
+        (
+            _tracing_context(enabled=False, parent=False)
+            if private_material
+            else nullcontext()
+        ),
+        get_usage_metadata_callback() as usage_cb,
+    ):
         scope = ModelCallScope(timeout_s=model_call_settle_timeout_s)
         native_error: Exception | None = None
         interrupted = False
+        final_segment_id: str | None = None
         with bind_model_call_scope(scope):
 
-            async def drive_native() -> bool:
+            async def drive_native() -> tuple[bool, str | None]:
+                # The locked SDK has no per-Run override for its global console flags.
+                # Refuse before graph callbacks can print private prompts; never mutate globals.
+                if private_material and (
+                    get_debug()
+                    or get_verbose()
+                    or tracing_v2_callback_var.get() is not None
+                ):
+                    raise ModelCallInputInvalid(
+                        "private prompt material content observer is enabled"
+                    )
                 run = await agent.astream_events(
                     payload,
                     version="v3",
@@ -81,13 +130,17 @@ async def invoke_once(
                 )
                 async with run:
                     await pump_run(emitter, run, source_for=source_for)
-                    return await run.interrupted()
+                    interrupted = await run.interrupted()
+                    final_id = (
+                        None if interrupted else _final_segment_id(await run.output())
+                    )
+                    return interrupted, final_id
 
             try:
                 try:
                     driver = asyncio.create_task(drive_native())
                     scope.register_owned_task(driver)
-                    interrupted = await asyncio.shield(driver)
+                    interrupted, final_segment_id = await asyncio.shield(driver)
                     outcome: RunCompletedPayload | RunFailedPayload = (
                         RunCompletedPayload(status="completed")
                     )
@@ -127,11 +180,35 @@ async def invoke_once(
                 return False
             if phase != "active":
                 return False
+            if final_segment_id is not None:
+                outcome = RunCompletedPayload(
+                    status="completed",
+                    final_segment_id=await emitter.proven_final_segment(
+                        final_segment_id
+                    ),
+                )
         # Persistence failures propagate; never turn a failed commit of one
         # outcome into a second, different terminal decision.
         totals = _usage_totals(usage_cb.usage_metadata)
         await finalize_terminal(outcome, totals)
         return True
+
+
+def _final_segment_id(output: dict[str, Any] | None) -> str | None:
+    """Native terminal state only; never promote preceding progress text."""
+    if not isinstance(output, dict):
+        return None
+    messages = output.get("messages")
+    if not _message_sequence(messages) or not messages:
+        return None
+    final = messages[-1]
+    if not isinstance(final, AIMessage) or final.tool_calls or final.invalid_tool_calls:
+        return None
+    return final.id if final.id and final.id.strip() else None
+
+
+def _message_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, list | tuple)
 
 
 def _usage_totals(per_model: Mapping[str, UsageMetadata]) -> tuple[int, int]:
@@ -142,18 +219,31 @@ def _usage_totals(per_model: Mapping[str, UsageMetadata]) -> tuple[int, int]:
 
 
 def _config(
-    thread_id: str, trace: RunnableConfig | None, recursion_limit: int
+    thread_id: str,
+    trace: RunnableConfig | None,
+    recursion_limit: int,
+    checkpoint_metadata: CheckpointMetadata | None,
 ) -> RunnableConfig:
     # 失控熔断：无限工具循环在限额处炸成 GraphRecursionError → run.failed fail-loud。
     config: RunnableConfig = {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": recursion_limit,
     }
-    if trace is not None:
-        callbacks = trace.get("callbacks")
-        metadata = trace.get("metadata")
-        if callbacks is not None:
-            config["callbacks"] = callbacks
-        if metadata is not None:
-            config["metadata"] = metadata
+    callbacks = trace.get("callbacks") if trace is not None else None
+    if callbacks is not None:
+        config["callbacks"] = callbacks
+    trace_metadata = trace.get("metadata") if trace is not None else None
+    metadata = dict(trace_metadata or {})
+    for key in (
+        "kokoro_run_id",
+        "kokoro_generation",
+        "kokoro_command_id",
+        "kokoro_attempt_id",
+        OUTPUT_METADATA,
+    ):
+        metadata.pop(key, None)
+    if checkpoint_metadata is not None:
+        metadata.update(checkpoint_metadata)
+    if metadata:
+        config["metadata"] = metadata
     return config

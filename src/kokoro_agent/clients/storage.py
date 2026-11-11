@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
 from kokoro_agent.domain.run.models import LeaseFence
-from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity
+from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity, RunRequest
+from kokoro_agent.protocol.control import StorageResourceRef
 
 
 class StorageClientError(RuntimeError):
@@ -37,6 +39,7 @@ class DeliveryRequest(BaseModel):
     # Set by the claimed worker/tool middleware, never by model tool arguments.
     lease: LeaseFence | None = None
     tool_call_id: str | None = None
+    display_path: str | None = None
 
 
 class DeliveryRecoveryRequest(BaseModel):
@@ -66,6 +69,31 @@ class DeliveryReceipt(BaseModel):
     size_bytes: int
     mime_type: str
     replayed: bool = False
+    # Read only from the Agent's frozen intent, not inferred from the current backend.
+    display_path: str | None = None
+
+
+class InputResourceReadRequest(BaseModel):
+    """Worker-selected canonical input, bound to its consuming Run and lease."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    request_id: str
+    run_id: str
+    identity: ExecutionIdentity
+    reference: StorageResourceRef
+    lease: LeaseFence
+
+
+class InputResourceReadReceipt(BaseModel):
+    """Verified immutable input bytes; never a public message or URL."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    resource_id: str
+    asset_id: str
+    content_sha256: str
+    content: bytes
 
 
 class DeliveryClient(Protocol):
@@ -76,3 +104,25 @@ class DeliveryClient(Protocol):
     async def recover(
         self, request: DeliveryRecoveryRequest
     ) -> DeliveryReceipt | None: ...
+
+
+class InputResourceReadClient(Protocol):
+    """Read exactly one selected input through the existing owner transport."""
+
+    async def read_input(
+        self, request: InputResourceReadRequest
+    ) -> InputResourceReadReceipt: ...
+
+
+class WorkspaceOutputUploadClient(Protocol):
+    async def upload_workspace_output(
+        self,
+        run: RunRequest,
+        lease: LeaseFence,
+        version_id: str,
+        path: str,
+        content_sha256: str,
+        content: bytes,
+        selected: tuple[str, str] | None,
+        freeze: Callable[[str, str], Awaitable[bool]],
+    ) -> str: ...

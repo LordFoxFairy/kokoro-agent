@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
+from kokoro_agent.domain.run.models import LeasedRun
+from kokoro_agent.model.execution import ModelCallExecution
 from kokoro_agent.worker.platform import WorkerPlatformRuntime
 from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
 from kokoro_agent.execution.runtime_profile_sources import SourceManifest
@@ -16,7 +19,11 @@ from langgraph.store.base import BaseStore
 from kokoro_agent.clients.system import ModelResolver
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.model.call_models import ModelCallRepository
-from kokoro_agent.clients.storage import DeliveryClient
+from kokoro_agent.clients.storage import (
+    DeliveryClient,
+    InputResourceReadClient,
+    WorkspaceOutputUploadClient,
+)
 from kokoro_agent.sandbox import SandboxSettings
 from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.agents.subagent_catalog import SubagentCatalog
@@ -28,7 +35,9 @@ class WorkerClients:
     """Optional owner clients selected once by the deployment entrypoint."""
 
     delivery: DeliveryClient | None = None
+    input_reader: InputResourceReadClient | None = None
     model_resolver: ModelResolver | None = None
+    workspace_storage: WorkspaceOutputUploadClient | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,10 +57,12 @@ class WorkerDependencies:
     checkpointer: BaseCheckpointSaver[str]
     run_repository: RunRepository
     model_call_repository: ModelCallRepository
+    model_execution: Callable[[LeasedRun], ModelCallExecution]
     memory_store: BaseStore
     platform: WorkerPlatformRuntime | None = None
     # Storage Artifact public facade；缺省时不装配 deliver，Agent 基础循环不受影响。
     delivery: DeliveryClient | None = None
+    input_reader: InputResourceReadClient | None = None
     model_resolver: ModelResolver | None = None
 
     def __post_init__(self) -> None:

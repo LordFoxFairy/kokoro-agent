@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Literal, Self
 
 from deepagents.backends.protocol import BackendProtocol
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kokoro_agent.clients.storage import (
     DeliveryClient,
@@ -17,6 +17,7 @@ from kokoro_agent.clients.storage import (
     DeliveryRequest,
     StorageClientError,
 )
+from kokoro_agent.domain.chat.projection import safe_delivery_display_path
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.protocol import ArtifactKind, ExecutionIdentity
 from kokoro_agent.tools.middleware import current_delivery_tool_call_id
@@ -47,6 +48,18 @@ class DeliverResult(BaseModel):
     size: int
     content_hash: str
     note: str
+    display_path: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def exact_display_path(self) -> Self:
+        if self.display_path is not None and (
+            self.display_path != self.path
+            or not safe_delivery_display_path(self.display_path)
+        ):
+            raise ValueError("invalid delivery display path")
+        return self
 
 
 DELIVER_0_DESCRIPTION = "把工作区中的成品发布为用户可访问的冻结产物。"
@@ -63,6 +76,7 @@ def make_deliver_tool(
     run_id: str,
     identity: ExecutionIdentity,
     lease: LeaseFence | None = None,
+    virtual_workspace: bool = False,
 ) -> StructuredTool:
     """Bind one run's workspace and Storage facade to the delivery tool."""
 
@@ -104,6 +118,7 @@ def make_deliver_tool(
                     size=recovered.size_bytes,
                     content_hash=recovered.content_sha256,
                     note=note,
+                    display_path=recovered.display_path,
                 ).model_dump_json()
 
         downloaded = await backend.adownload_files([normalized])
@@ -134,6 +149,13 @@ def make_deliver_tool(
                     mime_type=mime,
                     content_sha256=content_hash,
                     content=file.content,
+                    display_path=(
+                        normalized
+                        if virtual_workspace
+                        and path == normalized
+                        and safe_delivery_display_path(normalized)
+                        else None
+                    ),
                     lease=lease,
                     tool_call_id=current_delivery_tool_call_id(run_id),
                 )
@@ -161,6 +183,7 @@ def make_deliver_tool(
             size=len(file.content),
             content_hash=content_hash,
             note=note,
+            display_path=receipt.display_path,
         ).model_dump_json()
 
     return StructuredTool(

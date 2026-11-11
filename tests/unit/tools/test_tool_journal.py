@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +14,8 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from support.fakes import FakeRunRepository, request
 from kokoro_agent.clients.storage import StorageClientError
 from kokoro_agent.domain.run.repository import LeaseFence
+from kokoro_agent.policy import Permissions
+from kokoro_agent.tools.guards import build_guard_chains
 from kokoro_agent.tools.middleware import (
     RunSupersededError,
     ToolEffectJournalMiddleware,
@@ -53,9 +56,15 @@ class _RaceLosingRepository(FakeRunRepository):
     """模拟首次读取后，另一 Worker 抢先写入 started 行。"""
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool:
-        del lease
+        del lease, intent
         self.tool_journal[(run_id, tool_call_id)] = {
             "name": name,
             "status": "started",
@@ -346,19 +355,311 @@ async def test_mcp_interrupt_keeps_unknown_outcome_and_never_reissues_call() -> 
     assert "unknown_outcome" in result.text and handler.calls == 0
 
 
-async def test_stale_generation_never_enters_tool_handler() -> None:
+@pytest.mark.parametrize("checkpoint_file_writes", [False, True])
+async def test_stale_generation_never_enters_tool_handler(
+    checkpoint_file_writes: bool,
+) -> None:
     store = FakeRunRepository()
     stale = await store.try_claim(request("rn"), "same-worker")
     assert stale is not None
     store.expired = [request("rn")]
     current = (await store.reclaim_expired("same-worker"))[0].lease
     assert current.generation > stale.generation
-    middleware = ToolEffectJournalMiddleware(
-        run_repository=store, run_id="rn", lease=stale
-    )
+    middleware = build_guard_chains(
+        store,
+        0,
+        request("rn"),
+        stale,
+        Permissions(),
+        checkpoint_file_writes=checkpoint_file_writes,
+    ).journal
     handler = _Handler("MUST NOT RUN")
 
     with pytest.raises(RunSupersededError):
         await middleware.awrap_tool_call(_request(), handler)
 
     assert handler.calls == 0
+
+
+@pytest.mark.parametrize("name", ["mcp_call", "deliver"])
+async def test_state_file_assembly_keeps_external_effect_journal(name: str) -> None:
+    store = FakeRunRepository()
+    run = request("rn")
+    lease = await store.try_claim(run)
+    assert lease is not None
+    middleware = build_guard_chains(
+        store, 0, run, lease, Permissions(), checkpoint_file_writes=True
+    ).journal
+    content = (
+        '{"status":"delivered","artifact_id":"artifact-1","asset_id":"asset-1",'
+        '"artifact_kind":"document","path":"/report.pdf","title":"Report",'
+        '"mime":"application/pdf","size":12,"content_hash":"abc123","note":""}'
+        if name == "deliver"
+        else "owned MCP result"
+    )
+    handler = _Handler(content)
+    first = await middleware.awrap_tool_call(_request(name), handler)
+    replay = await middleware.awrap_tool_call(_request(name), handler)
+    assert isinstance(first, ToolMessage) and isinstance(replay, ToolMessage)
+    assert first.text == replay.text == content
+    assert first.status == replay.status == "success"
+    assert handler.calls == 1
+    assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
+
+
+async def test_mcp_success_text_prefix_does_not_override_typed_status() -> None:
+    store = FakeRunRepository()
+    handler = _Handler("error: this is ordinary successful content")
+    result = await (await _mw(store)).awrap_tool_call(_request("mcp_call"), handler)
+    assert isinstance(result, ToolMessage) and result.status == "success"
+    assert store.tool_journal[("rn", "c1")]["status"] == "succeeded"
+    assert store.tool_journal[("rn", "c1")]["is_error"] is False
+
+
+async def test_native_workspace_write_freezes_input_not_mutable_disk_or_credentials(
+    tmp_path: Path,
+) -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+    from pydantic import SecretStr
+
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
+    from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+    from support.deepagents import create_test_deep_agent
+    from support.local_fake import LocalFakeChatModel
+
+    marker = "local-test-credential"
+    safe_text = "原始\r\nreport\n"
+    path, private = "/outputs/report.md", "/outputs/second.md"
+
+    class Credentials:
+        async def acquire(
+            self, *, deadline_monotonic: float
+        ) -> tuple[tuple[str, SecretStr], ...]:
+            return (("TEST_API_KEY", SecretStr(marker)),)
+
+    class Captured(FakeRunRepository):
+        captures: dict[str, NativeWorkspaceWrite]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.captures = {}
+
+        async def journal_tool_finished(
+            self,
+            run_id: str,
+            lease: LeaseFence,
+            tool_call_id: str,
+            result: str,
+            is_error: bool,
+            *,
+            workspace_write: NativeWorkspaceWrite | None = None,
+        ) -> bool:
+            ok = await super().journal_tool_finished(
+                run_id, lease, tool_call_id, result, is_error
+            )
+            if ok and workspace_write is not None:
+                self.captures[tool_call_id] = workspace_write
+            return ok
+
+    store = Captured()
+    run = request("workspace-external")
+    lease = await store.try_claim(run)
+    assert lease is not None
+    thread = RunScope.of(run).scoped_thread_id
+    backend = DockerShellBackend(
+        root=tmp_path,
+        container_id="not-started",
+        timeout=2,
+        max_output_bytes=2048,
+        environment_provider=Credentials(),
+    )
+    journal = ToolEffectJournalMiddleware(
+        run_repository=store, run_id=run.run_id, lease=lease
+    )
+    runnable = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "write_file",
+                            "id": "safe",
+                            "args": {"file_path": path, "content": safe_text},
+                        },
+                        {
+                            "name": "write_file",
+                            "id": "private",
+                            "args": {"file_path": private, "content": marker},
+                        },
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        ),
+        backend=backend,
+        checkpointer=InMemorySaver(),
+        middleware=[
+            journal.for_workspace_output(thread, backend.guard_workspace_output)
+        ],
+    )
+    stream = await runnable.astream_events(
+        {"messages": [HumanMessage(content="Write two test files")]},
+        version="v3",
+        config={"configurable": {"thread_id": thread}},
+        transformers=[],
+    )
+    async with stream:
+        assert not await stream.interrupted()
+    assert (tmp_path / "outputs/report.md").read_bytes() == safe_text.encode()
+    (tmp_path / "outputs/report.md").write_text("new mutable bytes")
+    assert store.captures == {
+        "safe": NativeWorkspaceWrite(path=path, content=safe_text.encode())
+    }
+    assert (await store.get_tool_journal(run.run_id, "private")) is not None
+    assert marker not in str(store.tool_journal)
+
+
+async def test_native_workspace_edit_captures_written_postimage_and_refuses_parent_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from kokoro_agent.domain.run.scope import RunScope
+    from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
+    from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+    from support.deepagents import create_test_deep_agent
+    from support.local_fake import LocalFakeChatModel
+
+    root = tmp_path / "mounted"
+    outputs = root / "outputs"
+    outputs.mkdir(parents=True)
+    source = outputs / "report.md"
+    source.write_bytes("旧标题\r\n保留\r最后  \r\n".encode())
+    outside = root / "private"
+    outside.mkdir()
+    unrelated = outside / "volatile.md"
+    unrelated.write_bytes(source.read_bytes())
+    moving = outputs / "moving"
+    moving.mkdir()
+    (moving / "volatile.md").write_bytes(source.read_bytes())
+    replace = os.replace
+    replaced_parent = False
+
+    def move_parent_at_commit(
+        src: str,
+        dst: str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        nonlocal replaced_parent
+        if dst == "volatile.md":
+            os.rename(moving, root / "relocated")
+            moving.symlink_to(outside, target_is_directory=True)
+            replaced_parent = True
+        replace(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+    # Move the real parent at the owner atomic boundary; the native SDK is unchanged.
+    monkeypatch.setattr(os, "replace", move_parent_at_commit)
+    old, new = "旧标题\r\n", "新版🦉\r\n"
+    expected = "新版🦉\n保留\n最后  \n".encode()
+    path = "/outputs/report.md"
+
+    class Captured(FakeRunRepository):
+        captures: dict[str, NativeWorkspaceWrite]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.captures = {}
+
+        async def journal_tool_finished(
+            self,
+            run_id: str,
+            lease: LeaseFence,
+            tool_call_id: str,
+            result: str,
+            is_error: bool,
+            *,
+            workspace_write: NativeWorkspaceWrite | None = None,
+        ) -> bool:
+            ok = await super().journal_tool_finished(
+                run_id, lease, tool_call_id, result, is_error
+            )
+            if ok and workspace_write is not None:
+                self.captures[tool_call_id] = workspace_write
+            return ok
+
+    repo = Captured()
+    run = request("workspace-native-edit")
+    lease = await repo.try_claim(run)
+    assert lease is not None
+    thread = RunScope.of(run).scoped_thread_id
+    backend = DockerShellBackend(
+        root=root, container_id="not-started", timeout=2, max_output_bytes=2048
+    )
+    journal = ToolEffectJournalMiddleware(
+        run_repository=repo, run_id=run.run_id, lease=lease
+    )
+    graph = create_test_deep_agent(
+        model=LocalFakeChatModel.with_script(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "edit_file",
+                            "id": "good-edit",
+                            "args": {
+                                "file_path": path,
+                                "old_string": old,
+                                "new_string": new,
+                            },
+                        },
+                        {
+                            "name": "edit_file",
+                            "id": "linked-edit",
+                            "args": {
+                                "file_path": "/outputs/moving/volatile.md",
+                                "old_string": old,
+                                "new_string": new,
+                            },
+                        },
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        ),
+        backend=backend,
+        checkpointer=InMemorySaver(),
+        middleware=[
+            journal.for_workspace_output(
+                thread, backend.guard_workspace_output, edit=True
+            )
+        ],
+    )
+    stream = await graph.astream_events(
+        {"messages": [HumanMessage(content="Edit the process report")]},
+        version="v3",
+        config={"configurable": {"thread_id": thread}},
+        transformers=[],
+    )
+    async with stream:
+        assert not await stream.interrupted()
+    assert source.read_bytes() == expected
+    source.write_bytes(b"unrelated later mutation")
+    assert [
+        (key, value.path, value.content) for key, value in repo.captures.items()
+    ] == [
+        ("good-edit", path, expected),
+    ]
+    assert replaced_parent
+    assert unrelated.read_bytes() == "旧标题\r\n保留\r最后  \r\n".encode()
+    rejected = await repo.get_tool_journal(run.run_id, "linked-edit")
+    assert rejected is not None and rejected.is_error

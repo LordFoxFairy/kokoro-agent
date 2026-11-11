@@ -1,3 +1,9 @@
+## 2026-10-24 普通会话 MCP 选择配对
+
+Agent HTTP7.4 的 selected_mcp_connection_ids 是不可变业务输入；只有BFF/App消费固定候选且整片验证后才正常启用。先drain旧worker／核无活跃Run；源码hash本来属于冻结recipe，不能凭空字段字节兼容就宣称旧profile可在新代码恢复。正常旧JSON不批量补字段，空选择保原序列化/fence；非空请求已接纳后，回退仍须保留能消费该字段的reader，不将7.3回灌新队列。精确ID不是授权，资格失效按原失败关闭，不删项或改同名连接；trace.mcp_servers仅旧诊断，不能启用MCP。
+
+排查主路径必须查看浏览器正式消息→BFF outbox→Agent持久Run中的同一选择；独立SDK/ToolNode成功及日志出现连接名不证明普通会话已接。关联恢复用原Run字段，不用当前菜单状态；已经派发但unknown的远端调用不自动重发。
+
 # kokoro-agent 运行手册
 
 ## 启动
@@ -22,6 +28,31 @@ KOKORO_INTERNAL_SECRET_AGENT=TOKEN uv run kokoro-agent-http
 `kokoro_worker_agent`、应用 schema `kokoro_agent` 和 Redis logical DB `9`；不要在已有依赖时再次
 `docker run`。CI 使用 workflow 显式注入的 service 地址，不使用这组本地默认值。
 
+### 通用聊天的产物交付配置
+
+通用 Agent 声明 `delivery=True` 不等于运行时已有 `deliver`。标准 worker 只有在
+`KOKORO_STORAGE_BASE_URL`、`KOKORO_STORAGE_OBJECT_ORIGIN` 和
+`KOKORO_STORAGE_SERVICE_SECRET` 配对时才构造交付 client 并选择该工具。三项都缺失时，
+worker 仍可启动，但不会挂载交付工具；仅检查 readiness 会漏掉此部署缺口。
+
+- worker 地址指向 Storage 正式 v3 RPC；对象来源必须匹配 Storage 签发 PUT 的来源，
+  不把 RPC 地址、浏览器地址与对象来源混用。
+- 使用 Storage 已登记的独立 `kokoro-agent` 凭据，不复用 `web-bff`、Platform 或用户 token。
+  secret 只通过部署私有配置注入；不写入 Run、工作区、示例或日志。
+- 核查实际启动参数和配置加载方式。Node `--env-file` 载入的值不一定出现在 macOS
+  启动环境快照中；worker 的 `AppConfig.from_env` 只消费显式注入的映射，不推定 sibling
+  的环境文件已自动传入。
+- 配对前保存当前 worker 配置和源码基线，停止新派发并确认没有非终态 Run；验证新配置
+  只增加三项、原工具选择保持并新增 `deliver`，并用原可信 scope 做无写入 Storage 身份检查。
+  优雅替换本方 worker 后核消费循环、其它监听、原 Run/usage/金融事实及数据摘要。
+  观察超时而 PID 仍活着时继续检查该 PID，不重复启动。
+- 交付工具变化会改变新 Run 的静态配方；不修改已冻结配方，也不靠重发旧 Run 验证。
+  撤销此部署配置前，先确认没有依赖交付的新活跃 Run，不以关闭 client 中断已有交付恢复。
+
+产物子链验收使用真实 Agent journal/outbox/Chat、Storage、对象存储和扫描器，核冻结产物、
+原字节下载、重复交付不重复发布、失效 lease 拒绝及 scope/tenant 隔离。
+独立子链不经过模型图，因此不能代替模型驱动工具执行、浏览器产物呈现或真实用量扣分验收。
+
 ## 诊断顺序
 
 1. `GET /healthz`：只确认进程存活。
@@ -40,6 +71,17 @@ HTTP entrypoint 显式处理 SIGINT/SIGTERM：signal handler 立即把 server �
 - cleanup 失败：检查 backend teardown 权限和 cleanup intent，按退避策略处理；必要时由 backend owner 手动
   释放资源并记录 cleanup id。
 - schema drift：停止服务、备份并在空的受管 database 安装 canonical schema；V1 不运行历史迁移 runner。
+
+### 本地响应编号版本配对（2026-10-23）
+
+仅针对已验 `d20f608` schema 到 `b71e972` 的本地开发配对：前者缺 canonical 中的 nullable `provider_response_id` 和 `ck_model_attempt_response`，其他业务数据/契约不变。此次显式运维操作保留既有 Run、usage evidence 与金融 ACK；不增加应用启动修表、历史迁移 runner、ledger 或兼容查询。永久 DDL 仍只维护 `database/schema.sql`。这不是未验证 schema 的通用升级入口，也不改变 V1 clean-slate 安装命令。
+
+1. 核对受管 Agent schema、源码提交、当前 HTTP/worker 及其原配置；停止新派发且确认无非终态 Run/有效 lease。备份仅本 owner schema，使用私有文件保管，并将实际备份恢复到独立临时库演练。
+2. 从目标 canonical 提取唯一新增列与命名 CHECK，先用固定旧版本 verifier 核实源形状。事务内设置有限 lock/statement timeout，添加列和约束后由新 verifier 核实全部目标 schema；失败回滚。演练同时验证事务回滚及所有原列数据摘要不变，新列全部 NULL，不回填旧响应编号。
+3. 正常切换前重新核当前进程/无任务状态，优雅停止本方 Agent HTTP 和 worker；在同一事务执行已演练变更及新 schema 验证。启动当前精确源码与原配置，核 authenticated readiness、worker 初始化、原历史 usage API 和全部原数据摘要。其他服务不重启，不改用户会话、费率、积分或派发开关。
+4. DDL 提交前失败自动回滚；提交后启动失败须先核没有新增响应编号/执行事实，再恢复旧 schema 形状及已备份的旧源码进程。已有新事实时只向前恢复，不删新事实以回滚。超时且进程仍存活时继续检查该 PID，不重复启动。
+
+演练与运行收据只保存于 Root ignored/private 目录。此配对不构成旧 pending 用量的补证，不重发模型请求、不释放或扣除待核对积分；完整产品结算仍须真实供应商证据。
 
 ## 回滚
 

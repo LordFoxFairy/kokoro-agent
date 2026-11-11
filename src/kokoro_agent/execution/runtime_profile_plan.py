@@ -30,6 +30,7 @@ from kokoro_agent.execution.runtime_profile import (
 )
 from kokoro_agent.execution.runtime_profile_sources import SourceManifest
 from kokoro_agent.features.definition import Feature
+from kokoro_agent.domain.run.workspace_output import OUTPUT_ROOT, OUTPUT_TOOLS
 from kokoro_agent.mcp.tools import MCP_TOOL_METADATA
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.sandbox.backend import SandboxSettings
@@ -50,6 +51,7 @@ class RuntimeAssemblyPolicy:
     openai_reasoning: bool
     model_allow_loopback_http: bool
     backend_recipes: tuple[tuple[str, bytes], ...]
+    workspace_root_configured: bool = False
 
     def __post_init__(self) -> None:
         if type(self.run_token_budget) is not int or self.run_token_budget < 0:
@@ -115,6 +117,7 @@ class RuntimeAssemblyPolicy:
             backend_recipes=tuple(
                 (name, canonical_json(values)) for name, values in backends
             ),
+            workspace_root_configured=bool(sandbox.local_shell_root),
         )
 
     def backend_recipe(self, kind: str) -> object:
@@ -142,6 +145,9 @@ class PreparedPeerPlan:
     subagents: subagents.SubagentSelectionPlan
     handoffs: tuple[BaseTool, ...]
     tool_metadata: bytes
+    workspace_output_root: str | None = None
+    native_workspace_edit: bool = False
+    native_workspace_script: bool = False
 
     def verify_tools(self, tools: Sequence[BaseTool]) -> None:
         actual = tuple(
@@ -233,6 +239,7 @@ def prepare_feature(
     toolbox: ProcessToolbox,
     subagent_catalog: SubagentCatalog,
     delivery_available: bool,
+    custom_api_selected: bool = False,
 ) -> PreparedFeaturePlan:
     """Validate every peer before the first external preflight, then retain its plan."""
     # This gate precedes all metadata imports that could invoke native lazy loading.
@@ -292,6 +299,39 @@ def prepare_feature(
             }
             for descriptor in selected_tools
         )
+        permissions = agent.permissions
+        gated = (
+            set(permissions.approval_tools)
+            | set(permissions.review_tools)
+            | set(agent.pause_tools)
+        )
+        mounted_workspace = (
+            agent.backend in {"docker", "local_shell"}
+            and runtime_policy.workspace_root_configured
+        )
+        native_write = mounted_workspace or (
+            agent.backend == "e2b" and custom_api_selected
+        )
+        output_root = (
+            OUTPUT_ROOT
+            if feature.key == "chat"
+            and len(feature.agents) == 1
+            and (
+                agent.backend == "state"
+                or (native_write and permissions.filesystem == "workspace_write")
+            )
+            and not (OUTPUT_TOOLS if not native_write else {"write_file"}).intersection(
+                gated
+            )
+            else None
+        )
+        native_edit = bool(output_root and native_write and "edit_file" not in gated)
+        native_script = bool(
+            output_root
+            and custom_api_selected
+            and agent.backend == "docker"
+            and "execute" not in gated
+        )
         peers.append(
             PreparedPeerPlan(
                 agent=agent,
@@ -300,14 +340,33 @@ def prepare_feature(
                 subagents=selected,
                 handoffs=handoffs,
                 tool_metadata=canonical_json(metadata),
+                workspace_output_root=output_root,
+                native_workspace_edit=native_edit,
+                native_workspace_script=native_script,
             )
         )
-        permissions = agent.permissions
         model = agent.model
         recipes.append(
             {
                 "key": agent.key,
                 "prompt": agent.prompt,
+                **(
+                    {"workspace_output_root": output_root}
+                    if output_root is not None
+                    else {}
+                ),
+                **({"native_workspace_edit": True} if native_edit else {}),
+                **(
+                    {"native_workspace_script": "docker-execute-output-path-v1"}
+                    if native_script
+                    else {}
+                ),
+                "public_action_intent": {
+                    "field": "_kokoro_action",
+                    "max_utf8_bytes": 256,
+                    "scope": "main-tool-calls",
+                    "binding": "run-call-preapproval-v1",
+                },
                 "tools": selected_tools,
                 "mcp": tuple({"connection_id": ref.connection_id} for ref in agent.mcp),
                 "subagents": (

@@ -8,6 +8,7 @@ from __future__ import annotations
 import subprocess
 import uuid
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -207,6 +208,7 @@ class TestDockerWithS3Archive:
         # docker 隔离 + S3 文件面组合档：容器写 → 宿主挂载 → 全量归档推 S3。
         import boto3
         from botocore.config import Config as BotoConfig
+        from botocore.exceptions import ClientError
         from pydantic import SecretStr
 
         from kokoro_agent.sandbox.archive import S3Archiver, S3Workspace
@@ -225,22 +227,44 @@ class TestDockerWithS3Archive:
                 retries={"max_attempts": 1},
             ),
         )
-        bucket = f"kokoro-docker-s3-{uuid.uuid4().hex[:6]}"
-        minio.create_bucket(Bucket=bucket)
-        plain = _connect(tmp_path, run_id="run_ds3")
-        backend = ArchivingDockerShellBackend(
-            root=tmp_path,
-            container_id=plain.container_id,
-            archiver=S3Archiver(
-                S3Workspace(type="s3", endpoint=MINIO_URL, bucket=bucket),
-                access_key=SecretStr(access),
-                secret_key=SecretStr(secret),
-            ),
-            prefix="ns:ds3",
-            timeout=30,
-            max_output_bytes=100000,
-        )
-        result = backend.execute("echo from-docker > out.txt")
-        assert result.exit_code == 0
-        body = minio.get_object(Bucket=bucket, Key="ns:ds3/out.txt")["Body"].read()
-        assert body == b"from-docker\n"
+        bucket = f"kokoro-docker-s3-{uuid.uuid4().hex}"
+        key = "ns:ds3/out.txt"
+        with closing(minio):
+            with pytest.raises(ClientError) as absent_before:
+                minio.head_bucket(Bucket=bucket)
+            assert (
+                absent_before.value.response.get("ResponseMetadata", {}).get(
+                    "HTTPStatusCode"
+                )
+                == 404
+            )
+            minio.create_bucket(Bucket=bucket)
+            try:
+                plain = _connect(tmp_path, run_id="run_ds3")
+                backend = ArchivingDockerShellBackend(
+                    root=tmp_path,
+                    container_id=plain.container_id,
+                    archiver=S3Archiver(
+                        S3Workspace(type="s3", endpoint=MINIO_URL, bucket=bucket),
+                        access_key=SecretStr(access),
+                        secret_key=SecretStr(secret),
+                    ),
+                    prefix="ns:ds3",
+                    timeout=30,
+                    max_output_bytes=100000,
+                )
+                result = backend.execute("echo from-docker > out.txt")
+                assert result.exit_code == 0
+                with minio.get_object(Bucket=bucket, Key=key)["Body"] as body:
+                    assert body.read() == b"from-docker\n"
+            finally:
+                minio.delete_object(Bucket=bucket, Key=key)
+                minio.delete_bucket(Bucket=bucket)
+                with pytest.raises(ClientError) as absent_after:
+                    minio.head_bucket(Bucket=bucket)
+                assert (
+                    absent_after.value.response.get("ResponseMetadata", {}).get(
+                        "HTTPStatusCode"
+                    )
+                    == 404
+                )

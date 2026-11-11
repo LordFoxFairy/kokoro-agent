@@ -8,20 +8,109 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import re
+import shlex
+import shutil
 import subprocess
+import time
+from collections.abc import Mapping
+from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import Annotated
 
-from deepagents.backends.local_shell import LocalShellBackend
 
+from kokoro_agent.domain.run.workspace_output import OUTPUT_ROOT, output_path_digest
 from kokoro_agent.sandbox.archive import ArchivingWritesMixin, S3Archiver
-from deepagents.backends.protocol import ExecuteResponse
-from pydantic import BaseModel, ConfigDict, Field
+from kokoro_agent.sandbox.docker_output import (
+    OUTPUT_UNAVAILABLE,
+    WorkspaceOutputCapture,
+    capture_workspace_output,
+    cleanup_workspace_output,
+    current_workspace_output,
+    inspect_workspace_output,
+    output_names,
+    remaining,
+    workspace_output_identity,
+)
+from kokoro_agent.sandbox.execution_environment import (
+    ExecutionBoundaryError,
+    ExecutionEnvironmentProvider,
+    ExecutionEnvironmentRunner,
+)
+from deepagents.backends.protocol import (
+    ExecuteResponse,
+    FileDownloadResponse,
+    ReadResult,
+    GrepResult,
+    LsResult,
+    GlobResult,
+)
+from kokoro_agent.sandbox.output_edit import WorkspaceOutputLocalShellBackend
+from kokoro_agent.sandbox.file_egress import (
+    MAX_FILE_BYTES,
+    FileEgress,
+    LocalFileTools,
+    local_reader,
+    open_local_directory,
+    read_local_bytes,
+)
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.docker")
 
 _MOUNT_POINT = "/workspace"
+_TASK_ISOLATION = (
+    "--cpus",
+    "0.5",
+    "--memory",
+    "512m",
+    "--pids-limit",
+    "128",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,nosuid,nodev,size=64m",
+)
+_OUTPUT_LABEL = "kokoro-workspace-output"
+_IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _cli_environment(values: Mapping[str, str] | None) -> dict[str, str]:
+    """Explicit non-secret CLI context; never forward worker env wholesale.
+
+    Connect snapshots this context for inspect/create and the resulting backend.
+    Teardown callers must pass that same context to destroy_docker_sandbox.
+    Selected Custom API variables cannot set these reserved runtime names.
+    """
+    result = dict(values) if values is not None else {}
+    allowed = {
+        "HOME",
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+    }
+    for name, value in result.items():
+        if (
+            name not in allowed
+            or not value
+            or len(value) > 4096
+            or any(ord(c) < 32 for c in value)
+        ):
+            raise ValueError("invalid_docker_cli_environment")
+        if name == "DOCKER_HOST" and (
+            not value.startswith(("unix://", "npipe://", "tcp://"))
+            or any(c in value for c in "@?#")
+        ):
+            raise ValueError("invalid_docker_cli_environment")
+    return result
 
 
 class DockerSettings(BaseModel):
@@ -32,15 +121,84 @@ class DockerSettings(BaseModel):
     image: str | None
     # 容器空闲存活期（秒）：sleep 到期自退 + --rm 自删；resume 复用窗口。
     ttl: Annotated[int, Field(gt=0)]
+    cli_environment: tuple[tuple[str, str], ...] = ()
+
+    @model_validator(mode="after")
+    def validate_context(self) -> DockerSettings:
+        if len(dict(self.cli_environment)) != len(self.cli_environment):
+            raise ValueError("duplicate Docker context setting")
+        _cli_environment(dict(self.cli_environment))
+        return self
 
 
-def _docker(*args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+def _docker(
+    *args: str,
+    timeout: int = 30,
+    env: dict[str, str] | None = None,
+    script: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    # Resolve the CLI before supplying an isolated child environment. No worker
+    # credentials are inherited; only explicit selected values and a fixed PATH.
+    if env is not None:
+        executable = shutil.which("docker")
+        if executable is None:
+            raise RuntimeError("docker_executable_unavailable")
+        if script is not None:
+            return subprocess.run(
+                [executable, *args],
+                input=script,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                timeout=timeout,
+                check=False,
+                env={"PATH": os.defpath, **env},
+            )
+        return subprocess.run(
+            [executable, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env={"PATH": os.defpath, **env},
+        )
     return subprocess.run(
         ["docker", *args], capture_output=True, text=True, timeout=timeout, check=False
     )
 
 
-class DockerShellBackend(LocalShellBackend):
+def _docker_in_context(
+    *args: str,
+    docker_cli_environment: Mapping[str, str] | None,
+    timeout: int = 30,
+) -> subprocess.CompletedProcess[str]:
+    if docker_cli_environment is None:
+        # Keep the original CLI invocation and inherited context when omitted.
+        return _docker(*args, timeout=timeout)
+    return _docker(*args, timeout=timeout, env=_cli_environment(docker_cli_environment))
+
+
+def docker_workspace_output_identity(
+    *, workspace_root: Path, docker_cli_environment: Mapping[str, str] | None = None
+) -> str:
+    return workspace_output_identity(
+        _docker_in_context, workspace_root, docker_cli_environment
+    )
+
+
+def cleanup_docker_workspace_output(
+    key: str,
+    *,
+    workspace_root: Path,
+    docker_cli_environment: Mapping[str, str] | None = None,
+) -> None:
+    cleanup_workspace_output(
+        _docker_in_context, key, workspace_root, docker_cli_environment
+    )
+
+
+class DockerShellBackend(WorkspaceOutputLocalShellBackend):
     """文件面=宿主 workspace 虚拟根（继承）；execute 重定向进容器。"""
 
     def __init__(
@@ -50,6 +208,9 @@ class DockerShellBackend(LocalShellBackend):
         container_id: str,
         timeout: int,
         max_output_bytes: int,
+        environment_provider: ExecutionEnvironmentProvider | None = None,
+        environment_loop: asyncio.AbstractEventLoop | None = None,
+        docker_cli_environment: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(
             root_dir=str(root),
@@ -61,16 +222,355 @@ class DockerShellBackend(LocalShellBackend):
         self.container_id = container_id
         self._exec_timeout = timeout
         self._max_output_bytes = max_output_bytes
+        self._docker_cli_environment = (
+            _cli_environment(docker_cli_environment)
+            if docker_cli_environment is not None
+            else None
+        )
+        self._environment = (
+            ExecutionEnvironmentRunner(
+                environment_provider,
+                max_output_bytes=max_output_bytes,
+                owner_loop=environment_loop,
+            )
+            if environment_provider is not None
+            else None
+        )
+        self._file_egress = (
+            FileEgress(self._environment, local_reader(root), timeout)
+            if self._environment is not None
+            else None
+        )
+        self._local_file_tools = (
+            LocalFileTools(self._file_egress, root, max_output_bytes)
+            if self._file_egress is not None
+            else None
+        )
+
+    async def guard_workspace_output(self, path: str, content: bytes) -> bool:
+        if self._file_egress is None:
+            return True  # No Custom API execution environment was configured.
+        return await self._file_egress.aguard_snapshot(path, content)
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if self._file_egress is not None:
+            return self._file_egress.read(file_path, offset, limit)
+        return super().read(file_path, offset, limit)
+
+    async def aread(
+        self, file_path: str, offset: int = 0, limit: int = 2000
+    ) -> ReadResult:
+        if self._file_egress is not None:
+            return await self._file_egress.aread(file_path, offset, limit)
+        return await super().aread(file_path, offset, limit)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        if self._file_egress is not None:
+            return self._file_egress.download(paths)
+        return super().download_files(paths)
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        if self._file_egress is not None:
+            return await self._file_egress.adownload(paths)
+        return await super().adownload_files(paths)
+
+    def grep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        if self._local_file_tools is not None:
+            return self._local_file_tools.grep(pattern, path, glob)
+        return super().grep(pattern, path, glob)
+
+    async def agrep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        if self._local_file_tools is not None:
+            return await self._local_file_tools.agrep(pattern, path, glob)
+        return await super().agrep(pattern, path, glob)
+
+    def ls(self, path: str) -> LsResult:
+        if self._local_file_tools is not None:
+            return self._local_file_tools.ls(path)
+        return super().ls(path)
+
+    async def als(self, path: str) -> LsResult:
+        if self._local_file_tools is not None:
+            return await self._local_file_tools.als(path)
+        return await super().als(path)
+
+    def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        if self._local_file_tools is not None:
+            return self._local_file_tools.glob(pattern, path)
+        return super().glob(pattern, path)
+
+    async def aglob(self, pattern: str, path: str = "/") -> GlobResult:
+        if self._local_file_tools is not None:
+            return await self._local_file_tools.aglob(pattern, path)
+        return await super().aglob(pattern, path)
 
     @property
     def sandbox_id(self) -> str:
         # 统一生命周期面（ADR-010）：编排层据此落 run_repository 记录，各档同一属性名。
         return self.container_id
 
+    def capture_workspace_output(
+        self, path: str, key: str, *, recover: bool = False
+    ) -> AbstractContextManager[WorkspaceOutputCapture]:
+        return capture_workspace_output(self, path, key, recover=recover)
+
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if current_workspace_output(self) is not None:
+            # Only the official async tool path may consume this capture.
+            raise ValueError(OUTPUT_UNAVAILABLE)
         effective = timeout if timeout is not None else self._exec_timeout
+        if self._environment is not None:
+            return self._environment.execute(
+                effective,
+                lambda values, remaining: self._execute_environment(
+                    command, values, remaining
+                ),
+            )
+        return self._execute_plain(command, effective)
+
+    async def aexecute(
+        self, command: str, *, timeout: int | None = None
+    ) -> ExecuteResponse:
+        capture = current_workspace_output(self)
+        if capture is not None:
+            if not capture.claim():
+                raise ValueError(OUTPUT_UNAVAILABLE)
+            capture.content = await self.aexecute_workspace_output(
+                command, capture.path, capture.key, timeout, recover=capture.recover
+            )
+            if capture.content is None:
+                # DeepAgents marks nonzero ExecuteResponse as a ToolMessage
+                # success. Its ValueError path carries the genuine error status.
+                raise ValueError(OUTPUT_UNAVAILABLE)
+            return ExecuteResponse(output="", exit_code=0, truncated=False)
+        if self._environment is None:
+            return await super().aexecute(command, timeout=timeout)
+        return await self._environment.aexecute(
+            timeout if timeout is not None else self._exec_timeout,
+            lambda values, remaining: self._execute_environment(
+                command, values, remaining
+            ),
+        )
+
+    async def aworkspace_output_identity(self) -> str:
+        return await asyncio.to_thread(
+            docker_workspace_output_identity,
+            workspace_root=self.cwd.parent,
+            docker_cli_environment=self._docker_cli_environment,
+        )
+
+    async def acleanup_workspace_output(self, key: str) -> None:
+        await asyncio.to_thread(
+            cleanup_docker_workspace_output,
+            key,
+            workspace_root=self.cwd.parent,
+            docker_cli_environment=self._docker_cli_environment,
+        )
+
+    async def aexecute_workspace_output(
+        self,
+        command: str,
+        path: str,
+        key: str,
+        timeout: int | None,
+        *,
+        recover: bool = False,
+    ) -> bytes | None:
+        """Run once, or read the same stopped instance without starting it."""
+        name, scratch = output_names(key)
+        leaf = path.removeprefix(OUTPUT_ROOT)
+        if (
+            self._environment is None
+            or self._file_egress is None
+            or not path.startswith(OUTPUT_ROOT)
+            or "/" in leaf
+            or output_path_digest(path) is None
+            or (not recover and (not command or "\x00" in command))
+        ):
+            return None
+        effective = timeout if timeout is not None else min(self._exec_timeout, 300)
+        if type(effective) is not int or not 0 < effective <= 300:
+            return None
+        deadline = time.monotonic() + effective
+        base = self.cwd.parent
+        context = self._docker_cli_environment
+        content: bytes | None = None
+        reserved = False
+
+        def capture(expected_id: str | None) -> bytes | None:
+            row = inspect_workspace_output(
+                _docker_in_context, key, base, context, deadline
+            )
+            if (
+                row is None
+                or (expected_id is not None and row.id != expected_id)
+                or row.status != "exited"
+                or row.exit != 0
+                or not any(
+                    mount["Destination"] == _MOUNT_POINT
+                    and mount["Source"] == str(self.cwd)
+                    for mount in row.mounts
+                )
+            ):
+                return None
+            with ExitStack() as stack:
+                base_fd = open_local_directory(base, stack)
+                root_fd = open_local_directory(scratch, stack, parent=base_fd)
+                fd = os.open(
+                    leaf, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=root_fd
+                )
+                stack.callback(os.close, fd)
+                if os.fstat(fd).st_nlink != 1:
+                    return None
+                return read_local_bytes(fd, MAX_FILE_BYTES, deadline)
+
+        def run(values: dict[str, str], _remaining: int) -> ExecuteResponse:
+            nonlocal content, reserved
+            if (
+                inspect_workspace_output(
+                    _docker_in_context, key, base, context, deadline
+                )
+                is not None
+            ):
+                return ExecuteResponse(output="", exit_code=1, truncated=False)
+            with ExitStack() as stack:
+                base_fd = open_local_directory(base, stack)
+                os.mkdir(scratch, mode=0o700, dir_fd=base_fd)
+                reserved = True
+                # Docker needs the nested mountpoint in the read-only source.
+                workspace_fd = open_local_directory(
+                    self.cwd.name, stack, parent=base_fd
+                )
+                try:
+                    os.mkdir("outputs", mode=0o700, dir_fd=workspace_fd)
+                except FileExistsError:
+                    pass
+                open_local_directory("outputs", stack, parent=workspace_fd)
+            inspected = _docker_in_context(
+                "inspect",
+                "--type",
+                "container",
+                "--format",
+                "{{.Image}}",
+                self.container_id,
+                timeout=remaining(deadline),
+                docker_cli_environment=context,
+            )
+            image = inspected.stdout.strip()
+            if inspected.returncode or _IMAGE_ID.fullmatch(image) is None:
+                return ExecuteResponse(output="", exit_code=1, truncated=False)
+            created = _docker_in_context(
+                "create",
+                "--interactive",
+                "--pull",
+                "never",
+                "--name",
+                name,
+                "--label",
+                f"{_OUTPUT_LABEL}={key}",
+                *_TASK_ISOLATION,
+                "--log-driver",
+                "none",
+                "--mount",
+                f"type=bind,source={self.cwd},target={_MOUNT_POINT},readonly",
+                "--mount",
+                f"type=bind,source={base / scratch},target={_MOUNT_POINT}/outputs",
+                "-w",
+                _MOUNT_POINT,
+                "--entrypoint",
+                "/bin/sh",
+                image,
+                "-s",
+                timeout=remaining(deadline),
+                docker_cli_environment=context,
+            )
+            container = created.stdout.strip()
+            if created.returncode or re.fullmatch(r"[0-9a-f]{64}", container) is None:
+                return ExecuteResponse(output="", exit_code=1, truncated=False)
+            # Deliver values and the command through attached stdin, not Docker
+            # CLI argv/environment, persisted config or logs. The shell is PID 1.
+            script = (
+                "".join(
+                    f"export {shlex.quote(f'{variable}={value}')} || exit 125\n"
+                    for variable, value in values.items()
+                )
+                + f"exec sh -lc {shlex.quote(command)} </dev/null\n"
+            )
+            _docker(
+                "start",
+                "--attach",
+                "--interactive",
+                container,
+                env=dict(context or {}),
+                script=script,
+                timeout=remaining(deadline),
+            )
+            content = capture(container)
+            return ExecuteResponse(
+                output="", exit_code=0 if content is not None else 1, truncated=False
+            )
+
         try:
-            result = _docker(
+            if recover:
+                content = await asyncio.to_thread(capture, None)
+            else:
+                await self._environment.aexecute(effective, run)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            return None
+        finally:
+            if reserved and content is None:
+                try:
+                    await self.acleanup_workspace_output(key)
+                except ExecutionBoundaryError:
+                    # The caller has registered the existing durable janitor.
+                    pass
+
+        if content is None:
+            return None
+        # Do not destroy a stopped original before the caller commits its
+        # journal/version. A temporary credential failure can be recovered.
+        try:
+            async with asyncio.timeout(max(0, deadline - time.monotonic())):
+                return (
+                    content
+                    if await self.guard_workspace_output(path, content)
+                    else None
+                )
+        except TimeoutError:
+            raise ExecutionBoundaryError(OUTPUT_UNAVAILABLE) from None
+
+    def _execute_environment(
+        self, command: str, values: dict[str, str], timeout: int
+    ) -> ExecuteResponse:
+        arguments: list[str] = ["exec"]
+        for name in values:
+            # Docker copies each named value from its CLI child environment.
+            # Values never appear in argv or in the model's command string.
+            arguments.extend(("--env", name))
+        result = _docker(
+            *arguments,
+            "-w",
+            _MOUNT_POINT,
+            self.container_id,
+            "sh",
+            "-lc",
+            command,
+            timeout=timeout,
+            env={**(self._docker_cli_environment or {}), **values},
+        )
+        return ExecuteResponse(
+            output=result.stdout + result.stderr,
+            exit_code=result.returncode,
+            truncated=False,
+        )
+
+    def _execute_plain(self, command: str, effective: int) -> ExecuteResponse:
+        try:
+            result = _docker_in_context(
                 "exec",
                 "-w",
                 _MOUNT_POINT,
@@ -79,6 +579,7 @@ class DockerShellBackend(LocalShellBackend):
                 "-lc",
                 command,
                 timeout=effective,
+                docker_cli_environment=self._docker_cli_environment,
             )
         except subprocess.TimeoutExpired:
             return ExecuteResponse(
@@ -95,13 +596,40 @@ class DockerShellBackend(LocalShellBackend):
         )
 
 
-def destroy_docker_sandbox(container_id: str) -> None:
-    """终态主动回收（--rm 容器 rm -f 即删）；失败交 TTL 自清兜底，调用方吞错记日志。"""
-    _docker("rm", "-f", container_id)
+def destroy_docker_sandbox(
+    container_id: str, *, docker_cli_environment: Mapping[str, str] | None = None
+) -> None:
+    """终态主动回收；失败交持久清理队列重试，已不存在则幂等成功。"""
+    result = _docker_in_context(
+        "rm", "-f", container_id, docker_cli_environment=docker_cli_environment
+    )
+    if result.returncode == 0:
+        return
+    # A failed removal is not proof of absence. Query the same daemon so an
+    # already auto-removed container succeeds, but daemon failures remain pending.
+    remaining = _docker_in_context(
+        "ps",
+        "--all",
+        "--quiet",
+        "--no-trunc",
+        "--filter",
+        f"id={container_id}",
+        docker_cli_environment=docker_cli_environment,
+    )
+    if remaining.returncode != 0 or remaining.stdout.strip():
+        raise RuntimeError("docker_sandbox_cleanup_failed")
 
 
-def _container_alive(container_id: str) -> bool:
-    result = _docker("inspect", "-f", "{{.State.Running}}", container_id)
+def _container_alive(
+    container_id: str, *, docker_cli_environment: Mapping[str, str] | None = None
+) -> bool:
+    result = _docker_in_context(
+        "inspect",
+        "-f",
+        "{{.State.Running}}",
+        container_id,
+        docker_cli_environment=docker_cli_environment,
+    )
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
@@ -113,23 +641,51 @@ def connect_docker_sandbox(
     run_id: str,
     exec_timeout: int,
     max_output_bytes: int,
+    environment_provider: ExecutionEnvironmentProvider | None = None,
+    environment_loop: asyncio.AbstractEventLoop | None = None,
+    docker_cli_environment: Mapping[str, str] | None = None,
 ) -> DockerShellBackend:
     """run 级生命周期：既往容器活着即复用（HITL 暂停期间的容器内进程状态在）；
     亡了新起——workspace 在宿主，文件面无损。调用方经 to_thread（docker CLI 同步阻塞）。
     """
     if settings.image is None:
         raise ValueError("backend docker requires KOKORO_DOCKER_IMAGE")
-    if container_id is not None and _container_alive(container_id):
+    # Validate and copy before *any* Docker I/O, including a reuse probe.
+    context = (
+        _cli_environment(docker_cli_environment)
+        if docker_cli_environment is not None
+        else None
+    )
+    if container_id is not None and _container_alive(
+        container_id, docker_cli_environment=context
+    ):
         return DockerShellBackend(
             root=root,
             container_id=container_id,
             timeout=exec_timeout,
             max_output_bytes=max_output_bytes,
+            environment_provider=environment_provider,
+            environment_loop=environment_loop,
+            docker_cli_environment=context,
         )
-    result = _docker(
+    isolation = (
+        (
+            *_TASK_ISOLATION,
+            "--log-driver",
+            "local",
+            "--log-opt",
+            "max-size=10m",
+            "--log-opt",
+            "max-file=2",
+        )
+        if environment_provider is not None
+        else ()
+    )
+    result = _docker_in_context(
         "run",
         "-d",
         "--rm",
+        *isolation,
         "--label",
         f"kokoro-run={run_id}",
         # --mount 键值语法：workspace 目录名含 ':'（{namespace}:{session_id} 约定），-v 短语法会被撕裂。
@@ -141,6 +697,7 @@ def connect_docker_sandbox(
         "sleep",
         str(settings.ttl),
         timeout=120,
+        docker_cli_environment=context,
     )
     if result.returncode != 0:
         raise RuntimeError(f"docker run failed: {result.stderr.strip()}")
@@ -149,11 +706,22 @@ def connect_docker_sandbox(
         container_id=result.stdout.strip(),
         timeout=exec_timeout,
         max_output_bytes=max_output_bytes,
+        environment_provider=environment_provider,
+        environment_loop=environment_loop,
+        docker_cli_environment=context,
     )
 
 
 class ArchivingDockerShellBackend(ArchivingWritesMixin, DockerShellBackend):
     """docker 执行隔离 + S3 写时归档（多 pod 无共享卷 + 容器隔离的组合档）。"""
+
+    async def aexecute(
+        self, command: str, *, timeout: int | None = None
+    ) -> ExecuteResponse:
+        if current_workspace_output(self) is not None:
+            # The private output is not the regular workspace archive.
+            return await DockerShellBackend.aexecute(self, command, timeout=timeout)
+        return await super().aexecute(command, timeout=timeout)
 
     def __init__(
         self,
@@ -164,6 +732,9 @@ class ArchivingDockerShellBackend(ArchivingWritesMixin, DockerShellBackend):
         prefix: str,
         timeout: int,
         max_output_bytes: int,
+        environment_provider: ExecutionEnvironmentProvider | None = None,
+        environment_loop: asyncio.AbstractEventLoop | None = None,
+        docker_cli_environment: Mapping[str, str] | None = None,
     ) -> None:
         DockerShellBackend.__init__(
             self,
@@ -171,6 +742,9 @@ class ArchivingDockerShellBackend(ArchivingWritesMixin, DockerShellBackend):
             container_id=container_id,
             timeout=timeout,
             max_output_bytes=max_output_bytes,
+            environment_provider=environment_provider,
+            environment_loop=environment_loop,
+            docker_cli_environment=docker_cli_environment,
         )
         self._archive_root = root
         self._archiver = archiver

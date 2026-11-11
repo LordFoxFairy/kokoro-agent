@@ -1,11 +1,11 @@
-"""Worker-only, generation-fenced Platform workload credential snapshots."""
+"""Worker-only current Platform service credentials; no exchange or cache."""
 
 from __future__ import annotations
 
 import json
 import os
 import stat
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -13,11 +13,8 @@ from pydantic import (
     Field,
     SecretStr,
     StringConstraints,
-    TypeAdapter,
 )
 
-_RESOURCE = "https://kokoro.dev/resources/platform-internal"
-_SCOPE = "platform:execution.invoke"
 _LIMIT = 1_048_576
 _Text = Annotated[str, StringConstraints(min_length=1)]
 
@@ -29,12 +26,18 @@ class CredentialError(RuntimeError):
 class PlatformCredential(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
     tenant_id: _Text = Field(repr=False)
-    generation: int = Field(ge=1, le=9_007_199_254_740_991)
-    credential_ref_version: _Text = Field(repr=False)
-    client_id: _Text = Field(repr=False)
-    client_secret: SecretStr = Field(repr=False)
-    resource: _Text = Field(repr=False)
-    scope: _Text = Field(repr=False)
+    credential_id: Annotated[
+        str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+    ] = Field(repr=False)
+    caller: Literal["kokoro-agent"]
+    surfaces: list[Literal["tenant_execution"]] = Field(min_length=1, max_length=1)
+    secret: SecretStr = Field(repr=False)
+
+
+class _CredentialDocument(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    version: int = Field(ge=1, le=1)
+    entries: list[PlatformCredential] = Field(min_length=1)
 
 
 def _object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -63,38 +66,29 @@ class CredentialFile:
 
     Parent directories are a deployment-trusted secret-mount boundary, as with
     the private signer. Atomic rename is supported; mutation during read is not.
-    High-water marks survive removal, preventing a deleted tenant's rollback.
+    The complete current mount is checked on every call, never a cached secret.
     """
 
     def __init__(self, path: str) -> None:
         if not os.path.isabs(path) or os.path.normpath(path) != path:
             raise CredentialError("platform credentials unavailable")
         self._path = path
-        self._observed: dict[str, PlatformCredential] = {}
 
     def snapshot(self, tenant_id: str) -> PlatformCredential:
         try:
-            snapshots = self._read()
-            for tenant, current in snapshots.items():
-                previous = self._observed.get(tenant)
-                if previous is not None and (
-                    current.generation < previous.generation
-                    or (
-                        current.generation == previous.generation
-                        and current != previous
-                    )
-                ):
-                    raise ValueError
-            self._observed.update(snapshots)
-            return snapshots[tenant_id]
+            return self._read()[tenant_id]
         except Exception:
             pass
         raise CredentialError("platform credentials unavailable") from None
 
+    async def credential(self, tenant_id: str) -> str:
+        """Read immediately before dispatch; no token issuance or expiry lifecycle."""
+        return self.snapshot(tenant_id).secret.get_secret_value()
+
     def validate(self) -> None:
         """Validate the entire mount at startup without selecting a default tenant."""
         try:
-            self._observed = self._read()
+            self._read()
         except Exception:
             failed = True
         else:
@@ -132,32 +126,30 @@ class CredentialFile:
         finally:
             os.close(fd)
         value: object = json.loads(raw, object_pairs_hook=_object)
-        if not isinstance(value, list) or not value:
-            raise ValueError
+        document = _CredentialDocument.model_validate(value)
         result: dict[str, PlatformCredential] = {}
-        clients: set[str] = set()
-        for entry in TypeAdapter(list[object]).validate_python(value):
-            credential = PlatformCredential.model_validate(entry)
-            secret = credential.client_secret.get_secret_value()
+        ids: set[str] = set()
+        secrets: set[str] = set()
+        for credential in document.entries:
+            secret = credential.secret.get_secret_value()
+            tenant = credential.tenant_id
             if (
-                credential.resource != _RESOURCE
-                or credential.scope != _SCOPE
-                or not secret
-                or ":" in credential.client_id
-                or credential.tenant_id in result
-                or credential.client_id in clients
+                not 32 <= len(secret) <= 4096
+                or any(not 0x21 <= ord(char) <= 0x7E for char in secret)
+                or len(tenant.encode("utf-16-le")) // 2 > 255
+                or any(
+                    char.isspace()
+                    or char == "\ufeff"
+                    or ord(char) < 32
+                    or ord(char) == 127
+                    for char in tenant
+                )
+                or tenant in result
+                or credential.credential_id in ids
+                or secret in secrets
             ):
                 raise ValueError
-            for text in (
-                credential.tenant_id,
-                credential.client_id,
-                secret,
-                credential.credential_ref_version,
-            ):
-                if not text.strip() or any(
-                    ord(char) < 32 or 0xD800 <= ord(char) <= 0xDFFF for char in text
-                ):
-                    raise ValueError
-            result[credential.tenant_id] = credential
-            clients.add(credential.client_id)
+            result[tenant] = credential
+            ids.add(credential.credential_id)
+            secrets.add(secret)
         return result

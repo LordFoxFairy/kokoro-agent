@@ -16,6 +16,10 @@ from jsonschema.exceptions import ValidationError as SchemaValidationError
 from pydantic import SecretStr
 
 from kokoro_agent import contract_check
+from kokoro_agent.chat_contract_check import (
+    http82_display_parent_bytes,
+    http811_project_instruction_parent_bytes,
+)
 from kokoro_agent.domain.chat.models import ChatEventRecord
 from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.infrastructure.postgres_run_repository import RunRepositorySettings
@@ -72,7 +76,11 @@ def test_launch_and_replay_success_responses_bind_existing_typed_data() -> None:
 
 @pytest.mark.parametrize("operation", ["launch", "replay"])
 def test_checker_rejects_generic_data_fallback(operation: str) -> None:
-    document = _document()
+    document = json.loads(
+        http82_display_parent_bytes(
+            json.loads(http811_project_instruction_parent_bytes(_document()))
+        )
+    )
     changed = copy.deepcopy(document)
     if operation == "launch":
         path, method, status = "/v1/runs", "post", "202"
@@ -82,18 +90,22 @@ def test_checker_rejects_generic_data_fallback(operation: str) -> None:
         "schema"
     ] = {"$ref": "#/components/schemas/DataEnvelope"}
     with pytest.raises(ValueError, match="typed response"):
-        contract_check.validate_openapi_document(changed)
+        contract_check.validate_http82_parent_document(changed)
 
 
 @pytest.mark.parametrize("schema", ["Meta", "LaunchReceipt", "ReplayPage", "ChatEvent"])
 def test_checker_rejects_weakened_referenced_chat_schema(schema: str) -> None:
-    changed = _document()
+    changed = json.loads(
+        http82_display_parent_bytes(
+            json.loads(http811_project_instruction_parent_bytes(_document()))
+        )
+    )
     changed["components"]["schemas"][schema] = {
         "type": "object",
         "additionalProperties": True,
     }
     with pytest.raises(ValueError, match="typed response"):
-        contract_check.validate_openapi_document(changed)
+        contract_check.validate_http82_parent_document(changed)
 
 
 @pytest.mark.asyncio
@@ -1065,11 +1077,18 @@ def test_r97_owner_raw_checker_preserves_failure_and_hitl_profiles(
 def test_r97_owner_raw_checker_does_not_invent_unregistered_profiles(
     event_type: str,
 ) -> None:
-    from kokoro_agent.chat_contract_check import validate_decoded_chat_payload
+    from kokoro_agent.chat_contract_check import (
+        http815_delivery_display_parent_bytes,
+        validate_decoded_chat_payload,
+    )
 
+    document = _document()
+    if event_type == "delivery":
+        # It was opaque in the exact 8.15 parent; only 8.16 declares ChatDelivery.
+        document = json.loads(http815_delivery_display_parent_bytes(document))
     with pytest.raises(ValueError, match="unsupported decoded Chat event type"):
         validate_decoded_chat_payload(
-            _document(), event_type=event_type, payload_json="{}"
+            document, event_type=event_type, payload_json="{}"
         )
 
 

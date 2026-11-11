@@ -6,6 +6,7 @@ import hashlib
 import asyncio
 import json
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -13,13 +14,21 @@ import pytest
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from deepagents.backends.local_shell import LocalShellBackend
+from protobuf.wkt import Timestamp
 
 from kokoro_agent.clients.storage import (
     DeliveryRecoveryRequest,
     DeliveryRequest,
+    InputResourceReadRequest,
     StorageClientError,
 )
 from kokoro_agent.clients.storage_delivery import StorageDeliveryClient
+from kokoro_agent.protocol.control import (
+    AssetResourceRef,
+    ArtifactResourceRef,
+    AssetSourceScope,
+    ArtifactSourceScope,
+)
 from kokoro_agent.domain.run.models import LeaseFence
 from kokoro_agent.domain.run.models import ToolJournalRecord
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
@@ -107,8 +116,11 @@ class FakeTransport:
         self.fail_complete_once = False
         self.pending_source_version: str | None = None
         self.put_version = "version-A"
+        self.read_content = _CONTENT
 
-    async def call(self, method: str, request: object, headers: dict[str, str]):
+    async def call(
+        self, method: str, request: object, headers: dict[str, str]
+    ) -> object:
         self.calls.append((method, request, headers))
         if self.connect_error is not None:
             raise ConnectError(self.connect_error, "upstream message must not escape")
@@ -180,6 +192,32 @@ class FakeTransport:
                 content_sha256=_HASH,
                 state=pb.ArtifactState.FINAL,
             )
+        if method == "get_final_artifact_download_reference":
+            assert isinstance(request, pb.GetFinalArtifactDownloadReferenceRequest)
+            assert request.run_id == "source-run"
+            return pb.GetFinalArtifactDownloadReferenceResponse(
+                artifact_id="artifact-1",
+                asset_id="asset-1",
+                content_sha256=_HASH,
+                download_reference=pb.TransferReference(
+                    url="http://127.0.0.1:9000/final-1",
+                    method="GET",
+                    expires_at=Timestamp.from_datetime(
+                        datetime.now(timezone.utc) + timedelta(minutes=5)
+                    ),
+                ),
+            )
+        if method == "get_download_reference":
+            return pb.GetDownloadReferenceResponse(
+                asset_id="asset-1",
+                content_sha256=_HASH,
+                size_bytes=len(_CONTENT),
+                mime_type="text/plain",
+                scan_state=pb.ScanState.CLEAN,
+                download_reference=pb.TransferReference(
+                    url="http://127.0.0.1:9000/input", method="GET"
+                ),
+            )
         raise AssertionError(method)
 
     async def put(self, reference: pb.TransferReference, content: bytes) -> str:
@@ -190,6 +228,10 @@ class FakeTransport:
         if self.after_put is not None:
             self.after_put()
         return self.put_version
+
+    async def get(self, reference: pb.TransferReference) -> bytes:
+        assert reference.method == "GET"
+        return self.read_content
 
 
 def _request() -> DeliveryRequest:
@@ -207,6 +249,191 @@ def _request() -> DeliveryRequest:
         lease=_LEASE,
         tool_call_id="tool-1",
     )
+
+
+def _input_ref(kind: str = "artifact") -> AssetResourceRef | ArtifactResourceRef:
+    common = dict(
+        asset_id="asset-1",
+        content_sha256=_HASH,
+        size_bytes=str(len(_CONTENT)),
+        mime_type="text/plain",
+        filename="input file.txt",
+    )
+    if kind == "artifact":
+        return ArtifactResourceRef(
+            kind="artifact",
+            resource_id="artifact-1",
+            source_scope=ArtifactSourceScope(
+                kind="conversation", id="source-conversation"
+            ),
+            source_run_id="source-run",
+            **common,
+        )
+    return AssetResourceRef(
+        kind="asset",
+        resource_id="asset-1",
+        source_scope=AssetSourceScope(kind="personal", id="user-1"),
+        **common,
+    )
+
+
+def _read_request(kind: str = "artifact") -> InputResourceReadRequest:
+    return InputResourceReadRequest(
+        request_id="trace-read-1",
+        run_id="run-1",
+        identity=_IDENTITY,
+        reference=_input_ref(kind),
+        lease=_LEASE,
+    )
+
+
+@pytest.mark.parametrize("kind", ["asset", "artifact"])
+async def test_input_reads_use_persisted_source_and_consumer_run(kind: str) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.request = _RUN.model_copy(
+        update={"selected_resource_refs": (_input_ref(kind),)}
+    )
+    receipt = await StorageDeliveryClient(runs, transport).read_input(
+        _read_request(kind)
+    )
+    assert receipt.content == _CONTENT
+    assert receipt.content_sha256 == _HASH
+    method, request, headers = transport.calls[-1]
+    assert isinstance(
+        request,
+        (pb.GetDownloadReferenceRequest, pb.GetFinalArtifactDownloadReferenceRequest),
+    )
+    assert request.consumer_run_id == "run-1"
+    assert request.asset_id == "asset-1"
+    assert request.content_sha256 == _HASH
+    if kind == "artifact":
+        assert method == "get_final_artifact_download_reference"
+        assert isinstance(request, pb.GetFinalArtifactDownloadReferenceRequest)
+        assert request.run_id == "source-run"
+        assert headers["x-kokoro-scope-id"] == "source-conversation"
+    else:
+        assert method == "get_download_reference"
+        assert headers["x-kokoro-scope-id"] == "user-1"
+
+
+async def test_input_rejects_unselected_changed_refs_and_stale_lease_before_owner() -> (
+    None
+):
+    runs, transport = FakeRuns(), FakeTransport()
+    client = StorageDeliveryClient(runs, transport)
+    with pytest.raises(StorageClientError, match="NOT_SELECTED"):
+        await client.read_input(_read_request())
+    runs.request = _RUN.model_copy(update={"selected_resource_refs": (_input_ref(),)})
+    changed = _read_request().model_copy(
+        update={"reference": _input_ref().model_copy(update={"filename": "changed"})}
+    )
+    with pytest.raises(StorageClientError, match="NOT_SELECTED"):
+        await client.read_input(changed)
+    runs.current = False
+    with pytest.raises(StorageClientError, match="LEASE_STALE"):
+        await client.read_input(_read_request())
+    assert not transport.calls
+
+
+@pytest.mark.parametrize("stage", ["rpc", "get"])
+async def test_input_rechecks_lease_after_network_before_further_io_or_bytes(
+    stage: str,
+) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.request = _RUN.model_copy(update={"selected_resource_refs": (_input_ref(),)})
+    gets: list[pb.TransferReference] = []
+    original_call = transport.call
+
+    async def call(method: str, request: object, headers: dict[str, str]) -> object:
+        response = await original_call(method, request, headers)
+        if stage == "rpc":
+            runs.current = False
+        return response
+
+    async def get(reference: pb.TransferReference) -> bytes:
+        gets.append(reference)
+        runs.current = False
+        return _CONTENT
+
+    transport.call = call
+    transport.get = get
+    with pytest.raises(StorageClientError, match="LEASE_STALE"):
+        await StorageDeliveryClient(runs, transport).read_input(_read_request())
+    assert len(gets) == (0 if stage == "rpc" else 1)
+
+
+@pytest.mark.parametrize("content", [b"bad", b"final reporT"])
+async def test_input_rejects_wrong_length_or_digest(content: bytes) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.request = _RUN.model_copy(update={"selected_resource_refs": (_input_ref(),)})
+    transport.read_content = content
+    with pytest.raises(StorageClientError, match="MISMATCH"):
+        await StorageDeliveryClient(runs, transport).read_input(_read_request())
+
+
+@pytest.mark.parametrize("field", ["size_bytes", "mime_type"])
+async def test_input_rejects_asset_owner_metadata_mismatch_before_get(
+    field: str,
+) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    runs.request = _RUN.model_copy(
+        update={"selected_resource_refs": (_input_ref("asset"),)}
+    )
+    original = transport.call
+    gets: list[pb.TransferReference] = []
+
+    async def call(method: str, request: object, headers: dict[str, str]) -> object:
+        response = await original(method, request, headers)
+        assert isinstance(response, pb.GetDownloadReferenceResponse)
+        if field == "size_bytes":
+            response.size_bytes += 1
+        else:
+            response.mime_type = "application/octet-stream"
+        return response
+
+    async def get(reference: pb.TransferReference) -> bytes:
+        gets.append(reference)
+        return _CONTENT
+
+    transport.call = call
+    transport.get = get
+    with pytest.raises(StorageClientError, match="RESPONSE_MISMATCH"):
+        await StorageDeliveryClient(runs, transport).read_input(_read_request("asset"))
+    assert not gets
+
+
+async def test_input_commands_admit_multiple_selected_assets_and_replay_each() -> None:
+    runs = FakeRuns()
+    first = _input_ref("asset")
+    second = first.model_copy(update={"resource_id": "asset-2", "asset_id": "asset-2"})
+    runs.request = _RUN.model_copy(update={"selected_resource_refs": (first, second)})
+    claims: dict[str, str] = {}
+
+    class InputsTransport(FakeTransport):
+        async def call(
+            self, method: str, request: object, headers: dict[str, str]
+        ) -> object:
+            assert isinstance(request, pb.GetDownloadReferenceRequest)
+            assert request.command is not None
+            identity = request.command
+            if (
+                identity.command_id in claims
+                and claims[identity.command_id] != identity.request_digest
+            ):
+                raise StorageClientError("COMMAND_DIGEST_MISMATCH")
+            claims[identity.command_id] = identity.request_digest
+            response = await super().call(method, request, headers)
+            assert isinstance(response, pb.GetDownloadReferenceResponse)
+            response.asset_id = request.asset_id
+            return response
+
+    client = StorageDeliveryClient(runs, InputsTransport())
+    for reference in (first, second, first):
+        receipt = await client.read_input(
+            _read_request("asset").model_copy(update={"reference": reference})
+        )
+        assert receipt.content == _CONTENT
+    assert len(claims) == 2
 
 
 async def test_publish_uses_canonical_conversation_scope_and_stable_commands() -> None:
@@ -588,6 +815,37 @@ async def test_final_owner_reply_lost_recovers_without_workspace_bytes() -> None
     assert [name for name, _, _ in transport.calls].count("create_upload") == 1
 
 
+@pytest.mark.parametrize("initial_path", [None, "/report.pdf"])
+async def test_delivery_replay_keeps_first_display_path_presence(
+    initial_path: str | None,
+) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.connect_error = Code.UNAVAILABLE
+    client = StorageDeliveryClient(runs, transport)
+    with pytest.raises(StorageClientError, match="UNAVAILABLE"):
+        await client.publish(
+            _request().model_copy(update={"display_path": initial_path})
+        )
+    assert json.loads(runs.last_intent or "{}").get("display_path") == initial_path
+
+    transport.connect_error = None
+    transport.finalize_reply_lost = True
+    changed_backend_path = "/report.pdf" if initial_path is None else None
+    with pytest.raises(StorageClientError):
+        await client.publish(
+            _request().model_copy(update={"display_path": changed_backend_path})
+        )
+    intents = [json.loads(value) for _, _, value in runs.intents]
+    assert all(intent.get("display_path") == initial_path for intent in intents)
+    assert all(
+        ("display_path" in intent) == (initial_path is not None) for intent in intents
+    )
+    receipt = await client.recover(_recovery())
+    assert receipt is not None
+    assert receipt.model_dump().get("display_path") == initial_path
+    assert transport.puts == [_CONTENT]
+
+
 async def test_recovery_rejects_changed_owner_kind_without_new_upload() -> None:
     runs, transport = FakeRuns(), FakeTransport()
     transport.finalize_reply_lost = True
@@ -679,3 +937,81 @@ async def test_owner_cancel_preserves_task_cancellation() -> None:
     transport.connect_error = Code.CANCELED
     with pytest.raises(asyncio.CancelledError):
         await StorageDeliveryClient(runs, transport).publish(_request())
+
+
+@pytest.mark.asyncio
+async def test_workspace_output_replays_exact_put_selection_but_never_publishes_late_clean() -> (
+    None
+):
+    class WorkspaceTransport(FakeTransport):
+        revoke_after_complete = True
+
+        async def call(
+            self, method: str, request: object, headers: dict[str, str]
+        ) -> object:
+            result = await super().call(method, request, headers)
+            if method == "create_upload":
+                assert isinstance(result, pb.CreateUploadResponse)
+                assert result.upload_reference is not None
+                result.upload_reference.required_headers["content-type"] = (
+                    "text/markdown"
+                )
+            if method == "complete_upload" and self.revoke_after_complete:
+                runs.current = False
+            return result
+
+    runs = FakeRuns()
+    transport = WorkspaceTransport()
+    client = StorageDeliveryClient(runs, transport)
+    selections: list[tuple[str, str]] = []
+
+    async def freeze(upload_id: str, source_version: str) -> bool:
+        selections.append((upload_id, source_version))
+        return True
+
+    async def publish(selected: tuple[str, str] | None) -> str:
+        return await client.upload_workspace_output(
+            _RUN,
+            _LEASE,
+            "wsv_" + "1" * 64,
+            "/outputs/report.md",
+            _HASH,
+            _CONTENT,
+            selected,
+            freeze,
+        )
+
+    with pytest.raises(StorageClientError, match="WORKSPACE_OUTPUT_LEASE_STALE"):
+        await publish(None)
+    assert selections == [("upload-1", "version-A")]
+    runs.current = True
+    transport.revoke_after_complete = False
+    assert await publish(selections[0]) == "asset-1"
+    assert transport.puts == [_CONTENT]
+    assert [call[0] for call in transport.calls] == [
+        "create_upload",
+        "complete_upload",
+        "complete_upload",
+    ]
+    created = transport.calls[0][1]
+    assert isinstance(created, pb.CreateUploadRequest)
+    assert int(created.upload_purpose) == 6
+    assert (
+        created.filename,
+        created.mime_type,
+        created.content_sha256,
+        created.size_bytes,
+    ) == (
+        "report.md",
+        "text/markdown",
+        _HASH,
+        len(_CONTENT),
+    )
+    completed = [
+        request for method, request, _ in transport.calls if method == "complete_upload"
+    ]
+    assert len(completed) == 2 and completed[0] == completed[1]
+    assert all(
+        headers["x-kokoro-scope-id"] == _RUN.session_id
+        for _, _, headers in transport.calls
+    )

@@ -131,7 +131,10 @@ class PostgresRunSandbox:
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent:
+        if type(defer_ms) is not int or not 0 <= defer_ms <= 600_000:
+            raise ValueError("sandbox cleanup delay must be between 0 and 600000ms")
         if lease_generation < 1:
             raise ValueError("sandbox cleanup lease_generation must be positive")
         if backend_kind not in {"docker", "e2b", "custom"}:
@@ -150,6 +153,7 @@ class PostgresRunSandbox:
                         sandbox_id=sandbox_id,
                         teardown_ref=teardown_ref,
                         now=now,
+                        defer_ms=defer_ms,
                     )
 
     async def claim_sandbox_cleanups(
@@ -261,6 +265,7 @@ class PostgresRunSandbox:
         sandbox_id: str,
         teardown_ref: str,
         now: int,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent:
         cleanup_id = sandbox_cleanup_id(
             run_id, lease_generation, backend_kind, sandbox_id
@@ -284,7 +289,7 @@ class PostgresRunSandbox:
                 backend_kind,
                 sandbox_id,
                 teardown_ref,
-                now,
+                now + defer_ms,
                 now,
                 now,
             ),

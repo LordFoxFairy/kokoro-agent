@@ -5,9 +5,12 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 from pathlib import Path
 
 import pytest
+
+from support.file_egress import Environment
 
 from deepagents.backends.local_shell import LocalShellBackend
 
@@ -18,6 +21,7 @@ from kokoro_agent.clients.storage import (
     StorageClientError,
 )
 from kokoro_agent.protocol import ExecutionIdentity, IdentityRef
+from kokoro_agent.sandbox.docker_backend import DockerShellBackend
 from kokoro_agent.tools.deliver import DeliverResult, make_deliver_tool
 
 _NS = "local:s1"
@@ -51,6 +55,7 @@ class FakeDeliveryClient:
             mime_type=request.mime_type,
             artifact_kind="document",
             replayed=len(self.requests) > 1,
+            display_path=request.display_path,
         )
 
 
@@ -124,6 +129,41 @@ async def test_deliver_publishes_workspace_bytes_through_public_client(
     assert request.mime_type == "application/pdf"
 
 
+@pytest.mark.parametrize(
+    ("path", "proven", "display_path"),
+    [
+        ("/reports/report.txt", True, "/reports/report.txt"),
+        ("/reports/report.txt", False, None),
+        ("/reports//report.txt", True, None),
+        ("/reports/./report.txt", True, None),
+        ("/.inputs/0", True, None),
+        ("/reports/.internal/report.txt", True, None),
+        ("/reports/service-account.json", True, None),
+    ],
+)
+async def test_delivery_only_emits_proven_exact_display_paths(
+    tmp_path: Path, path: str, proven: bool, display_path: str | None
+) -> None:
+    source = tmp_path / path[1:]
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"same authorized bytes")
+    client = FakeDeliveryClient()
+    tool = make_deliver_tool(
+        _backend(tmp_path),
+        client,
+        namespace=_NS,
+        run_id=_RUN,
+        identity=_IDENTITY,
+        virtual_workspace=proven,
+    )
+    result = DeliverResult.model_validate_json(
+        await tool.ainvoke({"path": path, "title": "Same delivery"})
+    )
+    assert result.display_path == client.requests[0].display_path == display_path
+    assert ("display_path" in result.model_dump()) == (display_path is not None)
+    assert client.requests[0].content == b"same authorized bytes"
+
+
 async def test_deliver_request_is_idempotent_for_same_run_path_and_bytes(
     tmp_path: Path,
 ) -> None:
@@ -173,6 +213,35 @@ async def test_deliver_missing_file_returns_error(tmp_path: Path) -> None:
     out = await _tool(tmp_path, client).ainvoke({"path": "/nope.txt", "title": "X"})
     assert "无法读取" in out
     assert client.requests == []
+
+
+async def test_custom_api_deliver_denies_literal_secret_before_publish(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"binary\x00" + "private-原值-marker".encode())
+    client = FakeDeliveryClient()
+    backend = DockerShellBackend(
+        root=tmp_path,
+        container_id="unused",
+        timeout=5,
+        max_output_bytes=1024,
+        environment_provider=Environment(),
+        environment_loop=asyncio.get_running_loop(),
+    )
+    tool = make_deliver_tool(
+        backend, client, namespace=_NS, run_id=_RUN, identity=_IDENTITY
+    )
+    denied = await tool.ainvoke({"path": "/report.pdf", "title": "Report"})
+    assert "无法读取" in denied
+    assert "private-原值-marker" not in denied
+    assert client.requests == []
+    source.write_bytes(b"binary\x00clean")
+    result = DeliverResult.model_validate_json(
+        await tool.ainvoke({"path": "/report.pdf", "title": "Report"})
+    )
+    assert result.status == "delivered"
+    assert client.requests[0].content == b"binary\x00clean"
 
 
 async def test_storage_client_failure_is_readable(tmp_path: Path) -> None:

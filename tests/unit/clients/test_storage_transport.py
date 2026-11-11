@@ -23,6 +23,24 @@ class _Stub:
         self.headers = headers
         return pb.CreateUploadResponse(upload_id="upload-1")
 
+    async def get_final_artifact_download_reference(
+        self,
+        request: pb.GetFinalArtifactDownloadReferenceRequest,
+        *,
+        headers: dict[str, str],
+    ) -> pb.GetFinalArtifactDownloadReferenceResponse:
+        assert request.run_id == "run-1"
+        self.headers = headers
+        return pb.GetFinalArtifactDownloadReferenceResponse(
+            artifact_id=request.artifact_id, asset_id=request.asset_id
+        )
+
+    async def get_download_reference(
+        self, request: pb.GetDownloadReferenceRequest, *, headers: dict[str, str]
+    ) -> pb.GetDownloadReferenceResponse:
+        self.headers = headers
+        return pb.GetDownloadReferenceResponse(asset_id=request.asset_id)
+
     async def close(self) -> None:
         pass
 
@@ -48,6 +66,59 @@ async def test_generated_rpc_gets_only_trusted_worker_metadata(
         }
         with pytest.raises(StorageClientError, match="FORBIDDEN"):
             await transport.call("list_final_artifacts", object(), {})
+
+
+@pytest.mark.parametrize("kind", ["asset", "artifact"])
+async def test_generated_rpc_allows_only_exact_run_fenced_input_reads(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    async with StorageDeliveryTransport(
+        "http://127.0.0.1:4010", "http://127.0.0.1:9000", "secret"
+    ) as transport:
+        stub = _Stub()
+        monkeypatch.setattr(transport, "_client", stub)
+        if kind == "artifact":
+            method = "get_final_artifact_download_reference"
+            request = pb.GetFinalArtifactDownloadReferenceRequest(
+                artifact_id="artifact-1",
+                run_id="run-1",
+                consumer_run_id="consumer-run",
+                asset_id="asset-1",
+                content_sha256="a" * 64,
+            )
+            scope = "conversation"
+        else:
+            method = "get_download_reference"
+            request = pb.GetDownloadReferenceRequest(
+                consumer_run_id="consumer-run",
+                asset_id="asset-1",
+                content_sha256="a" * 64,
+            )
+            scope = "personal"
+        response = await transport.call(method, request, {"x-kokoro-scope-kind": scope})
+        assert isinstance(
+            response,
+            (
+                pb.GetDownloadReferenceResponse,
+                pb.GetFinalArtifactDownloadReferenceResponse,
+            ),
+        )
+        assert response.asset_id == "asset-1"
+        assert stub.headers == {
+            "x-kokoro-scope-kind": scope,
+            "x-kokoro-service": "kokoro-agent",
+            "x-kokoro-internal-secret": "secret",
+        }
+        request.consumer_run_id = ""
+        with pytest.raises(StorageClientError, match="RUN_REQUIRED"):
+            await transport.call(method, request, {})
+        request.consumer_run_id = "consumer-run"
+        request.content_sha256 = ""
+        with pytest.raises(StorageClientError, match="SELECTOR_REQUIRED"):
+            await transport.call(method, request, {})
+        with pytest.raises(StorageClientError, match="FORBIDDEN"):
+            await transport.call("get_final_artifact", object(), {})
 
 
 async def test_signed_put_never_carries_internal_service_secret() -> None:
@@ -147,6 +218,90 @@ async def test_signed_put_rejects_cross_origin_expired_and_redirect() -> None:
                     ),
                 ),
                 b"bytes",
+            )
+        assert len(seen) == 1
+
+
+async def test_signed_get_is_bounded_and_never_carries_internal_secret() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"final report")
+
+    async with StorageDeliveryTransport(
+        "http://127.0.0.1:4010",
+        "http://127.0.0.1:9000",
+        "secret",
+        put_transport=httpx.MockTransport(handler),
+    ) as transport:
+        content = await transport.get(
+            pb.TransferReference(
+                url="http://127.0.0.1:9000/final-1",
+                method="GET",
+                expires_at=Timestamp.from_datetime(
+                    datetime.now(timezone.utc) + timedelta(minutes=5)
+                ),
+            )
+        )
+        assert content == b"final report"
+        assert len(seen) == 1
+        assert seen[0].method == "GET"
+        assert "x-kokoro-internal-secret" not in seen[0].headers
+        with pytest.raises(StorageClientError, match="REFERENCE_INVALID"):
+            await transport.get(
+                pb.TransferReference(
+                    url="http://127.0.0.1:9000/final-1",
+                    method="GET",
+                    required_headers={"x-kokoro-internal-secret": "leak"},
+                    expires_at=Timestamp.from_datetime(
+                        datetime.now(timezone.utc) + timedelta(minutes=5)
+                    ),
+                )
+            )
+
+
+async def test_signed_get_rejects_cross_origin_expired_and_oversized() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"x" * 1_048_577)
+
+    async with StorageDeliveryTransport(
+        "http://127.0.0.1:4010",
+        "http://127.0.0.1:9000",
+        "secret",
+        put_transport=httpx.MockTransport(handler),
+    ) as transport:
+        for reference in (
+            pb.TransferReference(
+                url="http://127.0.0.1:1/final",
+                method="GET",
+                expires_at=Timestamp.from_datetime(
+                    datetime.now(timezone.utc) + timedelta(minutes=5)
+                ),
+            ),
+            pb.TransferReference(
+                url="http://127.0.0.1:9000/final",
+                method="GET",
+                expires_at=Timestamp.from_datetime(
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                ),
+            ),
+        ):
+            with pytest.raises(StorageClientError, match="REFERENCE_INVALID"):
+                await transport.get(reference)
+        assert seen == []
+        with pytest.raises(StorageClientError, match="TOO_LARGE"):
+            await transport.get(
+                pb.TransferReference(
+                    url="http://127.0.0.1:9000/final",
+                    method="GET",
+                    expires_at=Timestamp.from_datetime(
+                        datetime.now(timezone.utc) + timedelta(minutes=5)
+                    ),
+                )
             )
         assert len(seen) == 1
 

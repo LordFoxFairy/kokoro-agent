@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 import hashlib
 import os
@@ -22,6 +22,7 @@ from kokoro_agent.clients.mcp_package_transport import McpPackageTransport
 from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as r
 from kokoro_agent.mcp.egress import build_mcp_client_factory
 from kokoro_agent.mcp.package import McpPackage, validate_mcp_package
+from kokoro_agent.mcp.sse_transport import build_sse_client_factory, sse_sdk_scope
 
 
 class McpSessionError(RuntimeError):
@@ -33,6 +34,9 @@ def clear_mcp_material(material: r.AcquireMcpRuntimeCredentialResponse) -> None:
     transport = material.transport
     if transport is not None:
         if transport.field == "streamable_http":
+            for value in transport.value.headers:
+                value.value = b""
+        elif transport.field == "sse":
             for value in transport.value.headers:
                 value.value = b""
         elif transport.field == "stdio":
@@ -63,13 +67,11 @@ def staged_package(package: McpPackage) -> Generator[Path, None, None]:
         yield root
 
 
-def _http(
-    resolution: r.McpRuntimeHttpConnection,
-    material: r.McpRuntimeHttpCredential,
-    mode: str,
-) -> Connection:
+def _headers(
+    values: Sequence[r.McpRuntimeSecretValue], slots: Sequence[str]
+) -> dict[str, str]:
     headers: dict[str, str] = {}
-    for value in material.headers:
+    for value in values:
         lower = value.name.lower()
         if (
             lower in headers
@@ -89,8 +91,17 @@ def _http(
         if not decoded or any(ord(c) < 32 or ord(c) == 127 for c in decoded):
             raise ValueError("invalid header")
         headers[lower] = decoded
-    if set(headers) != {name.lower() for name in resolution.header_slots}:
+    if set(headers) != {name.lower() for name in slots}:
         raise ValueError("slot mismatch")
+    return headers
+
+
+def _http(
+    resolution: r.McpRuntimeHttpConnection,
+    material: r.McpRuntimeHttpCredential,
+    mode: str,
+) -> Connection:
+    headers = _headers(material.headers, resolution.header_slots)
     connection: Connection = {
         "transport": "streamable_http",
         "url": resolution.canonical_endpoint,
@@ -158,6 +169,25 @@ async def managed_mcp_session(
                 )
                 async with _standard_session(connection, callbacks) as session:
                     yield session
+            elif resolution.transport.field == "sse":
+                if material.transport.field != "sse":
+                    raise ValueError("transport mismatch")
+                sse_factory = build_sse_client_factory(
+                    resolution.transport.value.canonical_endpoint, mode=egress_mode
+                )
+                connection = {
+                    "transport": "sse",
+                    "url": resolution.transport.value.canonical_endpoint,
+                    "headers": _headers(
+                        material.transport.value.headers,
+                        resolution.transport.value.header_slots,
+                    ),
+                    "httpx_client_factory": sse_factory,
+                }
+                with sse_sdk_scope():
+                    async with _standard_session(connection, callbacks) as session:
+                        yield session
+                    sse_factory.raise_if_failed()
             else:
                 if material.transport.field != "stdio" or packages is None:
                     raise ValueError("package transport unavailable")
@@ -206,7 +236,7 @@ async def managed_mcp_session(
     finally:
         clear_mcp_material(material)
         if connection is not None:
-            if connection["transport"] == "streamable_http":
+            if connection["transport"] in {"streamable_http", "sse"}:
                 headers = connection.get("headers")
                 if headers is not None:
                     headers.clear()

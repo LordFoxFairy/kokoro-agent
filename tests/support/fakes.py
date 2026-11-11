@@ -65,6 +65,7 @@ from kokoro_agent.protocol import (
 )
 from collections.abc import (
     AsyncIterator,
+    AsyncIterable,
     Awaitable,
     Callable,
     Mapping,
@@ -95,9 +96,13 @@ from kokoro_agent.protocol.control import control_request_digest
 from kokoro_agent.protocol import REQUESTS_STREAM, RUN_EVENTS_MAXLEN
 from kokoro_agent.domain.run.models import RunUsageSegment
 from kokoro_agent.domain.run.repository import RunRepository
+from kokoro_agent.domain.run.workspace_output import (
+    NativeWorkspaceWrite,
+    WorkspaceExecuteIntent,
+)
 from kokoro_agent.execution.events import RunEmitter, outbox_wire_event
 from kokoro_agent.agent_factory import AgentHandle
-from kokoro_agent.execution.protocols import AgentRunnable
+from kokoro_agent.execution.protocols import AgentRunnable, ModelStream, PeerRunStream
 from kokoro_agent.infrastructure.checkpoint_interactions import (
     PauseReadTarget,
     ResumeReadTarget,
@@ -1555,20 +1560,27 @@ class FakeRunRepository:
         if all(mid != message_id for mid, _ in box):
             box.append((message_id, content))
 
+    async def store_steer(self, command: RunSteer) -> None:
+        record = self.control_commands.get((command.run_id, command.command_id))
+        if (
+            record is not None
+            and record["status"] == "persisted"
+            and command.run_id not in self.terminals
+        ):
+            await self.add_steer(command.run_id, command.message_id, command.content)
+
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
         return list(self.steers.get(run_id, []))
 
-    async def ack_steers(
-        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    async def confirm_steers(
+        self, run_id: str, lease: LeaseFence, messages: list[tuple[str, str]]
     ) -> bool:
         if not await self.is_lease_current(run_id, lease):
             return False
         box = self.steers.get(run_id)
         if box is None:
             return True
-        self.steers[run_id] = [
-            (mid, c) for mid, c in box if mid not in set(message_ids)
-        ]
+        self.steers[run_id] = [message for message in box if message not in messages]
         return True
 
     async def put_tool_result(
@@ -1590,8 +1602,20 @@ class FakeRunRepository:
         return self.tool_results.get((run_id, tool_id))
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool:
+        if intent and (
+            name != "execute"
+            or not tool_call_id
+            or WorkspaceExecuteIntent.from_journal(intent) is None
+        ):
+            return False
         if not await self.is_lease_current(run_id, lease):
             return False
         key = (run_id, tool_call_id)
@@ -1600,7 +1624,7 @@ class FakeRunRepository:
         self.tool_journal[key] = {
             "name": name,
             "status": "started",
-            "result": None,
+            "result": intent or None,
             "is_error": None,
         }
         return True
@@ -1623,12 +1647,22 @@ class FakeRunRepository:
         tool_call_id: str,
         result: str,
         is_error: bool,
+        *,
+        workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool:
         if not await self.is_lease_current(run_id, lease):
             return False
         entry = self.tool_journal.get((run_id, tool_call_id))
         if entry is None or entry["status"] != "started":
             return False
+        if workspace_write is not None and workspace_write.script:
+            intent = WorkspaceExecuteIntent.from_journal(entry["result"])
+            if (
+                entry["name"] != "execute"
+                or intent is None
+                or intent.path != workspace_write.path
+            ):
+                return False
         entry["status"] = "failed" if is_error else "succeeded"
         entry["result"] = result
         entry["is_error"] = is_error
@@ -1699,7 +1733,10 @@ class FakeRunRepository:
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent:
+        if type(defer_ms) is not int or not 0 <= defer_ms <= 600_000:
+            raise ValueError("sandbox cleanup delay must be between 0 and 600000ms")
         cleanup_id = f"cleanup:{run_id}:{lease_generation}:{backend_kind}:{sandbox_id}"
         row = self.sandbox_cleanups.setdefault(
             cleanup_id,
@@ -1712,7 +1749,7 @@ class FakeRunRepository:
                 "teardown_ref": teardown_ref,
                 "status": "pending",
                 "attempt_count": 0,
-                "next_attempt_at": self.clock_ms,
+                "next_attempt_at": self.clock_ms + defer_ms,
             },
         )
         if row["teardown_ref"] != teardown_ref:
@@ -1817,6 +1854,23 @@ class FakeToolCall:
         return aiter_items(tuple(self.deltas))
 
 
+class FakeTextProjection:
+    """Test double for the SDK's iterable and awaitable text view."""
+
+    def __init__(self, deltas: AsyncIterable[str], final: str) -> None:
+        self.deltas = deltas
+        self.final = final
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self.deltas.__aiter__()
+
+    def __await__(self) -> Generator[object, None, str]:
+        async def complete() -> str:
+            return self.final
+
+        return complete().__await__()
+
+
 @dataclass
 class FakeModel:
     text_deltas: Sequence[str] = ()
@@ -1827,8 +1881,13 @@ class FakeModel:
     node: str | None = "model"
 
     @property
-    def text(self) -> AsyncIterator[str]:
-        return aiter_items(self.text_deltas)
+    def text(self) -> FakeTextProjection:
+        final = (
+            self.output_message.text
+            if self.output_message is not None
+            else "".join(self.text_deltas)
+        )
+        return FakeTextProjection(aiter_items(self.text_deltas), final)
 
     @property
     def reasoning(self) -> AsyncIterator[str]:
@@ -1841,11 +1900,11 @@ class FakeSubagentRun:
     trigger_call_id: str | None = "sub-call-1"
     task_input: str | None = "investigate"
     status: str = "success"
-    models: Sequence[FakeModel] = ()
+    models: Sequence[ModelStream] = ()
     tool_views: Sequence[FakeToolCall] = ()
 
     @property
-    def messages(self) -> AsyncIterator[FakeModel]:
+    def messages(self) -> AsyncIterator[ModelStream]:
         return aiter_items(self.models)
 
     @property
@@ -1863,16 +1922,23 @@ class FakeSubagentRun:
 
 @dataclass
 class FakeRunStream:
-    models: Sequence[FakeModel] = ()
+    extensions: dict[str, object] = field(default_factory=dict[str, object])
+
+    @property
+    def subgraphs(self) -> AsyncIterator[PeerRunStream]:
+        return aiter_items(())
+
+    models: Sequence[ModelStream] = ()
     tool_views: Sequence[FakeToolCall] = ()
     subagent_runs: Sequence[FakeSubagentRun] = ()
     custom_items: Sequence[object] = ()
     is_interrupted: bool = False
     raise_on_messages: bool = False
     context_exited: bool = False
+    output_state: dict[str, object] | None = None
 
     @property
-    def messages(self) -> AsyncIterator[FakeModel]:
+    def messages(self) -> AsyncIterator[ModelStream]:
         if self.raise_on_messages:
             raise RuntimeError("boom")
         return aiter_items(self.models)
@@ -1891,6 +1957,9 @@ class FakeRunStream:
 
     async def interrupted(self) -> bool:
         return self.is_interrupted
+
+    async def output(self) -> dict[str, object] | None:
+        return self.output_state
 
     async def __aenter__(self) -> "FakeRunStream":
         self.context_exited = False
@@ -2032,6 +2101,7 @@ def terminal_emitter(
         if isinstance(payload, RunCompletedPayload) and payload.status == "completed":
             payload = RunCompletedPayload(
                 status="completed",
+                final_segment_id=payload.final_segment_id,
                 token_usage=(
                     TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
                     if any(totals)
@@ -2396,6 +2466,9 @@ def _mutable_registry(value: object) -> TypeGuard[dict[object, object]]:
 def isolated_native_registry() -> Generator[None, None, None]:
     """Raw SDK unit probes restore exactly the registry state they inherited."""
     from deepagents.profiles import _builtin_profiles as bootstrap
+    from kokoro_agent.agents import native_profile
+
+    sealed_before = getattr(native_profile, "_sealed")
     from deepagents.profiles.harness import harness_profiles
     from deepagents.profiles.provider import provider_profiles
 
@@ -2414,3 +2487,5 @@ def isolated_native_registry() -> Generator[None, None, None]:
         provider.update(provider_before)
         for name, value in before.items():
             setattr(bootstrap, name, value)
+        # Restore the owner approval snapshot along with the SDK registry it authenticates.
+        setattr(native_profile, "_sealed", sealed_before)

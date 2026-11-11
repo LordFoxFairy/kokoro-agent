@@ -9,6 +9,7 @@ from langchain.agents.middleware import AgentMiddleware
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.policy import Permissions
 from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS
 from kokoro_agent.tools.middleware import (
     SteeringMiddleware,
     TerminalGuardMiddleware,
@@ -30,15 +31,20 @@ class GuardChains:
     steering: AgentMiddleware
     review: AgentMiddleware | None
     # R3 tool effect journal：恒挂在 tool-call 链最内层（最靠近副作用），主链与子代理链同下发。
-    journal: AgentMiddleware
+    journal: ToolEffectJournalMiddleware
 
-    def main(self, policy: ToolPolicyMiddleware) -> tuple[AgentMiddleware, ...]:
+    def main(
+        self,
+        policy: ToolPolicyMiddleware,
+        *,
+        workspace_journal: ToolEffectJournalMiddleware | None = None,
+    ) -> tuple[AgentMiddleware, ...]:
         # 主链顺序：守卫 → steering → policy → review → journal。policy 在 review 外层：
         # 先拦未授权调用，才轮到已授权调用的结果送审；journal 最内层守门真正的工具执行。
         chain: list[AgentMiddleware] = [*self.guards, self.steering, policy]
         if self.review is not None:
             chain.append(self.review)
-        chain.append(self.journal)
+        chain.append(workspace_journal or self.journal)
         return tuple(chain)
 
 
@@ -57,6 +63,8 @@ def build_guard_chains(
     request: RunRequest,
     lease: LeaseFence,
     permissions: Permissions,
+    *,
+    checkpoint_file_writes: bool = False,
 ) -> GuardChains:
     """守卫两件套：终态闸恒挂 + 预算闸按政策；主 agent 与每个子代理同套下发
     （子代理 middleware 链独立，不下发即 task 委派旁路）。"""
@@ -82,7 +90,16 @@ def build_guard_chains(
         else None
     )
     journal = ToolEffectJournalMiddleware(
-        run_repository=run_repository, run_id=request.run_id, lease=lease
+        run_repository=run_repository,
+        run_id=request.run_id,
+        lease=lease,
+        # Only the trusted StateBackend assembly owns these writes in the native
+        # files channel. A durable text ACK cannot replace an uncommitted channel
+        # update after a crash. External backends and all other effects retain
+        # their journal; permission, lease and review guards remain in place.
+        exempt=JOURNAL_EXEMPT_TOOLS | {"write_file", "edit_file"}
+        if checkpoint_file_writes
+        else JOURNAL_EXEMPT_TOOLS,
     )
     # 子代理链：守卫 →（审核）→ journal（最内层）。子代理内工具同经 backend 执行，同守门。
     subagent_guards: tuple[AgentMiddleware, ...] = tuple(guards)

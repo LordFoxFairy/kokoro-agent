@@ -44,7 +44,7 @@ def enumerate_profile_plugins() -> tuple[metadata.EntryPoint, ...]:
 
 
 def _validate_plugins() -> None:
-    if metadata.version("deepagents") != "0.6.6":
+    if metadata.version("deepagents") != "0.6.7":
         raise ValueError("unapproved native profile version")
     entries = enumerate_profile_plugins()
     identities = tuple((ep.group, ep.name, ep.value) for ep in entries)

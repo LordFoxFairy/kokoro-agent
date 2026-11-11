@@ -6,7 +6,10 @@ from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.human_in_the_loop import DecisionType
 
 from kokoro_agent.hitl import APPROVAL_DECISIONS, QUESTION_DECISIONS
-from kokoro_agent.tools.ask_user_question import ASK_USER_TOOL_NAME
+from kokoro_agent.tools.ask_user_question import (
+    ASK_USER_TOOL_NAME,
+    ask_user_pause_description,
+)
 from kokoro_agent.tools.registry import SUBAGENT_TOOL_NAME
 
 # langchain HITL 面（DecisionType）是 wire 词汇 AllowedDecision 的子集：不含 submit（那是 kind=input
@@ -30,6 +33,11 @@ def build_interrupt_on(
         tool: InterruptOnConfig(allowed_decisions=_ASK_USER_DECISIONS)
         for tool in pause_tools
     }
+    if ASK_USER_TOOL_NAME in pause_tools:
+        interrupt_on[ASK_USER_TOOL_NAME] = InterruptOnConfig(
+            allowed_decisions=_ASK_USER_DECISIONS,
+            description=ask_user_pause_description,
+        )
     interrupt_on.update(
         {
             tool: InterruptOnConfig(allowed_decisions=_APPROVAL_DECISIONS)

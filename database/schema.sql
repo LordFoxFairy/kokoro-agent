@@ -313,6 +313,10 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
   latest_revision         BIGINT NOT NULL DEFAULT 0,
   latest_event_id         UUID,
   latest_evidence_digest  TEXT,
+  financial_admission_ref UUID,
+  provider_response_id    TEXT,
+  summary_result_bytes    BYTEA,
+  summary_result_digest   TEXT,
   created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   CONSTRAINT uq_model_attempt_call_ordinal UNIQUE (run_id, call_id, attempt_ordinal),
@@ -347,6 +351,22 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
     OR (status = 'unknown' AND authorization_state = 'granted' AND dispatch_started_at IS NOT NULL AND latest_revision > 0)
     OR (status = 'not_dispatched' AND authorization_state IN ('not_requested','requested_unknown','granted') AND dispatch_started_at IS NULL AND latest_revision > 0)
   ),
+  CONSTRAINT ck_model_attempt_financial CHECK (
+    financial_admission_ref IS NULL OR authorization_state IN ('requested_unknown','granted')
+  ),
+  CONSTRAINT ck_model_attempt_summary_result CHECK (
+    (summary_result_bytes IS NULL AND summary_result_digest IS NULL) OR
+    (summary_result_bytes IS NOT NULL AND summary_result_digest IS NOT NULL AND
+     octet_length(summary_result_bytes) BETWEEN 1 AND 4194304 AND
+     summary_result_digest ~ '^[0-9a-f]{64}$' AND
+     dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL AND latest_revision > 0)
+  ),
+  CONSTRAINT ck_model_attempt_response CHECK (
+    provider_response_id IS NULL OR (
+      provider_response_id ~ '^[!-~]+$' AND octet_length(provider_response_id) BETWEEN 1 AND 256
+      AND dispatch_started_at IS NOT NULL AND sealed_at IS NOT NULL
+    )
+  ),
   CONSTRAINT ck_model_attempt_times CHECK (
     (dispatch_started_at IS NULL OR dispatch_started_at >= prepared_at)
     AND (sealed_at IS NULL OR sealed_at >= prepared_at)
@@ -356,6 +376,10 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_call_attempt (
 CREATE INDEX IF NOT EXISTS ix_model_attempt_unsealed
   ON kokoro_agent_model_call_attempt (run_id, status, attempt_id)
   WHERE status IN ('prepared','authorization_pending','authorized','dispatch_started');
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_model_financial_admission
+  ON kokoro_agent_model_call_attempt (tenant_id, financial_admission_ref)
+  WHERE financial_admission_ref IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
   event_id                UUID PRIMARY KEY,
@@ -375,6 +399,15 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
   sealed                  BOOLEAN NOT NULL,
   observed_at             TIMESTAMPTZ(3) NOT NULL,
   created_at              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  financial_ack_bytes     BYTEA,
+  financial_ack_digest    TEXT,
+  financial_acked_at      TIMESTAMPTZ(3),
+  CONSTRAINT ck_model_evidence_financial_ack CHECK (
+    (financial_ack_bytes IS NULL AND financial_ack_digest IS NULL AND financial_acked_at IS NULL)
+    OR (financial_ack_bytes IS NOT NULL AND financial_ack_digest IS NOT NULL AND financial_acked_at IS NOT NULL
+        AND octet_length(financial_ack_bytes) BETWEEN 1 AND 16384
+        AND financial_ack_digest ~ '^[0-9a-f]{64}$')
+  ),
   CONSTRAINT uq_model_evidence_attempt_revision UNIQUE (attempt_id, revision),
   CONSTRAINT uq_model_evidence_attempt_digest UNIQUE (attempt_id, evidence_digest),
   CONSTRAINT ck_model_evidence_identity CHECK (
@@ -397,7 +430,18 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
     AND classification_state IN ('complete','partial','unknown')
     AND (usage_state <> 'unresolved' OR (totals_state = 'unknown' AND classification_state = 'unknown'))
     AND (usage_state <> 'normalized' OR (
-      (totals_state IN ('known_zero','known_nonzero') AND classification_state = 'partial')
+      (totals_state IN ('known_zero','known_nonzero') AND (
+        (classification_state = 'partial' AND COALESCE(
+          convert_from(evidence_bytes, 'UTF8')::jsonb #>> '{usage,value,profile_assessment,state}' = 'supported',
+          FALSE
+        ))
+        OR (classification_state = 'unknown' AND COALESCE(
+          convert_from(evidence_bytes, 'UTF8')::jsonb #>> '{usage,value,profile_assessment,state}' = 'unsupported'
+          AND convert_from(evidence_bytes, 'UTF8')::jsonb #>> '{usage,value,profile_assessment,reason}'
+            IN ('unsupported_usage_category','unsupported_service_tier','unverified_source_semantics'),
+          FALSE
+        ))
+      ))
       OR (totals_state = 'unknown' AND classification_state = 'unknown')
     ))
     AND (execution_outcome <> 'not_dispatched' OR usage_state = 'unresolved')
@@ -406,6 +450,10 @@ CREATE TABLE IF NOT EXISTS kokoro_agent_model_usage_evidence (
 );
 CREATE INDEX IF NOT EXISTS ix_model_evidence_run
   ON kokoro_agent_model_usage_evidence (run_id, attempt_id, revision);
+
+CREATE INDEX IF NOT EXISTS ix_model_financial_pending
+  ON kokoro_agent_model_usage_evidence (tenant_id, attempt_id, revision)
+  WHERE financial_ack_bytes IS NULL;
 
 CREATE TABLE IF NOT EXISTS kokoro_agent_sandbox_cleanup_intent (
   cleanup_id       TEXT PRIMARY KEY,
@@ -612,3 +660,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_checkpoint_observation_probe
   ON kokoro_agent_run_checkpoint_observation(run_id,command_id,attempt_id,probe_read_id) WHERE kind='probe';
 CREATE INDEX IF NOT EXISTS idx_checkpoint_observation_target
   ON kokoro_agent_run_checkpoint_observation(run_id,command_id,attempt_id,generation,observation_digest);
+
+
+CREATE TABLE IF NOT EXISTS kokoro_agent_workspace_output_version (
+  run_id TEXT NOT NULL,
+  version_id TEXT NOT NULL,
+  checkpoint_id TEXT,
+  parent_checkpoint_id TEXT,
+  source_generation BIGINT NOT NULL,
+  task_id TEXT,
+  tool_call_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  created_at TIMESTAMPTZ(3) NOT NULL DEFAULT clock_timestamp(),
+  upload_id TEXT,
+  source_version_id TEXT,
+  asset_id TEXT,
+  pending_bytes BYTEA,
+  PRIMARY KEY (run_id, version_id),
+  CONSTRAINT ck_workspace_output_storage CHECK (
+    ((upload_id IS NULL AND source_version_id IS NULL) OR
+     (upload_id IS NOT NULL AND source_version_id IS NOT NULL
+       AND length(upload_id) BETWEEN 1 AND 255
+       AND length(source_version_id) BETWEEN 1 AND 512))
+    AND (asset_id IS NULL OR (upload_id IS NOT NULL AND length(asset_id) BETWEEN 1 AND 255))
+  ),
+  CONSTRAINT ck_workspace_output_version CHECK (
+    version_id ~ '^wsv_[0-9a-f]{64}$' AND source_generation > 0
+    AND length(run_id) > 0 AND length(tool_call_id) > 0
+    AND ((checkpoint_id IS NOT NULL AND parent_checkpoint_id IS NOT NULL AND task_id IS NOT NULL
+          AND length(checkpoint_id) > 0 AND length(parent_checkpoint_id) > 0 AND length(task_id) > 0
+          AND checkpoint_id <> parent_checkpoint_id AND pending_bytes IS NULL)
+         OR (checkpoint_id IS NULL AND parent_checkpoint_id IS NULL AND task_id IS NULL
+             AND ((asset_id IS NOT NULL AND pending_bytes IS NULL)
+                  OR (asset_id IS NULL AND pending_bytes IS NOT NULL AND octet_length(pending_bytes) = size_bytes))))
+    AND octet_length(path) BETWEEN 10 AND 4096 AND left(path, 9) = '/outputs/'
+    AND size_bytes BETWEEN 0 AND 8388608 AND content_sha256 ~ '^[0-9a-f]{64}$'
+  )
+);

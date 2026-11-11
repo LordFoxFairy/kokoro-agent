@@ -8,6 +8,7 @@ coupling itself to the complete execution persistence surface.
 
 from __future__ import annotations
 
+from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
 from kokoro_agent.domain.run.models import (
     StaticRecipeBinding,
     RunTerminalOutcome,
@@ -17,7 +18,7 @@ from kokoro_agent.domain.run.models import (
 
 from typing import Literal, Protocol
 
-from kokoro_agent.protocol import RunRequest
+from kokoro_agent.protocol import RunRequest, RunSteer
 from kokoro_agent.domain.run.models import (
     ControlAdmission,
     DispatchAdmission,
@@ -193,6 +194,7 @@ class RunSandboxCleanupPort(Protocol):
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent: ...
 
     async def claim_sandbox_cleanups(
@@ -212,12 +214,12 @@ class RunSandboxCleanupPort(Protocol):
 
 
 class RunEffectPort(Protocol):
-    async def add_steer(self, run_id: str, message_id: str, content: str) -> None: ...
+    async def store_steer(self, command: RunSteer) -> None: ...
 
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]: ...
 
-    async def ack_steers(
-        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    async def confirm_steers(
+        self, run_id: str, lease: LeaseFence, messages: list[tuple[str, str]]
     ) -> bool: ...
 
     async def put_tool_result(
@@ -234,7 +236,13 @@ class RunEffectPort(Protocol):
     ) -> tuple[str, bool] | None: ...
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool: ...
 
     async def journal_delivery_intent(
@@ -248,6 +256,8 @@ class RunEffectPort(Protocol):
         tool_call_id: str,
         result: str,
         is_error: bool,
+        *,
+        workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool: ...
 
     async def clear_tool_journal(

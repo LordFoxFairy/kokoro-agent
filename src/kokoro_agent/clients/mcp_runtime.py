@@ -18,7 +18,13 @@ from mcp.types import CallToolResult, Tool, PaginatedRequestParams
 from protobuf import Oneof
 from pydantic import JsonValue, TypeAdapter
 
-from kokoro_agent.clients.mcp import McpClientError, McpConnectionRef, McpTool
+from kokoro_agent.clients.mcp import (
+    McpClientError,
+    McpConnectionRef,
+    McpTool,
+    McpDisplayDeclaration,
+)
+from kokoro_agent.domain.chat.projection import ToolDisplayDetail
 from kokoro_agent.clients.mcp_package_transport import McpPackageTransport
 from kokoro_agent.clients.platform_transport import PlatformRequest
 from kokoro_agent.execution.platform_request_binding_values import (
@@ -205,10 +211,29 @@ class PlatformMcpClient:
             cursors.add(cursor)
         raise McpClientError("MCP_DECLARATION_UNAVAILABLE")
 
-    async def check(self, references: Sequence[McpConnectionRef]) -> None:
+    async def check(
+        self, references: Sequence[McpConnectionRef]
+    ) -> tuple[McpDisplayDeclaration, ...]:
+        declarations: list[McpDisplayDeclaration] = []
         async with asyncio.timeout(30):
             for reference in references:
-                await self._binding(reference)
+                binding = await self._binding(reference)
+                for cap in binding.capabilities:
+                    # The actual approved public selector is the tool name;
+                    # display_name can be an explanatory sentence, not an identity.
+                    try:
+                        detail = ToolDisplayDetail(kind="mcp_tool", name=cap.selector)
+                    except ValueError:
+                        continue  # Unsafe optional labels never grant execution.
+
+                    declarations.append(
+                        McpDisplayDeclaration(
+                            connection_id=reference.connection_id,
+                            selector=cap.selector,
+                            display_name=detail.name,
+                        )
+                    )
+        return tuple(declarations)
 
     async def _material(
         self,
@@ -242,14 +267,12 @@ class PlatformMcpClient:
             or resolution.tool_selector != selector
             or resolution.declaration_digest != binding.server.declaration_digest
             or resolution.transport is None
-            or binding.server.transport
-            not in {p.McpTransport.STDIO, p.McpTransport.STREAMABLE_HTTP}
             or resolution.transport.field
-            != (
-                "stdio"
-                if binding.server.transport == p.McpTransport.STDIO
-                else "streamable_http"
-            )
+            != {
+                p.McpTransport.STDIO: "stdio",
+                p.McpTransport.STREAMABLE_HTTP: "streamable_http",
+                p.McpTransport.SSE_COMPAT: "sse",
+            }.get(binding.server.transport)
             or not 0 < resolution.expires_at_unix_seconds - time.time() <= 30
         ):
             raise McpClientError("MCP_RESOLUTION_INVALID")

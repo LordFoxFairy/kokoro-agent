@@ -7,7 +7,7 @@ from support.fakes import FakeRunRepository
 from kokoro_agent.clients.system import SystemModelClient
 from kokoro_agent.config import AppConfig
 from kokoro_agent.worker.dependencies import WorkerClients
-from kokoro_agent.worker.main import worker_model_resolver, worker_storage_delivery
+from kokoro_agent.worker.main import worker_model_resolver, worker_storage_clients
 
 
 def test_storage_worker_configuration_is_all_or_none() -> None:
@@ -42,12 +42,16 @@ async def test_standard_worker_constructs_storage_adapter_when_configured() -> N
             "KOKORO_STORAGE_SERVICE_SECRET": "test-secret",
         }
     )
-    async with worker_storage_delivery(config, None, FakeRunRepository()) as client:
-        assert client is not None
-    async with worker_storage_delivery(
-        AppConfig.from_env({}), None, FakeRunRepository()
-    ) as client:
-        assert client is None
+    async with worker_storage_clients(
+        config, WorkerClients(), FakeRunRepository()
+    ) as clients:
+        assert clients.delivery is not None
+        assert clients.input_reader is clients.delivery
+    async with worker_storage_clients(
+        AppConfig.from_env({}), WorkerClients(), FakeRunRepository()
+    ) as clients:
+        assert clients.delivery is None
+        assert clients.input_reader is None
 
 
 async def test_worker_requires_explicit_system_configuration() -> None:
@@ -114,9 +118,11 @@ async def test_real_worker_composition_sends_same_policy_to_factory_and_supervis
     for name in (
         "worker_platform_runtime",
         "worker_model_resolver",
+        "worker_model_billing",
+        "active_model_financial_recovery",
         "make_checkpointer",
         "make_run_repository",
-        "worker_storage_delivery",
+        "worker_storage_clients",
         "make_memory_store",
         "make_chat_repository",
     ):
@@ -125,6 +131,9 @@ async def test_real_worker_composition_sends_same_policy_to_factory_and_supervis
     def stream(settings: object) -> Mock:
         return Mock()
 
+    monkeypatch.setattr(
+        module, "worker_execution_proofs", Mock(return_value=(Mock(), Mock()))
+    )
     monkeypatch.setattr(module, "make_stream", stream)
 
     def factory(dependencies: WorkerDependencies) -> Mock:
@@ -162,12 +171,12 @@ async def test_real_worker_composition_sends_same_policy_to_factory_and_supervis
         supervisor_constructor.call_args.kwargs["recursion_limit"]
         == policy.recursion_limit
     )
-    # The unchanged executor passes that exact limit into the native config.
+    # Native config preserves the policy independently of checkpoint attribution.
     from kokoro_agent.execution import run_agent
 
     assert (
-        getattr(run_agent, "_config")("thread", None, policy.recursion_limit)[
-            "recursion_limit"
-        ]
+        getattr(run_agent, "_config")(
+            "thread", None, policy.recursion_limit, checkpoint_metadata=None
+        )["recursion_limit"]
         == 37
     )

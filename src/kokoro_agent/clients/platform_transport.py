@@ -13,10 +13,16 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from pyqwest import Client, HTTPTransport, Request, Response, Transport
 
-from kokoro_agent.clients.platform_tokens import validate_owner_url
+from urllib.parse import urlsplit
 from kokoro_agent.execution.platform_request_binding import project_request_binding
 from kokoro_agent.generated.kokoro.platform.v1 import platform_runtime_pb as pb
 from kokoro_agent.generated.kokoro.platform.v1 import mcp_runtime_pb as runtime
+from kokoro_agent.generated.kokoro.platform.v1 import (
+    custom_api_runtime_pb as custom_api,
+)
+from kokoro_agent.generated.kokoro.platform.v1.custom_api_runtime_connect import (
+    CustomApiRuntimeServiceClient,
+)
 from kokoro_agent.generated.kokoro.platform.v1.mcp_runtime_connect import (
     McpRuntimeServiceClient,
 )
@@ -38,6 +44,8 @@ PlatformRequest: TypeAlias = (
     | pb.AuthorizeMcpToolRequest
     | runtime.ResolveMcpRuntimeConnectionRequest
     | runtime.AcquireMcpRuntimeCredentialRequest
+    | custom_api.DescribeCustomApiEnvironmentRequest
+    | custom_api.AcquireCustomApiEnvironmentRequest
 )
 PlatformResponse: TypeAlias = (
     pb.DiscoverVisibleSkillsResponse
@@ -50,6 +58,8 @@ PlatformResponse: TypeAlias = (
     | pb.AuthorizeMcpToolResponse
     | runtime.ResolveMcpRuntimeConnectionResponse
     | runtime.AcquireMcpRuntimeCredentialResponse
+    | custom_api.DescribeCustomApiEnvironmentResponse
+    | custom_api.AcquireCustomApiEnvironmentResponse
 )
 _ALLOWED = (
     pb.DiscoverVisibleSkillsRequest,
@@ -62,11 +72,34 @@ _ALLOWED = (
     pb.AuthorizeMcpToolRequest,
     runtime.ResolveMcpRuntimeConnectionRequest,
     runtime.AcquireMcpRuntimeCredentialRequest,
+    custom_api.DescribeCustomApiEnvironmentRequest,
+    custom_api.AcquireCustomApiEnvironmentRequest,
 )
 
 
-class TenantTokenProvider(Protocol):
-    async def token(self, tenant_id: str) -> str: ...
+def validate_owner_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError("owner base URL must be an absolute origin")
+    if parsed.scheme == "http" and parsed.hostname not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise ValueError("owner base URL requires TLS outside loopback")
+    return value.rstrip("/")
+
+
+class TenantCredentialProvider(Protocol):
+    async def credential(self, tenant_id: str) -> str: ...
 
 
 class CallProofSupplier(Protocol):
@@ -84,9 +117,10 @@ class RunPlatformClient:
     """Immutable tenant and supplier; no shared mutable bearer or proof fields."""
 
     tenant_id: str = field(repr=False)
-    tokens: TenantTokenProvider = field(repr=False)
+    credentials: TenantCredentialProvider = field(repr=False)
     proofs: CallProofSupplier = field(repr=False)
     transport: PlatformTransport = field(repr=False)
+    frozen_custom_api_profiles: tuple[tuple[str, int], ...] = ()
 
     async def send(
         self, request: PlatformRequest, *, timeout_s: float = 10
@@ -96,22 +130,53 @@ class RunPlatformClient:
         snapshot = deepcopy(request)
         # Validate before I/O; project again immediately before signing, never reuse proof.
         project_request_binding(tenant_ref=self.tenant_id, request=snapshot)
+        self._check_custom_api_selection(snapshot)
         deadline = monotonic() + timeout_s
         try:
             async with asyncio.timeout(timeout_s):
-                token = await self.tokens.token(self.tenant_id)
                 binding = project_request_binding(
                     tenant_ref=self.tenant_id, request=snapshot
                 )
                 snapshot.execution_proof = await self.proofs.issue(
                     binding.operation, binding.sha256
                 )
+                credential = await self.credentials.credential(self.tenant_id)
                 remaining_ms = int((deadline - monotonic()) * 1000)
                 if remaining_ms <= 0:
                     raise TimeoutError
-                return await self.transport.send(snapshot, token, remaining_ms)
+                return await self.transport.send(snapshot, credential, remaining_ms)
         except TimeoutError:
             raise PlatformCallError("PLATFORM_DEADLINE_EXCEEDED") from None
+
+    def _check_custom_api_selection(self, request: PlatformRequest) -> None:
+        if not isinstance(
+            request,
+            (
+                custom_api.DescribeCustomApiEnvironmentRequest,
+                custom_api.AcquireCustomApiEnvironmentRequest,
+            ),
+        ):
+            return
+        frozen = self.frozen_custom_api_profiles
+        # The projected request already passed the owner ID/version/uniqueness
+        # domain. Exact equality also validates these values in the frozen tuple.
+        if (
+            type(frozen) is not tuple
+            or not 1 <= len(frozen) <= 32
+            or any(
+                type(ref) is not tuple
+                or len(ref) != 2
+                or type(ref[0]) is not str
+                or type(ref[1]) is not int
+                for ref in frozen
+            )
+            or len({ref[0] for ref in frozen}) != len(frozen)
+            or set(frozen)
+            != {
+                (ref.profile_id, ref.expected_state_version) for ref in request.profiles
+            }
+        ):
+            raise PlatformCallError("PLATFORM_CUSTOM_API_SELECTION_MISMATCH")
 
 
 class _ClientOptions(TypedDict):
@@ -174,6 +239,7 @@ class PlatformTransport:
         self._connections = McpConnectionServiceClient(self._url, **options)
         self._authorization = McpAuthorizationServiceClient(self._url, **options)
         self._runtime = McpRuntimeServiceClient(self._url, **options)
+        self._custom_api = CustomApiRuntimeServiceClient(self._url, **options)
         self._closed = False
 
     async def __aenter__(self) -> Self:
@@ -195,6 +261,7 @@ class PlatformTransport:
             self._connections,
             self._authorization,
             self._runtime,
+            self._custom_api,
         ):
             await client.close()
         await self._pool.aclose()
@@ -245,6 +312,14 @@ class PlatformTransport:
                     )
                 case runtime.AcquireMcpRuntimeCredentialRequest():
                     return await self._runtime.acquire_mcp_runtime_credential(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
+                case custom_api.DescribeCustomApiEnvironmentRequest():
+                    return await self._custom_api.describe_custom_api_environment(
+                        request, headers=headers, timeout_ms=timeout_ms
+                    )
+                case custom_api.AcquireCustomApiEnvironmentRequest():
+                    return await self._custom_api.acquire_custom_api_environment(
                         request, headers=headers, timeout_ms=timeout_ms
                     )
         except ConnectError as error:

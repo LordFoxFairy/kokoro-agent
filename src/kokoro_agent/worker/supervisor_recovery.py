@@ -279,6 +279,7 @@ class SupervisorRecoveryMixin(SupervisorContext):
                 request,
                 lease,
                 emitter.skill_progress(request.selected_skill_source_refs),
+                emitter.observe_tool_action,
             )
             primary: BaseException | None = None
             try:

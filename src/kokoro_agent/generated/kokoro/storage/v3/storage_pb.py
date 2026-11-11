@@ -521,7 +521,7 @@ class GetAssetResponse(Message[_GetAssetResponseFields]):
 
     Attributes:
         image_dimensions:
-            Required for SKILL_COVER; absent for other purposes.
+            Required for SKILL_COVER and CONNECTOR_ICON; absent for other purposes.
 
             ```proto
             optional kokoro.storage.v3.ImageDimensions image_dimensions = 13;
@@ -589,7 +589,7 @@ class GetAssetResponse(Message[_GetAssetResponseFields]):
         origin: AssetOrigin
         filename: str
 
-_ListAssetsRequestFields: TypeAlias = Literal["limit", "cursor"]
+_ListAssetsRequestFields: TypeAlias = Literal["limit", "cursor", "query", "file_type"]
 
 class ListAssetsRequest(Message[_ListAssetsRequestFields]):
     """
@@ -612,9 +612,22 @@ class ListAssetsRequest(Message[_ListAssetsRequestFields]):
             ```proto
             string cursor = 2;
             ```
+        query:
+            Personal only when nonempty after trim/NFC. At most 200 Unicode code points before normalization, without C0/DEL.
+            Match a literal case-insensitive substring of filename or MIME before pagination.
+
+            ```proto
+            string query = 3;
+            ```
+        file_type:
+            Personal only when specified; UNSPECIFIED is all types.
+
+            ```proto
+            kokoro.storage.v3.PersonalLibraryFileType file_type = 4;
+            ```
     """
 
-    __slots__ = ("limit", "cursor")
+    __slots__ = ("limit", "cursor", "query", "file_type")
 
     if TYPE_CHECKING:
 
@@ -623,11 +636,15 @@ class ListAssetsRequest(Message[_ListAssetsRequestFields]):
             *,
             limit: int = 0,
             cursor: str = "",
+            query: str = "",
+            file_type: PersonalLibraryFileType | None = None,
         ) -> None:
             pass
 
         limit: int
         cursor: str
+        query: str
+        file_type: PersonalLibraryFileType
 
 _ListAssetItemFields: TypeAlias = Literal["asset_id", "filename", "mime_type", "content_sha256", "size_bytes", "upload_purpose", "origin", "scan_state", "created_at"]
 
@@ -1351,7 +1368,101 @@ class GetFinalArtifactResponse(Message[_GetFinalArtifactResponseFields]):
 
         item: FinalArtifactItem | None
 
-_GetFinalArtifactDownloadReferenceRequestFields: TypeAlias = Literal["command", "artifact_id"]
+_DeleteFinalArtifactRequestFields: TypeAlias = Literal["command", "artifact_id", "asset_id", "content_sha256", "source_run_id"]
+
+class DeleteFinalArtifactRequest(Message[_DeleteFinalArtifactRequestFields]):
+    """
+    Retires one exact FINAL artifact. Only web-bff in its conversation scope.
+
+    ```proto
+    message kokoro.storage.v3.DeleteFinalArtifactRequest
+    ```
+
+    Attributes:
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 1;
+            ```
+        artifact_id:
+            ```proto
+            string artifact_id = 2;
+            ```
+        asset_id:
+            ```proto
+            string asset_id = 3;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 4;
+            ```
+        source_run_id:
+            ```proto
+            string source_run_id = 5;
+            ```
+    """
+
+    __slots__ = ("command", "artifact_id", "asset_id", "content_sha256", "source_run_id")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            command: CommandIdentity | None = None,
+            artifact_id: str = "",
+            asset_id: str = "",
+            content_sha256: str = "",
+            source_run_id: str = "",
+        ) -> None:
+            pass
+
+        command: CommandIdentity | None
+        artifact_id: str
+        asset_id: str
+        content_sha256: str
+        source_run_id: str
+
+_DeleteFinalArtifactResponseFields: TypeAlias = Literal["artifact_id", "retired_at", "replayed"]
+
+class DeleteFinalArtifactResponse(Message[_DeleteFinalArtifactResponseFields]):
+    """
+    ```proto
+    message kokoro.storage.v3.DeleteFinalArtifactResponse
+    ```
+
+    Attributes:
+        artifact_id:
+            ```proto
+            string artifact_id = 1;
+            ```
+        retired_at:
+            ```proto
+            optional google.protobuf.Timestamp retired_at = 2;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 3;
+            ```
+    """
+
+    __slots__ = ("artifact_id", "retired_at", "replayed")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            artifact_id: str = "",
+            retired_at: Timestamp | None = None,
+            replayed: bool = False,
+        ) -> None:
+            pass
+
+        artifact_id: str
+        retired_at: Timestamp | None
+        replayed: bool
+
+_GetFinalArtifactDownloadReferenceRequestFields: TypeAlias = Literal["command", "artifact_id", "run_id", "asset_id", "content_sha256", "consumer_run_id"]
 
 class GetFinalArtifactDownloadReferenceRequest(Message[_GetFinalArtifactDownloadReferenceRequestFields]):
     """
@@ -1368,9 +1479,33 @@ class GetFinalArtifactDownloadReferenceRequest(Message[_GetFinalArtifactDownload
             ```proto
             string artifact_id = 2;
             ```
+        run_id:
+            Required for kokoro-agent and must match the finalized artifact source run.
+            BFF callers omit this field and remain conversation-scope readers.
+
+            ```proto
+            string run_id = 3;
+            ```
+        asset_id:
+            Required for Agent: exact finalized Asset and digest from its frozen input.
+
+            ```proto
+            string asset_id = 4;
+            ```
+        content_sha256:
+            ```proto
+            string content_sha256 = 5;
+            ```
+        consumer_run_id:
+            Consumption identity; lease and manifest membership are checked by Agent.
+            This may differ from the artifact source run_id above.
+
+            ```proto
+            string consumer_run_id = 6;
+            ```
     """
 
-    __slots__ = ("command", "artifact_id")
+    __slots__ = ("command", "artifact_id", "run_id", "asset_id", "content_sha256", "consumer_run_id")
 
     if TYPE_CHECKING:
 
@@ -1379,11 +1514,19 @@ class GetFinalArtifactDownloadReferenceRequest(Message[_GetFinalArtifactDownload
             *,
             command: CommandIdentity | None = None,
             artifact_id: str = "",
+            run_id: str = "",
+            asset_id: str = "",
+            content_sha256: str = "",
+            consumer_run_id: str = "",
         ) -> None:
             pass
 
         command: CommandIdentity | None
         artifact_id: str
+        run_id: str
+        asset_id: str
+        content_sha256: str
+        consumer_run_id: str
 
 _GetFinalArtifactDownloadReferenceResponseFields: TypeAlias = Literal["artifact_id", "asset_id", "content_sha256", "download_reference"]
 
@@ -1431,7 +1574,7 @@ class GetFinalArtifactDownloadReferenceResponse(Message[_GetFinalArtifactDownloa
         content_sha256: str
         download_reference: TransferReference | None
 
-_GetDownloadReferenceRequestFields: TypeAlias = Literal["command", "asset_id", "content_sha256"]
+_GetDownloadReferenceRequestFields: TypeAlias = Literal["command", "asset_id", "content_sha256", "consumer_run_id"]
 
 class GetDownloadReferenceRequest(Message[_GetDownloadReferenceRequestFields]):
     """
@@ -1452,9 +1595,16 @@ class GetDownloadReferenceRequest(Message[_GetDownloadReferenceRequestFields]):
             ```proto
             string content_sha256 = 5;
             ```
+        consumer_run_id:
+            Required for Agent personal/project ASSET input reads. Agent checks its
+            current lease and frozen manifest; this ID is not an authorization token.
+
+            ```proto
+            string consumer_run_id = 6;
+            ```
     """
 
-    __slots__ = ("command", "asset_id", "content_sha256")
+    __slots__ = ("command", "asset_id", "content_sha256", "consumer_run_id")
 
     if TYPE_CHECKING:
 
@@ -1464,12 +1614,14 @@ class GetDownloadReferenceRequest(Message[_GetDownloadReferenceRequestFields]):
             command: CommandIdentity | None = None,
             asset_id: str = "",
             content_sha256: str = "",
+            consumer_run_id: str = "",
         ) -> None:
             pass
 
         command: CommandIdentity | None
         asset_id: str
         content_sha256: str
+        consumer_run_id: str
 
 _GetDownloadReferenceResponseFields: TypeAlias = Literal["asset_id", "download_reference", "content_sha256", "size_bytes", "mime_type", "scan_state"]
 
@@ -1684,6 +1836,88 @@ class ReleaseConversationScopeResponse(Message[_ReleaseConversationScopeResponse
             pass
 
         scope_released: bool
+        replayed: bool
+        aborted_upload_count: int
+        released_asset_count: int
+        queued_object_cleanup_count: int
+
+_ReleaseConversationWorkspaceOutputsRequestFields: TypeAlias = Literal["command"]
+
+class ReleaseConversationWorkspaceOutputsRequest(Message[_ReleaseConversationWorkspaceOutputsRequestFields]):
+    """
+    Releases only the workspace-output purpose, never the whole conversation.
+
+    ```proto
+    message kokoro.storage.v3.ReleaseConversationWorkspaceOutputsRequest
+    ```
+
+    Attributes:
+        command:
+            ```proto
+            optional kokoro.common.v1.CommandIdentity command = 1;
+            ```
+    """
+
+    __slots__ = ("command",)
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            command: CommandIdentity | None = None,
+        ) -> None:
+            pass
+
+        command: CommandIdentity | None
+
+_ReleaseConversationWorkspaceOutputsResponseFields: TypeAlias = Literal["workspace_outputs_released", "replayed", "aborted_upload_count", "released_asset_count", "queued_object_cleanup_count"]
+
+class ReleaseConversationWorkspaceOutputsResponse(Message[_ReleaseConversationWorkspaceOutputsResponseFields]):
+    """
+    ```proto
+    message kokoro.storage.v3.ReleaseConversationWorkspaceOutputsResponse
+    ```
+
+    Attributes:
+        workspace_outputs_released:
+            ```proto
+            bool workspace_outputs_released = 1;
+            ```
+        replayed:
+            ```proto
+            bool replayed = 2;
+            ```
+        aborted_upload_count:
+            ```proto
+            uint64 aborted_upload_count = 3;
+            ```
+        released_asset_count:
+            ```proto
+            uint64 released_asset_count = 4;
+            ```
+        queued_object_cleanup_count:
+            ```proto
+            uint64 queued_object_cleanup_count = 5;
+            ```
+    """
+
+    __slots__ = ("workspace_outputs_released", "replayed", "aborted_upload_count", "released_asset_count", "queued_object_cleanup_count")
+
+    if TYPE_CHECKING:
+
+        def __init__(
+            self,
+            *,
+            workspace_outputs_released: bool = False,
+            replayed: bool = False,
+            aborted_upload_count: int = 0,
+            released_asset_count: int = 0,
+            queued_object_cleanup_count: int = 0,
+        ) -> None:
+            pass
+
+        workspace_outputs_released: bool
         replayed: bool
         aborted_upload_count: int
         released_asset_count: int
@@ -1905,6 +2139,14 @@ class UploadPurpose(Enum):
             ```proto
             UPLOAD_PURPOSE_SKILL_COVER = 4
             ```
+        CONNECTOR_ICON:
+            ```proto
+            UPLOAD_PURPOSE_CONNECTOR_ICON = 5
+            ```
+        WORKSPACE_OUTPUT:
+            ```proto
+            UPLOAD_PURPOSE_WORKSPACE_OUTPUT = 6
+            ```
     """
 
     UNSPECIFIED = 0
@@ -1912,6 +2154,8 @@ class UploadPurpose(Enum):
     ASSET = 2
     ARTIFACT = 3
     SKILL_COVER = 4
+    CONNECTOR_ICON = 5
+    WORKSPACE_OUTPUT = 6
 
 class UploadState(Enum):
     """
@@ -1968,9 +2212,44 @@ class AssetOrigin(Enum):
     UPLOADED = 1
     GENERATED = 2
 
+class PersonalLibraryFileType(Enum):
+    """
+    ```proto
+    enum kokoro.storage.v3.PersonalLibraryFileType
+    ```
+
+    Attributes:
+        UNSPECIFIED:
+            ```proto
+            PERSONAL_LIBRARY_FILE_TYPE_UNSPECIFIED = 0
+            ```
+        DOCUMENTS:
+            ```proto
+            PERSONAL_LIBRARY_FILE_TYPE_DOCUMENTS = 1
+            ```
+        IMAGES:
+            ```proto
+            PERSONAL_LIBRARY_FILE_TYPE_IMAGES = 2
+            ```
+        MEDIA:
+            ```proto
+            PERSONAL_LIBRARY_FILE_TYPE_MEDIA = 3
+            ```
+        OTHER:
+            ```proto
+            PERSONAL_LIBRARY_FILE_TYPE_OTHER = 4
+            ```
+    """
+
+    UNSPECIFIED = 0
+    DOCUMENTS = 1
+    IMAGES = 2
+    MEDIA = 3
+    OTHER = 4
+
 
 _DESC = file_desc(
-    b'\n\x1fkokoro/storage/v3/storage.proto\x12\x11kokoro.storage.v3\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dkokoro/common/v1/common.proto"\xa2\x02\n\x11TransferReference\x12\x10\n\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n\x06method\x18\x02 \x01(\tR\x06method\x12d\n\x10required_headers\x18\x03 \x03(\x0b29.kokoro.storage.v3.TransferReference.RequiredHeadersEntryR\x0frequiredHeaders\x129\n\nexpires_at\x18\x04 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x1aB\n\x14RequiredHeadersEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x028\x01"\xcd\x02\n\x13CreateUploadRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1a\n\x08filename\x18\x05 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x12G\n\x0eupload_purpose\x18\n \x01(\x0e2 .kokoro.storage.v3.UploadPurposeR\ruploadPurposeJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05R\nrequest_idR\ttenant_idR\x08owner_id"\x96\x01\n\x14CreateUploadResponse\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x12O\n\x10upload_reference\x18\x04 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x0fuploadReferenceJ\x04\x08\x03\x10\x04R\nupload_url"\x86\x02\n\x15CompleteUploadRequest\x12*\n\x11source_version_id\x18\x07 \x01(\tR\x0fsourceVersionId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x06 \x01(\x04R\tsizeBytesJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xa9\x01\n\x16CompleteUploadResponse\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12;\n\nscan_state\x18\x03 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanState\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xa9\x01\n\x12AbortUploadRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12\x16\n\x06reason\x18\x05 \x01(\tR\x06reasonJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\x84\x01\n\x13AbortUploadResponse\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x124\n\x05state\x18\x02 \x01(\x0e2\x1e.kokoro.storage.v3.UploadStateR\x05state\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"F\n\x16GetUploadStatusRequest\x12\x1b\n\tupload_id\x18\x02 \x01(\tR\x08uploadIdJ\x04\x08\x01\x10\x02R\ttenant_id"\xd6\x02\n\x17GetUploadStatusResponse\x12/\n\x11source_version_id\x18\x08 \x01(\tH\x00R\x0fsourceVersionId\x88\x01\x01\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x124\n\x05state\x18\x02 \x01(\x0e2\x1e.kokoro.storage.v3.UploadStateR\x05state\x12\'\n\x0fexpected_sha256\x18\x04 \x01(\tR\x0eexpectedSha256\x12.\n\x13expected_size_bytes\x18\x05 \x01(\x04R\x11expectedSizeBytes\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12\x1e\n\x08asset_id\x18\x07 \x01(\tH\x01R\x07assetId\x88\x01\x01B\x14\n\x12_source_version_idB\x0b\n\t_asset_id"\x85\x01\n\x0fGetAssetRequest\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256J\x04\x08\x01\x10\x02J\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\nrequest_idR\x07commandR\ttenant_id"?\n\x0fImageDimensions\x12\x14\n\x05width\x18\x01 \x01(\rR\x05width\x12\x16\n\x06height\x18\x02 \x01(\rR\x06height"\xdc\x03\n\x10GetAssetResponse\x12M\n\x10image_dimensions\x18\r \x01(\x0b2".kokoro.storage.v3.ImageDimensionsR\x0fimageDimensions\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x06 \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\x07 \x01(\tR\x08mimeType\x12;\n\nscan_state\x18\x08 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanState\x12G\n\x0eupload_purpose\x18\n \x01(\x0e2 .kokoro.storage.v3.UploadPurposeR\ruploadPurpose\x126\n\x06origin\x18\x0b \x01(\x0e2\x1e.kokoro.storage.v3.AssetOriginR\x06origin\x12\x1a\n\x08filename\x18\x0c \x01(\tR\x08filenameJ\x04\x08\x02\x10\x03J\x04\x08\t\x10\nR\ttenant_idR\nvisibility"A\n\x11ListAssetsRequest\x12\x14\n\x05limit\x18\x01 \x01(\rR\x05limit\x12\x16\n\x06cursor\x18\x02 \x01(\tR\x06cursor"\xa2\x03\n\rListAssetItem\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12\x1a\n\x08filename\x18\x02 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x03 \x01(\tR\x08mimeType\x12%\n\x0econtent_sha256\x18\x04 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x04R\tsizeBytes\x12G\n\x0eupload_purpose\x18\x06 \x01(\x0e2 .kokoro.storage.v3.UploadPurposeR\ruploadPurpose\x126\n\x06origin\x18\x07 \x01(\x0e2\x1e.kokoro.storage.v3.AssetOriginR\x06origin\x12;\n\nscan_state\x18\x08 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanState\x129\n\ncreated_at\x18\t \x01(\x0b2\x1a.google.protobuf.TimestampR\tcreatedAt"\x82\x01\n\x12ListAssetsResponse\x126\n\x05items\x18\x01 \x03(\x0b2 .kokoro.storage.v3.ListAssetItemR\x05items\x12$\n\x0bnext_cursor\x18\x02 \x01(\tH\x00R\nnextCursor\x88\x01\x01B\x0e\n\x0c_next_cursor"\xbe\x01\n\x1aGetPackageReferenceRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256J\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xc1\x02\n\x1bGetPackageReferenceResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12S\n\x12download_reference\x18\x08 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x11downloadReference\x12%\n\x0econtent_sha256\x18\x04 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12;\n\nscan_state\x18\x07 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanStateJ\x04\x08\x03\x10\x04R\x0cdownload_url"B\n\x14GetScanStatusRequest\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetIdJ\x04\x08\x01\x10\x02R\ttenant_id"\x83\x01\n\x15GetScanStatusResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x122\n\x05state\x18\x02 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\x05state\x12\x1b\n\treport_id\x18\x03 \x01(\tR\x08reportId"\xdc\x01\n\x17FinalizeArtifactRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12\x1f\n\x0bartifact_id\x18\x05 \x01(\tR\nartifactId\x12%\n\x0econtent_sha256\x18\x06 \x01(\tR\rcontentSha256J\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xd1\x01\n\x18FinalizeArtifactResponse\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x126\n\x05state\x18\x02 \x01(\x0e2 .kokoro.storage.v3.ArtifactStateR\x05state\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256"\xc9\x02\n\x15CreateArtifactRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12\x1f\n\x0bartifact_id\x18\x05 \x01(\tR\nartifactId\x12%\n\x0econtent_sha256\x18\x06 \x01(\tR\rcontentSha256\x123\n\x04kind\x18\x07 \x01(\x0e2\x1f.kokoro.storage.v3.ArtifactKindR\x04kind\x12\x14\n\x05title\x18\x08 \x01(\tR\x05title\x12"\n\rsource_run_id\x18\t \x01(\tR\x0bsourceRunIdJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xbe\x02\n\x16CreateArtifactResponse\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x126\n\x05state\x18\x04 \x01(\x0e2 .kokoro.storage.v3.ArtifactStateR\x05state\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed\x123\n\x04kind\x18\x06 \x01(\x0e2\x1f.kokoro.storage.v3.ArtifactKindR\x04kind\x12\x14\n\x05title\x18\x07 \x01(\tR\x05title\x12"\n\rsource_run_id\x18\x08 \x01(\tR\x0bsourceRunId"I\n\x19ListFinalArtifactsRequest\x12\x14\n\x05limit\x18\x01 \x01(\rR\x05limit\x12\x16\n\x06cursor\x18\x02 \x01(\tR\x06cursor"\xb7\x03\n\x11FinalArtifactItem\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x123\n\x04kind\x18\x04 \x01(\x0e2\x1f.kokoro.storage.v3.ArtifactKindR\x04kind\x12\x14\n\x05title\x18\x05 \x01(\tR\x05title\x12"\n\rsource_run_id\x18\x06 \x01(\tR\x0bsourceRunId\x12\x1a\n\x08filename\x18\x07 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x08 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\t \x01(\x04R\tsizeBytes\x129\n\ncreated_at\x18\n \x01(\x0b2\x1a.google.protobuf.TimestampR\tcreatedAt\x12=\n\x0cfinalized_at\x18\x0b \x01(\x0b2\x1a.google.protobuf.TimestampR\x0bfinalizedAt"\x8e\x01\n\x1aListFinalArtifactsResponse\x12:\n\x05items\x18\x01 \x03(\x0b2$.kokoro.storage.v3.FinalArtifactItemR\x05items\x12$\n\x0bnext_cursor\x18\x02 \x01(\tH\x00R\nnextCursor\x88\x01\x01B\x0e\n\x0c_next_cursor":\n\x17GetFinalArtifactRequest\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId"T\n\x18GetFinalArtifactResponse\x128\n\x04item\x18\x01 \x01(\x0b2$.kokoro.storage.v3.FinalArtifactItemR\x04item"\x88\x01\n(GetFinalArtifactDownloadReferenceRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1f\n\x0bartifact_id\x18\x02 \x01(\tR\nartifactId"\xe3\x01\n)GetFinalArtifactDownloadReferenceResponse\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x12S\n\x12download_reference\x18\x04 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x11downloadReference"\xbf\x01\n\x1bGetDownloadReferenceRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256J\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xc2\x02\n\x1cGetDownloadReferenceResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12S\n\x12download_reference\x18\x07 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x11downloadReference\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\x05 \x01(\tR\x08mimeType\x12;\n\nscan_state\x18\x06 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanStateJ\x04\x08\x02\x10\x03R\x0cdownload_url"Y\n\x1aReleaseProjectScopeRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command"\x83\x02\n\x1bReleaseProjectScopeResponse\x12%\n\x0escope_released\x18\x01 \x01(\x08R\rscopeReleased\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed\x120\n\x14aborted_upload_count\x18\x03 \x01(\x04R\x12abortedUploadCount\x120\n\x14released_asset_count\x18\x04 \x01(\x04R\x12releasedAssetCount\x12=\n\x1bqueued_object_cleanup_count\x18\x05 \x01(\x04R\x18queuedObjectCleanupCount"^\n\x1fReleaseConversationScopeRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command"\x88\x02\n ReleaseConversationScopeResponse\x12%\n\x0escope_released\x18\x01 \x01(\x08R\rscopeReleased\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed\x120\n\x14aborted_upload_count\x18\x03 \x01(\x04R\x12abortedUploadCount\x120\n\x14released_asset_count\x18\x04 \x01(\x04R\x12releasedAssetCount\x12=\n\x1bqueued_object_cleanup_count\x18\x05 \x01(\x04R\x18queuedObjectCleanupCount"l\n\x12DeleteAssetRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId"\x87\x01\n\x13DeleteAssetResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x129\n\ndeleted_at\x18\x02 \x01(\x0b2\x1a.google.protobuf.TimestampR\tdeletedAt\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed*c\n\rArtifactState\x12\x1e\n\x1aARTIFACT_STATE_UNSPECIFIED\x10\x00\x12\x18\n\x14ARTIFACT_STATE_DRAFT\x10\x01\x12\x18\n\x14ARTIFACT_STATE_FINAL\x10\x02*\xf8\x01\n\x0cArtifactKind\x12\x1d\n\x19ARTIFACT_KIND_UNSPECIFIED\x10\x00\x12\x1a\n\x16ARTIFACT_KIND_DOCUMENT\x10\x01\x12\x16\n\x12ARTIFACT_KIND_CODE\x10\x02\x12\x17\n\x13ARTIFACT_KIND_IMAGE\x10\x03\x12\x17\n\x13ARTIFACT_KIND_AUDIO\x10\x04\x12\x17\n\x13ARTIFACT_KIND_VIDEO\x10\x05\x12\x16\n\x12ARTIFACT_KIND_DATA\x10\x06\x12\x19\n\x15ARTIFACT_KIND_ARCHIVE\x10\x07\x12\x17\n\x13ARTIFACT_KIND_OTHER\x10\x08*\x86\x01\n\tScanState\x12\x1a\n\x16SCAN_STATE_UNSPECIFIED\x10\x00\x12\x16\n\x12SCAN_STATE_PENDING\x10\x01\x12\x14\n\x10SCAN_STATE_CLEAN\x10\x02\x12\x17\n\x13SCAN_STATE_INFECTED\x10\x03\x12\x16\n\x12SCAN_STATE_UNKNOWN\x10\x04*\xad\x01\n\rUploadPurpose\x12\x1e\n\x1aUPLOAD_PURPOSE_UNSPECIFIED\x10\x00\x12%\n!UPLOAD_PURPOSE_CAPABILITY_PACKAGE\x10\x01\x12\x18\n\x14UPLOAD_PURPOSE_ASSET\x10\x02\x12\x1b\n\x17UPLOAD_PURPOSE_ARTIFACT\x10\x03\x12\x1e\n\x1aUPLOAD_PURPOSE_SKILL_COVER\x10\x04*{\n\x0bUploadState\x12\x1c\n\x18UPLOAD_STATE_UNSPECIFIED\x10\x00\x12\x18\n\x14UPLOAD_STATE_PENDING\x10\x01\x12\x1a\n\x16UPLOAD_STATE_COMPLETED\x10\x02\x12\x18\n\x14UPLOAD_STATE_ABORTED\x10\x03*b\n\x0bAssetOrigin\x12\x1c\n\x18ASSET_ORIGIN_UNSPECIFIED\x10\x00\x12\x19\n\x15ASSET_ORIGIN_UPLOADED\x10\x01\x12\x1a\n\x16ASSET_ORIGIN_GENERATED\x10\x022\xd2\x0e\n\x0eStorageService\x12\\\n\x0bDeleteAsset\x12%.kokoro.storage.v3.DeleteAssetRequest\x1a&.kokoro.storage.v3.DeleteAssetResponse\x12_\n\x0cCreateUpload\x12&.kokoro.storage.v3.CreateUploadRequest\x1a\'.kokoro.storage.v3.CreateUploadResponse\x12e\n\x0eCompleteUpload\x12(.kokoro.storage.v3.CompleteUploadRequest\x1a).kokoro.storage.v3.CompleteUploadResponse\x12\\\n\x0bAbortUpload\x12%.kokoro.storage.v3.AbortUploadRequest\x1a&.kokoro.storage.v3.AbortUploadResponse\x12h\n\x0fGetUploadStatus\x12).kokoro.storage.v3.GetUploadStatusRequest\x1a*.kokoro.storage.v3.GetUploadStatusResponse\x12S\n\x08GetAsset\x12".kokoro.storage.v3.GetAssetRequest\x1a#.kokoro.storage.v3.GetAssetResponse\x12Y\n\nListAssets\x12$.kokoro.storage.v3.ListAssetsRequest\x1a%.kokoro.storage.v3.ListAssetsResponse\x12t\n\x13GetPackageReference\x12-.kokoro.storage.v3.GetPackageReferenceRequest\x1a..kokoro.storage.v3.GetPackageReferenceResponse\x12b\n\rGetScanStatus\x12\'.kokoro.storage.v3.GetScanStatusRequest\x1a(.kokoro.storage.v3.GetScanStatusResponse\x12e\n\x0eCreateArtifact\x12(.kokoro.storage.v3.CreateArtifactRequest\x1a).kokoro.storage.v3.CreateArtifactResponse\x12k\n\x10FinalizeArtifact\x12*.kokoro.storage.v3.FinalizeArtifactRequest\x1a+.kokoro.storage.v3.FinalizeArtifactResponse\x12w\n\x14GetDownloadReference\x12..kokoro.storage.v3.GetDownloadReferenceRequest\x1a/.kokoro.storage.v3.GetDownloadReferenceResponse\x12q\n\x12ListFinalArtifacts\x12,.kokoro.storage.v3.ListFinalArtifactsRequest\x1a-.kokoro.storage.v3.ListFinalArtifactsResponse\x12k\n\x10GetFinalArtifact\x12*.kokoro.storage.v3.GetFinalArtifactRequest\x1a+.kokoro.storage.v3.GetFinalArtifactResponse\x12\x9e\x01\n!GetFinalArtifactDownloadReference\x12;.kokoro.storage.v3.GetFinalArtifactDownloadReferenceRequest\x1a<.kokoro.storage.v3.GetFinalArtifactDownloadReferenceResponse\x12t\n\x13ReleaseProjectScope\x12-.kokoro.storage.v3.ReleaseProjectScopeRequest\x1a..kokoro.storage.v3.ReleaseProjectScopeResponse\x12\x83\x01\n\x18ReleaseConversationScope\x122.kokoro.storage.v3.ReleaseConversationScopeRequest\x1a3.kokoro.storage.v3.ReleaseConversationScopeResponseb\x06proto3',
+    b'\n\x1fkokoro/storage/v3/storage.proto\x12\x11kokoro.storage.v3\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1dkokoro/common/v1/common.proto"\xa2\x02\n\x11TransferReference\x12\x10\n\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n\x06method\x18\x02 \x01(\tR\x06method\x12d\n\x10required_headers\x18\x03 \x03(\x0b29.kokoro.storage.v3.TransferReference.RequiredHeadersEntryR\x0frequiredHeaders\x129\n\nexpires_at\x18\x04 \x01(\x0b2\x1a.google.protobuf.TimestampR\texpiresAt\x1aB\n\x14RequiredHeadersEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x028\x01"\xcd\x02\n\x13CreateUploadRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1a\n\x08filename\x18\x05 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes\x12%\n\x0econtent_sha256\x18\x08 \x01(\tR\rcontentSha256\x12G\n\x0eupload_purpose\x18\n \x01(\x0e2 .kokoro.storage.v3.UploadPurposeR\ruploadPurposeJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05R\nrequest_idR\ttenant_idR\x08owner_id"\x96\x01\n\x14CreateUploadResponse\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x12O\n\x10upload_reference\x18\x04 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x0fuploadReferenceJ\x04\x08\x03\x10\x04R\nupload_url"\x86\x02\n\x15CompleteUploadRequest\x12*\n\x11source_version_id\x18\x07 \x01(\tR\x0fsourceVersionId\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x06 \x01(\x04R\tsizeBytesJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xa9\x01\n\x16CompleteUploadResponse\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12;\n\nscan_state\x18\x03 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanState\x12\x1a\n\x08replayed\x18\x04 \x01(\x08R\x08replayed"\xa9\x01\n\x12AbortUploadRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1b\n\tupload_id\x18\x04 \x01(\tR\x08uploadId\x12\x16\n\x06reason\x18\x05 \x01(\tR\x06reasonJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\x84\x01\n\x13AbortUploadResponse\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x124\n\x05state\x18\x02 \x01(\x0e2\x1e.kokoro.storage.v3.UploadStateR\x05state\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"F\n\x16GetUploadStatusRequest\x12\x1b\n\tupload_id\x18\x02 \x01(\tR\x08uploadIdJ\x04\x08\x01\x10\x02R\ttenant_id"\xd6\x02\n\x17GetUploadStatusResponse\x12/\n\x11source_version_id\x18\x08 \x01(\tH\x00R\x0fsourceVersionId\x88\x01\x01\x12\x1b\n\tupload_id\x18\x01 \x01(\tR\x08uploadId\x124\n\x05state\x18\x02 \x01(\x0e2\x1e.kokoro.storage.v3.UploadStateR\x05state\x12\'\n\x0fexpected_sha256\x18\x04 \x01(\tR\x0eexpectedSha256\x12.\n\x13expected_size_bytes\x18\x05 \x01(\x04R\x11expectedSizeBytes\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12\x1e\n\x08asset_id\x18\x07 \x01(\tH\x01R\x07assetId\x88\x01\x01B\x14\n\x12_source_version_idB\x0b\n\t_asset_id"\x85\x01\n\x0fGetAssetRequest\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256J\x04\x08\x01\x10\x02J\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\nrequest_idR\x07commandR\ttenant_id"?\n\x0fImageDimensions\x12\x14\n\x05width\x18\x01 \x01(\rR\x05width\x12\x16\n\x06height\x18\x02 \x01(\rR\x06height"\xdc\x03\n\x10GetAssetResponse\x12M\n\x10image_dimensions\x18\r \x01(\x0b2".kokoro.storage.v3.ImageDimensionsR\x0fimageDimensions\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x06 \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\x07 \x01(\tR\x08mimeType\x12;\n\nscan_state\x18\x08 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanState\x12G\n\x0eupload_purpose\x18\n \x01(\x0e2 .kokoro.storage.v3.UploadPurposeR\ruploadPurpose\x126\n\x06origin\x18\x0b \x01(\x0e2\x1e.kokoro.storage.v3.AssetOriginR\x06origin\x12\x1a\n\x08filename\x18\x0c \x01(\tR\x08filenameJ\x04\x08\x02\x10\x03J\x04\x08\t\x10\nR\ttenant_idR\nvisibility"\xa0\x01\n\x11ListAssetsRequest\x12\x14\n\x05limit\x18\x01 \x01(\rR\x05limit\x12\x16\n\x06cursor\x18\x02 \x01(\tR\x06cursor\x12\x14\n\x05query\x18\x03 \x01(\tR\x05query\x12G\n\tfile_type\x18\x04 \x01(\x0e2*.kokoro.storage.v3.PersonalLibraryFileTypeR\x08fileType"\xa2\x03\n\rListAssetItem\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12\x1a\n\x08filename\x18\x02 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x03 \x01(\tR\x08mimeType\x12%\n\x0econtent_sha256\x18\x04 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x04R\tsizeBytes\x12G\n\x0eupload_purpose\x18\x06 \x01(\x0e2 .kokoro.storage.v3.UploadPurposeR\ruploadPurpose\x126\n\x06origin\x18\x07 \x01(\x0e2\x1e.kokoro.storage.v3.AssetOriginR\x06origin\x12;\n\nscan_state\x18\x08 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanState\x129\n\ncreated_at\x18\t \x01(\x0b2\x1a.google.protobuf.TimestampR\tcreatedAt"\x82\x01\n\x12ListAssetsResponse\x126\n\x05items\x18\x01 \x03(\x0b2 .kokoro.storage.v3.ListAssetItemR\x05items\x12$\n\x0bnext_cursor\x18\x02 \x01(\tH\x00R\nnextCursor\x88\x01\x01B\x0e\n\x0c_next_cursor"\xbe\x01\n\x1aGetPackageReferenceRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256J\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xc1\x02\n\x1bGetPackageReferenceResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12S\n\x12download_reference\x18\x08 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x11downloadReference\x12%\n\x0econtent_sha256\x18\x04 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x05 \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\x06 \x01(\tR\x08mimeType\x12;\n\nscan_state\x18\x07 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanStateJ\x04\x08\x03\x10\x04R\x0cdownload_url"B\n\x14GetScanStatusRequest\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetIdJ\x04\x08\x01\x10\x02R\ttenant_id"\x83\x01\n\x15GetScanStatusResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x122\n\x05state\x18\x02 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\x05state\x12\x1b\n\treport_id\x18\x03 \x01(\tR\x08reportId"\xdc\x01\n\x17FinalizeArtifactRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12\x1f\n\x0bartifact_id\x18\x05 \x01(\tR\nartifactId\x12%\n\x0econtent_sha256\x18\x06 \x01(\tR\rcontentSha256J\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xd1\x01\n\x18FinalizeArtifactResponse\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x126\n\x05state\x18\x02 \x01(\x0e2 .kokoro.storage.v3.ArtifactStateR\x05state\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256"\xc9\x02\n\x15CreateArtifactRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12\x1f\n\x0bartifact_id\x18\x05 \x01(\tR\nartifactId\x12%\n\x0econtent_sha256\x18\x06 \x01(\tR\rcontentSha256\x123\n\x04kind\x18\x07 \x01(\x0e2\x1f.kokoro.storage.v3.ArtifactKindR\x04kind\x12\x14\n\x05title\x18\x08 \x01(\tR\x05title\x12"\n\rsource_run_id\x18\t \x01(\tR\x0bsourceRunIdJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xbe\x02\n\x16CreateArtifactResponse\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x126\n\x05state\x18\x04 \x01(\x0e2 .kokoro.storage.v3.ArtifactStateR\x05state\x12\x1a\n\x08replayed\x18\x05 \x01(\x08R\x08replayed\x123\n\x04kind\x18\x06 \x01(\x0e2\x1f.kokoro.storage.v3.ArtifactKindR\x04kind\x12\x14\n\x05title\x18\x07 \x01(\tR\x05title\x12"\n\rsource_run_id\x18\x08 \x01(\tR\x0bsourceRunId"I\n\x19ListFinalArtifactsRequest\x12\x14\n\x05limit\x18\x01 \x01(\rR\x05limit\x12\x16\n\x06cursor\x18\x02 \x01(\tR\x06cursor"\xb7\x03\n\x11FinalArtifactItem\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x123\n\x04kind\x18\x04 \x01(\x0e2\x1f.kokoro.storage.v3.ArtifactKindR\x04kind\x12\x14\n\x05title\x18\x05 \x01(\tR\x05title\x12"\n\rsource_run_id\x18\x06 \x01(\tR\x0bsourceRunId\x12\x1a\n\x08filename\x18\x07 \x01(\tR\x08filename\x12\x1b\n\tmime_type\x18\x08 \x01(\tR\x08mimeType\x12\x1d\n\nsize_bytes\x18\t \x01(\x04R\tsizeBytes\x129\n\ncreated_at\x18\n \x01(\x0b2\x1a.google.protobuf.TimestampR\tcreatedAt\x12=\n\x0cfinalized_at\x18\x0b \x01(\x0b2\x1a.google.protobuf.TimestampR\x0bfinalizedAt"\x8e\x01\n\x1aListFinalArtifactsResponse\x12:\n\x05items\x18\x01 \x03(\x0b2$.kokoro.storage.v3.FinalArtifactItemR\x05items\x12$\n\x0bnext_cursor\x18\x02 \x01(\tH\x00R\nnextCursor\x88\x01\x01B\x0e\n\x0c_next_cursor":\n\x17GetFinalArtifactRequest\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId"T\n\x18GetFinalArtifactResponse\x128\n\x04item\x18\x01 \x01(\x0b2$.kokoro.storage.v3.FinalArtifactItemR\x04item"\xe0\x01\n\x1aDeleteFinalArtifactRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1f\n\x0bartifact_id\x18\x02 \x01(\tR\nartifactId\x12\x19\n\x08asset_id\x18\x03 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x04 \x01(\tR\rcontentSha256\x12"\n\rsource_run_id\x18\x05 \x01(\tR\x0bsourceRunId"\x95\x01\n\x1bDeleteFinalArtifactResponse\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x129\n\nretired_at\x18\x02 \x01(\x0b2\x1a.google.protobuf.TimestampR\tretiredAt\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed"\x89\x02\n(GetFinalArtifactDownloadReferenceRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x1f\n\x0bartifact_id\x18\x02 \x01(\tR\nartifactId\x12\x15\n\x06run_id\x18\x03 \x01(\tR\x05runId\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256\x12&\n\x0fconsumer_run_id\x18\x06 \x01(\tR\rconsumerRunId"\xe3\x01\n)GetFinalArtifactDownloadReferenceResponse\x12\x1f\n\x0bartifact_id\x18\x01 \x01(\tR\nartifactId\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x12S\n\x12download_reference\x18\x04 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x11downloadReference"\xe7\x01\n\x1bGetDownloadReferenceRequest\x12;\n\x07command\x18\x02 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x04 \x01(\tR\x07assetId\x12%\n\x0econtent_sha256\x18\x05 \x01(\tR\rcontentSha256\x12&\n\x0fconsumer_run_id\x18\x06 \x01(\tR\rconsumerRunIdJ\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04R\nrequest_idR\ttenant_id"\xc2\x02\n\x1cGetDownloadReferenceResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x12S\n\x12download_reference\x18\x07 \x01(\x0b2$.kokoro.storage.v3.TransferReferenceR\x11downloadReference\x12%\n\x0econtent_sha256\x18\x03 \x01(\tR\rcontentSha256\x12\x1d\n\nsize_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1b\n\tmime_type\x18\x05 \x01(\tR\x08mimeType\x12;\n\nscan_state\x18\x06 \x01(\x0e2\x1c.kokoro.storage.v3.ScanStateR\tscanStateJ\x04\x08\x02\x10\x03R\x0cdownload_url"Y\n\x1aReleaseProjectScopeRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command"\x83\x02\n\x1bReleaseProjectScopeResponse\x12%\n\x0escope_released\x18\x01 \x01(\x08R\rscopeReleased\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed\x120\n\x14aborted_upload_count\x18\x03 \x01(\x04R\x12abortedUploadCount\x120\n\x14released_asset_count\x18\x04 \x01(\x04R\x12releasedAssetCount\x12=\n\x1bqueued_object_cleanup_count\x18\x05 \x01(\x04R\x18queuedObjectCleanupCount"^\n\x1fReleaseConversationScopeRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command"\x88\x02\n ReleaseConversationScopeResponse\x12%\n\x0escope_released\x18\x01 \x01(\x08R\rscopeReleased\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed\x120\n\x14aborted_upload_count\x18\x03 \x01(\x04R\x12abortedUploadCount\x120\n\x14released_asset_count\x18\x04 \x01(\x04R\x12releasedAssetCount\x12=\n\x1bqueued_object_cleanup_count\x18\x05 \x01(\x04R\x18queuedObjectCleanupCount"i\n*ReleaseConversationWorkspaceOutputsRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command"\xaa\x02\n+ReleaseConversationWorkspaceOutputsResponse\x12<\n\x1aworkspace_outputs_released\x18\x01 \x01(\x08R\x18workspaceOutputsReleased\x12\x1a\n\x08replayed\x18\x02 \x01(\x08R\x08replayed\x120\n\x14aborted_upload_count\x18\x03 \x01(\x04R\x12abortedUploadCount\x120\n\x14released_asset_count\x18\x04 \x01(\x04R\x12releasedAssetCount\x12=\n\x1bqueued_object_cleanup_count\x18\x05 \x01(\x04R\x18queuedObjectCleanupCount"l\n\x12DeleteAssetRequest\x12;\n\x07command\x18\x01 \x01(\x0b2!.kokoro.common.v1.CommandIdentityR\x07command\x12\x19\n\x08asset_id\x18\x02 \x01(\tR\x07assetId"\x87\x01\n\x13DeleteAssetResponse\x12\x19\n\x08asset_id\x18\x01 \x01(\tR\x07assetId\x129\n\ndeleted_at\x18\x02 \x01(\x0b2\x1a.google.protobuf.TimestampR\tdeletedAt\x12\x1a\n\x08replayed\x18\x03 \x01(\x08R\x08replayed*c\n\rArtifactState\x12\x1e\n\x1aARTIFACT_STATE_UNSPECIFIED\x10\x00\x12\x18\n\x14ARTIFACT_STATE_DRAFT\x10\x01\x12\x18\n\x14ARTIFACT_STATE_FINAL\x10\x02*\xf8\x01\n\x0cArtifactKind\x12\x1d\n\x19ARTIFACT_KIND_UNSPECIFIED\x10\x00\x12\x1a\n\x16ARTIFACT_KIND_DOCUMENT\x10\x01\x12\x16\n\x12ARTIFACT_KIND_CODE\x10\x02\x12\x17\n\x13ARTIFACT_KIND_IMAGE\x10\x03\x12\x17\n\x13ARTIFACT_KIND_AUDIO\x10\x04\x12\x17\n\x13ARTIFACT_KIND_VIDEO\x10\x05\x12\x16\n\x12ARTIFACT_KIND_DATA\x10\x06\x12\x19\n\x15ARTIFACT_KIND_ARCHIVE\x10\x07\x12\x17\n\x13ARTIFACT_KIND_OTHER\x10\x08*\x86\x01\n\tScanState\x12\x1a\n\x16SCAN_STATE_UNSPECIFIED\x10\x00\x12\x16\n\x12SCAN_STATE_PENDING\x10\x01\x12\x14\n\x10SCAN_STATE_CLEAN\x10\x02\x12\x17\n\x13SCAN_STATE_INFECTED\x10\x03\x12\x16\n\x12SCAN_STATE_UNKNOWN\x10\x04*\xf5\x01\n\rUploadPurpose\x12\x1e\n\x1aUPLOAD_PURPOSE_UNSPECIFIED\x10\x00\x12%\n!UPLOAD_PURPOSE_CAPABILITY_PACKAGE\x10\x01\x12\x18\n\x14UPLOAD_PURPOSE_ASSET\x10\x02\x12\x1b\n\x17UPLOAD_PURPOSE_ARTIFACT\x10\x03\x12\x1e\n\x1aUPLOAD_PURPOSE_SKILL_COVER\x10\x04\x12!\n\x1dUPLOAD_PURPOSE_CONNECTOR_ICON\x10\x05\x12#\n\x1fUPLOAD_PURPOSE_WORKSPACE_OUTPUT\x10\x06*{\n\x0bUploadState\x12\x1c\n\x18UPLOAD_STATE_UNSPECIFIED\x10\x00\x12\x18\n\x14UPLOAD_STATE_PENDING\x10\x01\x12\x1a\n\x16UPLOAD_STATE_COMPLETED\x10\x02\x12\x18\n\x14UPLOAD_STATE_ABORTED\x10\x03*b\n\x0bAssetOrigin\x12\x1c\n\x18ASSET_ORIGIN_UNSPECIFIED\x10\x00\x12\x19\n\x15ASSET_ORIGIN_UPLOADED\x10\x01\x12\x1a\n\x16ASSET_ORIGIN_GENERATED\x10\x02*\xe2\x01\n\x17PersonalLibraryFileType\x12*\n&PERSONAL_LIBRARY_FILE_TYPE_UNSPECIFIED\x10\x00\x12(\n$PERSONAL_LIBRARY_FILE_TYPE_DOCUMENTS\x10\x01\x12%\n!PERSONAL_LIBRARY_FILE_TYPE_IMAGES\x10\x02\x12$\n PERSONAL_LIBRARY_FILE_TYPE_MEDIA\x10\x03\x12$\n PERSONAL_LIBRARY_FILE_TYPE_OTHER\x10\x042\xef\x10\n\x0eStorageService\x12\\\n\x0bDeleteAsset\x12%.kokoro.storage.v3.DeleteAssetRequest\x1a&.kokoro.storage.v3.DeleteAssetResponse\x12_\n\x0cCreateUpload\x12&.kokoro.storage.v3.CreateUploadRequest\x1a\'.kokoro.storage.v3.CreateUploadResponse\x12e\n\x0eCompleteUpload\x12(.kokoro.storage.v3.CompleteUploadRequest\x1a).kokoro.storage.v3.CompleteUploadResponse\x12\\\n\x0bAbortUpload\x12%.kokoro.storage.v3.AbortUploadRequest\x1a&.kokoro.storage.v3.AbortUploadResponse\x12h\n\x0fGetUploadStatus\x12).kokoro.storage.v3.GetUploadStatusRequest\x1a*.kokoro.storage.v3.GetUploadStatusResponse\x12S\n\x08GetAsset\x12".kokoro.storage.v3.GetAssetRequest\x1a#.kokoro.storage.v3.GetAssetResponse\x12Y\n\nListAssets\x12$.kokoro.storage.v3.ListAssetsRequest\x1a%.kokoro.storage.v3.ListAssetsResponse\x12t\n\x13GetPackageReference\x12-.kokoro.storage.v3.GetPackageReferenceRequest\x1a..kokoro.storage.v3.GetPackageReferenceResponse\x12b\n\rGetScanStatus\x12\'.kokoro.storage.v3.GetScanStatusRequest\x1a(.kokoro.storage.v3.GetScanStatusResponse\x12e\n\x0eCreateArtifact\x12(.kokoro.storage.v3.CreateArtifactRequest\x1a).kokoro.storage.v3.CreateArtifactResponse\x12k\n\x10FinalizeArtifact\x12*.kokoro.storage.v3.FinalizeArtifactRequest\x1a+.kokoro.storage.v3.FinalizeArtifactResponse\x12w\n\x14GetDownloadReference\x12..kokoro.storage.v3.GetDownloadReferenceRequest\x1a/.kokoro.storage.v3.GetDownloadReferenceResponse\x12q\n\x12ListFinalArtifacts\x12,.kokoro.storage.v3.ListFinalArtifactsRequest\x1a-.kokoro.storage.v3.ListFinalArtifactsResponse\x12k\n\x10GetFinalArtifact\x12*.kokoro.storage.v3.GetFinalArtifactRequest\x1a+.kokoro.storage.v3.GetFinalArtifactResponse\x12t\n\x13DeleteFinalArtifact\x12-.kokoro.storage.v3.DeleteFinalArtifactRequest\x1a..kokoro.storage.v3.DeleteFinalArtifactResponse\x12\x9e\x01\n!GetFinalArtifactDownloadReference\x12;.kokoro.storage.v3.GetFinalArtifactDownloadReferenceRequest\x1a<.kokoro.storage.v3.GetFinalArtifactDownloadReferenceResponse\x12t\n\x13ReleaseProjectScope\x12-.kokoro.storage.v3.ReleaseProjectScopeRequest\x1a..kokoro.storage.v3.ReleaseProjectScopeResponse\x12\x83\x01\n\x18ReleaseConversationScope\x122.kokoro.storage.v3.ReleaseConversationScopeRequest\x1a3.kokoro.storage.v3.ReleaseConversationScopeResponse\x12\xa4\x01\n#ReleaseConversationWorkspaceOutputs\x12=.kokoro.storage.v3.ReleaseConversationWorkspaceOutputsRequest\x1a>.kokoro.storage.v3.ReleaseConversationWorkspaceOutputsResponseb\x06proto3',
     [
         timestamp_pb.desc(),
         common_pb.desc(),
@@ -2004,6 +2283,8 @@ _DESC = file_desc(
         "ListFinalArtifactsResponse": ListFinalArtifactsResponse,
         "GetFinalArtifactRequest": GetFinalArtifactRequest,
         "GetFinalArtifactResponse": GetFinalArtifactResponse,
+        "DeleteFinalArtifactRequest": DeleteFinalArtifactRequest,
+        "DeleteFinalArtifactResponse": DeleteFinalArtifactResponse,
         "GetFinalArtifactDownloadReferenceRequest": GetFinalArtifactDownloadReferenceRequest,
         "GetFinalArtifactDownloadReferenceResponse": GetFinalArtifactDownloadReferenceResponse,
         "GetDownloadReferenceRequest": GetDownloadReferenceRequest,
@@ -2012,6 +2293,8 @@ _DESC = file_desc(
         "ReleaseProjectScopeResponse": ReleaseProjectScopeResponse,
         "ReleaseConversationScopeRequest": ReleaseConversationScopeRequest,
         "ReleaseConversationScopeResponse": ReleaseConversationScopeResponse,
+        "ReleaseConversationWorkspaceOutputsRequest": ReleaseConversationWorkspaceOutputsRequest,
+        "ReleaseConversationWorkspaceOutputsResponse": ReleaseConversationWorkspaceOutputsResponse,
         "DeleteAssetRequest": DeleteAssetRequest,
         "DeleteAssetResponse": DeleteAssetResponse,
         "ArtifactState": ArtifactState,
@@ -2020,6 +2303,7 @@ _DESC = file_desc(
         "UploadPurpose": UploadPurpose,
         "UploadState": UploadState,
         "AssetOrigin": AssetOrigin,
+        "PersonalLibraryFileType": PersonalLibraryFileType,
     },
 )
 

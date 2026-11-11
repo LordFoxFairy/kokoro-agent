@@ -124,3 +124,85 @@ async def test_unapproved_tool_scope_does_not_invalidate_other_tools() -> None:
     client = PlatformMcpClient(owner, packages=None, run_id="run")
     await client.check((McpConnectionRef(connection_id="connection-1"),))
     assert len(owner.requests) == 3
+
+
+async def test_check_returns_only_current_owner_public_declarations_without_extra_io() -> (
+    None
+):
+    from kokoro_agent.clients.mcp import McpConnectionRef
+    from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+
+    owner = Owner()
+    declarations = await PlatformMcpClient(owner, packages=None, run_id="run").check(
+        (McpConnectionRef(connection_id="connection-1"),)
+    )
+    assert declarations is not None
+    assert [
+        (item.connection_id, item.selector, item.display_name) for item in declarations
+    ] == [("connection-1", "echo", "echo")]
+    assert len(owner.requests) == 3
+
+
+@pytest.mark.parametrize(
+    "name", ["", "secret.txt", "e\u0301", "x\u202e", "x\ud800", "x" * 121]
+)
+async def test_check_omits_invalid_public_metadata_without_changing_authorization(
+    name: str,
+) -> None:
+    from kokoro_agent.clients.mcp import McpConnectionRef
+    from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+
+    class BadNameOwner(Owner):
+        async def send(self, request: object, *, timeout_s: float = 10) -> object:
+            response = await super().send(request, timeout_s=timeout_s)
+            if isinstance(response, p.ListMcpServerDeclarationsResponse):
+                response.capabilities[0].display_name = name
+            return response
+
+    owner = BadNameOwner()
+    client = PlatformMcpClient(owner, packages=None, run_id="r")
+    refs = (McpConnectionRef(connection_id="connection-1"),)
+    if "\ud800" in name:
+        # Invalid UTF-8 is already a rejected owner transport, not valid metadata.
+        from kokoro_agent.clients.mcp import McpClientError
+
+        with pytest.raises(McpClientError):
+            await client.check(refs)
+    else:
+        declarations = await client.check(refs)
+        assert [(item.selector, item.display_name) for item in declarations] == [
+            ("echo", "echo")
+        ]
+        assert all(item.display_name != name for item in declarations)
+    assert len(owner.requests) == 3
+
+
+async def test_real_public_selector_not_long_capability_description_is_the_tool_name() -> (
+    None
+):
+    from kokoro_agent.clients.mcp import McpConnectionRef
+    from kokoro_agent.clients.mcp_runtime import PlatformMcpClient
+
+    class DescriptiveOwner(Owner):
+        async def send(self, request: object, *, timeout_s: float = 10) -> object:
+            response = await super().send(request, timeout_s=timeout_s)
+            if isinstance(response, p.ListMcpServerDeclarationsResponse):
+                response.capabilities[
+                    0
+                ].display_name = (
+                    "Get a list of documentation topics for a GitHub repository."
+                )
+                response.capabilities[0].selector = "read_wiki_structure"
+            if isinstance(response, p.GetMcpConnectionResponse):
+                assert response.connection is not None
+                response.connection.allowed_selectors = ["read_wiki_structure"]
+            return response
+
+    owner = DescriptiveOwner()
+    declarations = await PlatformMcpClient(owner, packages=None, run_id="run").check(
+        (McpConnectionRef(connection_id="connection-1"),)
+    )
+    assert [(item.selector, item.display_name) for item in declarations] == [
+        ("read_wiki_structure", "read_wiki_structure")
+    ]
+    assert len(owner.requests) == 3

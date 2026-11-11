@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from support.model_execution import (
+    unavailable_model_execution,
+    UnavailableModelExecution,
+)
+
 import asyncio
 from copy import deepcopy
 import hashlib
@@ -20,11 +25,11 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 from pydantic import SecretStr, TypeAdapter
 
+from kokoro_agent.domain.chat.action_intent import ActionObservationSink
 from kokoro_agent.agent_factory import AgentFactory, AgentHandle
 from kokoro_agent.agents.subagent_catalog import build_subagent_catalog
 from kokoro_agent.clients.system import SystemModelClient
 from kokoro_agent.config import AppConfig
-from kokoro_agent.model.credentials import ModelCredential
 from kokoro_agent.domain.run.models import (
     ExecutionTerminalAuthority,
     RunTerminalOutcome,
@@ -34,6 +39,7 @@ from kokoro_agent.domain.run.repository import RunRepository
 from kokoro_agent.domain.run.repository import LeaseFence
 from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.execution.events import RunEmitter
+from kokoro_agent.execution.failures import run_failed_payload
 from kokoro_agent.execution import publish_agent_events
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.execution.runtime_profile_plan import RuntimeAssemblyPolicy
@@ -163,7 +169,13 @@ def _emit_prepare_trace(
 @dataclass(slots=True)
 class _OwnerAndProviderPeer:
     owner_requests: int = 0
+    credential_requests: int = 0
     provider_requests: int = 0
+    provider_body: bytes | None = None
+    provider_content_type: str = "text/event-stream"
+    provider_followup: bytes | None = None
+    pause_provider: asyncio.Event | None = None
+    provider_started: asyncio.Event = field(default_factory=asyncio.Event)
     unknown_requests: list[str] = field(default_factory=list[str])
     _server: asyncio.Server | None = None
     _writers: set[asyncio.StreamWriter] = field(
@@ -212,25 +224,68 @@ class _OwnerAndProviderPeer:
                 body = _system_route_body(self.origin + "/v1")
                 content_type = "application/json"
                 status = "200 OK"
+            elif (
+                request_line
+                == "POST /v1/system/model-catalog/credentials/read HTTP/1.1"
+            ):
+                self.credential_requests += 1
+                route = json.loads(_system_route_body(self.origin + "/v1"))["data"]
+                body = json.dumps(
+                    {
+                        "data": {
+                            **{
+                                key: route[key]
+                                for key in (
+                                    "feature_key",
+                                    "label_key",
+                                    "provider_id",
+                                    "revision_id",
+                                    "digest",
+                                )
+                            },
+                            "secret_handle_ref": route["connection"][
+                                "secret_handle_ref"
+                            ],
+                            "api_key": "runtime-chain-fixture-key",
+                        }
+                    }
+                ).encode()
+                content_type = "application/json"
+                status = "200 OK"
             elif request_line == "POST /v1/chat/completions HTTP/1.1":
                 self.provider_requests += 1
-                body = _provider_stream_body()
-                content_type = "text/event-stream"
+                body = (
+                    self.provider_body
+                    if self.provider_body is not None
+                    else _provider_stream_body()
+                )
+                if self.provider_requests > 1 and self.provider_followup is not None:
+                    body = self.provider_followup
+                content_type = self.provider_content_type
                 status = "200 OK"
             else:
                 self.unknown_requests.append(request_line)
                 body = b'{"error":"unknown route"}'
                 content_type = "application/json"
                 status = "404 Not Found"
-            writer.write(
-                (
-                    f"HTTP/1.1 {status}\r\n"
-                    f"Content-Type: {content_type}\r\n"
-                    f"Content-Length: {len(body)}\r\n"
-                    "Connection: close\r\n\r\n"
-                ).encode("ascii")
-                + body
-            )
+            prefix = (
+                f"HTTP/1.1 {status}\r\n"
+                f"Content-Type: {content_type}\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+            ).encode("ascii")
+            if (
+                self.pause_provider is not None
+                and request_line == "POST /v1/chat/completions HTTP/1.1"
+            ):
+                split = len(body) // 2
+                writer.write(prefix + body[:split])
+                await writer.drain()
+                self.provider_started.set()
+                await self.pause_provider.wait()
+                writer.write(body[split:])
+            else:
+                writer.write(prefix + body)
             await writer.drain()
         finally:
             writer.close()
@@ -309,7 +364,7 @@ def _request() -> RunRequest:
     )
 
 
-async def _progress(_phase: SkillPhase) -> SkillProgressCommitted:
+async def _progress(_phase: SkillPhase, **_display: object) -> SkillProgressCommitted:
     return SkillProgressCommitted(source_index=0)
 
 
@@ -782,15 +837,9 @@ async def test_r198_unpublished_billing_fails_closed_and_seals_not_dispatched(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r197-gateway-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
+            model_execution=unavailable_model_execution,
             model=config.model,
             sandbox=config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
@@ -943,16 +992,10 @@ async def test_r199_prepare_lock_cancellation_propagates_and_rolls_back(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r199-gateway-key"),
-                ),
-            ),
         )
         prepare_trace = _PrepareTaskTrace()
         dependencies = WorkerDependencies(
+            model_execution=unavailable_model_execution,
             model=config.model,
             sandbox=config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
@@ -1168,15 +1211,9 @@ async def test_r199_terminal_supervisor_recovery_is_byte_stable_and_zero_write(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r199-gateway-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
+            model_execution=unavailable_model_execution,
             model=config.model,
             sandbox=config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
@@ -1252,7 +1289,10 @@ async def test_r199_terminal_supervisor_recovery_is_byte_stable_and_zero_write(
             await handle.aclose()
 
         async def forbidden_build(
-            _request: RunRequest, _lease: LeaseFence, _progress: SkillProgressSink
+            _request: RunRequest,
+            _lease: LeaseFence,
+            _progress: SkillProgressSink,
+            _action_observer: ActionObservationSink,
         ) -> AgentHandle:
             raise AssertionError("terminal recovery must not rebuild the Agent")
 
@@ -1374,15 +1414,9 @@ async def test_r245_native_final_request_precedes_prepare_without_billing(
     ):
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r197-gateway-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
+            model_execution=unavailable_model_execution,
             model=config.model,
             sandbox=config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
@@ -1576,6 +1610,7 @@ async def test_r245_native_final_request_precedes_prepare_without_billing(
         "swallowed_denial",
         "unrelated_error",
         "two_claimants",
+        "two_claimants_rethrow",
         "late_child",
         "owner_cancel",
         "invalid_profile",
@@ -1632,15 +1667,9 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         )
         config = AppConfig(
             model_allow_loopback_http=True,
-            model_credentials=(
-                ModelCredential(
-                    provider_id="10000000-0000-4000-8000-000000000002",
-                    secret_handle_ref="runtime-chain-model-key",
-                    api_key=SecretStr("r246-synthetic-key"),
-                ),
-            ),
         )
         dependencies = WorkerDependencies(
+            model_execution=unavailable_model_execution,
             model=config.model,
             sandbox=config.sandbox,
             runtime_policy=RuntimeAssemblyPolicy.from_settings(
@@ -1701,13 +1730,21 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         feature = _JSON_OBJECT.validate_python(frozen_recipe["feature"], strict=True)
         entry_agent = feature["entry_agent"]
         assert isinstance(entry_agent, str) and entry_agent
-        clients = ModelHttpClients(config.model, route)
+        credential = await resolver.read_credential(
+            tenant_id=request.execution_identity.tenant_ref,
+            route=route,
+            label=request.requested_model_label,
+            request_id=request.request_id,
+        )
+        clients = ModelHttpClients(config.model, route, credential)
         stack.push_async_callback(clients.aclose)
         model = make_chat_model(
             config.model, model_from_route(route, None), model_clients=clients
         )
         middleware = ModelCallRuntimeMiddleware(
             repository=repository,
+            execution=UnavailableModelExecution(),
+            route=route,
             request=request,
             lease=lease,
             planned=planned,
@@ -1725,7 +1762,7 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
                 )
             ),
         )
-        if mode in {"two_claimants", "owner_cancel"}:
+        if mode in {"two_claimants", "two_claimants_rethrow", "owner_cancel"}:
             blocker = await stack.enter_async_context(connect_pg(run_chat_database_url))
             await stack.enter_async_context(blocker.transaction())
             cursor = await stack.enter_async_context(blocker.cursor())
@@ -1758,11 +1795,14 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
 
                 late_tasks.append(asyncio.create_task(late()))
                 return ModelResponse(result=[])
-            if mode == "two_claimants":
+            if mode in {"two_claimants", "two_claimants_rethrow"}:
                 first = asyncio.create_task(model.ainvoke(current.messages))
                 await trace.entered.wait()
                 second = asyncio.create_task(model.ainvoke(current.messages))
                 await asyncio.gather(first, second, return_exceptions=True)
+                if mode == "two_claimants_rethrow":
+                    # The real SDK wraps the rejection of this now-closed scope.
+                    await model.ainvoke(current.messages)
                 return ModelResponse(result=[])
             try:
                 response = await model.ainvoke(current.messages)
@@ -1800,7 +1840,7 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
         assert peer.unknown_requests == []
         if mode == "unrelated_error":
             assert failure is unrelated
-        elif mode in {"two_claimants", "invalid_profile"}:
+        elif mode in {"two_claimants", "two_claimants_rethrow", "invalid_profile"}:
             assert isinstance(failure, ModelCallInputInvalid), {
                 "failure_type": type(failure).__name__,
                 "prepare_outcome": trace.outcome,
@@ -1837,6 +1877,7 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
             in {
                 "late_child",
                 "two_claimants",
+                "two_claimants_rethrow",
                 "owner_cancel",
                 "invalid_profile",
                 "materialization_failure",
@@ -1903,3 +1944,435 @@ async def test_r246_final_request_lifecycle_real_sdk_and_pg(
                 )
                 assert await persisted() == before
                 assert peer.provider_requests == 0
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "complete",
+        "cost_metadata",
+        "different_model",
+        "missing_usage",
+        "tool_call",
+        "cancelled",
+    ],
+)
+@pytest.mark.parametrize("wire", ["sse", "json"])
+async def test_native_graph_dispatch_seals_same_stream_before_returning(
+    run_repository: RunRepository,
+    run_chat_database_url: str,
+    run_chat_schema: str,
+    checkpointer: BaseCheckpointSaver[str],
+    memory_store: BaseStore,
+    mode: str,
+    wire: str,
+) -> None:
+    """Real SDK/HTTP/PG; named financial peer does not claim real Billing pricing."""
+    from dataclasses import asdict
+    from kokoro_agent.domain.run.models import LeasedRun
+    from kokoro_agent.model.budget import (
+        ModelBudgetAuthorizer,
+        ModelBudgetCommand,
+        ModelBudgetGrant,
+    )
+    from kokoro_agent.model.execution import ModelCallExecutor
+    from kokoro_agent.model.call_models import ModelCallAuthorizationUnavailable
+    from kokoro_agent.model.financial_reconciliation import ModelFinancialReconciler
+    from kokoro_agent.infrastructure.postgres_model_financial_repository import (
+        PostgresModelFinancialRepository,
+    )
+    from kokoro_agent.model.settlement import (
+        ModelSettlementCommand,
+        ModelSettlementReceipt,
+    )
+    from kokoro_agent.model.usage_evidence_v2 import parse_evidence
+
+    request = _request()
+    request = request.model_copy(
+        update={
+            "execution_identity": request.execution_identity.model_copy(
+                update={"subject": request.execution_identity.actor}
+            )
+        }
+    )
+    scope = RunScope.of(request)
+    await run_repository.enqueue_dispatch(
+        request, scope.namespace, f"native-financial:{request.run_id}"
+    )
+    lease = await run_repository.claim_dispatch(request, "native-financial-worker")
+    assert lease is not None
+    repository = PostgresModelCallRepository(run_chat_database_url, run_chat_schema)
+    financial_repository = PostgresModelFinancialRepository(
+        run_chat_database_url, run_chat_schema
+    )
+    reservations: list[ModelBudgetCommand] = []
+    settlements: list[ModelSettlementCommand] = []
+    admissions: dict[str, str] = {}
+    completed_modes = {"complete", "cost_metadata", "tool_call"}
+
+    class NamedBudgetPeer:
+        async def reserve(
+            self,
+            *,
+            tenant_id: str,
+            command: ModelBudgetCommand,
+            proof: SecretStr,
+            key: str,
+            request_id: str,
+        ) -> ModelBudgetGrant:
+            assert tenant_id == request.execution_identity.tenant_ref
+            assert proof.get_secret_value() == "native-financial-proof-fixture"
+            assert key == command.request_ref
+            reservations.append(command)
+            return ModelBudgetGrant(
+                admission_ref=admissions.setdefault(command.attempt_id, str(uuid4()))
+            )
+
+    class NamedProofPeer:
+        async def issue(self, operation: str, request_binding_sha256: str) -> str:
+            assert (
+                operation == "billing.credit.consume"
+                and len(request_binding_sha256) == 64
+            )
+            return "native-financial-proof-fixture"
+
+    class NamedFinancialPeer:
+        async def recover(
+            self,
+            *,
+            tenant_id: str,
+            command: ModelBudgetCommand,
+            key: str,
+            request_id: str,
+        ) -> ModelBudgetGrant | None:
+            raise AssertionError(
+                "granted native execution must not recreate or recover funds"
+            )
+
+        async def settle(
+            self,
+            *,
+            tenant_id: str,
+            admission_ref: str,
+            command: ModelSettlementCommand,
+            key: str,
+            request_id: str,
+        ) -> ModelSettlementReceipt:
+            assert (
+                admission_ref == admissions[command.attempt_id]
+                and key == "agent-model-settle:" + command.event_id
+            )
+            final = await repository.read_final_evidence(
+                tenant_id, command.attempt_id, command.event_id
+            )
+            assert final is not None
+            original = parse_evidence(final.evidence_bytes)
+            async with (
+                connect_pg(run_chat_database_url) as connection,
+                connection.cursor() as cursor,
+            ):
+                await execute_sql(
+                    cursor,
+                    f"SELECT provider_response_id FROM {qualified(run_chat_schema, 'kokoro_agent_model_call_attempt')} WHERE attempt_id=%s",
+                    (command.attempt_id,),
+                )
+                assert await fetch_one(cursor) == {
+                    "provider_response_id": None
+                    if mode == "cancelled"
+                    else "chatcmpl-native-tool"
+                    if wire == "sse" and mode == "tool_call" and not settlements
+                    else "chatcmpl-r197"
+                    if wire == "sse"
+                    else "chatcmpl-native-financial"
+                }
+            assert original.execution.outcome == (
+                "cancelled" if mode == "cancelled" else "completed"
+            )
+            assert original.actual.state == (
+                "unknown" if mode in {"different_model", "cancelled"} else "verified"
+            )
+            assert original.usage.state == (
+                "unresolved" if mode in {"missing_usage", "cancelled"} else "normalized"
+            )
+            if original.usage.state == "normalized":
+                assert original.usage.value.profile_assessment.state == "supported"
+                assert original.usage.value.input_total.model_dump() == {
+                    "state": "reported",
+                    "count": "1",
+                }
+                assert original.usage.value.output_total.model_dump() == {
+                    "state": "reported",
+                    "count": "1",
+                }
+            elif mode == "missing_usage":
+                assert original.usage.reason == "missing_usage"
+                if wire == "sse":
+                    assert original.usage.raw_usage_digest is None
+            settlements.append(command)
+            return ModelSettlementReceipt(
+                admission_ref=admission_ref,
+                **asdict(command),
+                status="captured"
+                if mode in completed_modes
+                else "pending_reconciliation",
+                reason=None if mode in completed_modes else "unknown_usage_or_outcome",
+                captured_credits="1" if mode in completed_modes else "0",
+                released_credits="9" if mode in completed_modes else "0",
+                usage_event_ref=str(uuid4()) if mode in completed_modes else None,
+                settlement_ref=str(uuid4()) if mode in completed_modes else None,
+                updated_at="2026-10-23T00:00:00.000Z",
+            )
+
+    execution = ModelCallExecutor(
+        repository=repository,
+        authorizer=ModelBudgetAuthorizer(
+            repository=repository,
+            budget=NamedBudgetPeer(),
+            proofs=NamedProofPeer(),
+            leased_run=LeasedRun(request=request, lease=lease),
+        ),
+        financial=ModelFinancialReconciler(
+            repository=financial_repository, client=NamedFinancialPeer()
+        ),
+    )
+    body = (
+        _provider_stream_body()
+        if wire == "sse"
+        else json.dumps(
+            {
+                "id": "chatcmpl-native-financial",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "gateway-model-r197",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+            separators=(",", ":"),
+        ).encode()
+    )
+    if wire == "sse":
+        body = body.replace(
+            b'"delta":{},"finish_reason":"stop"}],"usage":',
+            b'"delta":{},"finish_reason":"stop"}]}\n\ndata: {"id":"chatcmpl-r197","object":"chat.completion.chunk","created":1,"model":"gateway-model-r197","choices":[],"usage":',
+        )
+    if mode != "different_model":
+        body = body.replace(b"gateway-model-r197", b"provider-model-r197")
+    if mode == "cost_metadata":
+        body = body.replace(
+            b'"total_tokens":2',
+            b'"total_tokens":2,"cost":0.95,"cost_details":{"upstream_inference_cost":19}',
+        )
+    if mode == "missing_usage":
+        body = body.replace(
+            b',"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}', b""
+        )
+    followup = None
+    if mode == "tool_call":
+        followup = body
+        arguments = json.dumps(
+            {
+                "todos": [
+                    {"content": "Verify native tool execution", "status": "completed"}
+                ]
+            }
+        )
+        calls = [
+            {
+                "id": "call-native-todo",
+                "type": "function",
+                "function": {"name": "write_todos", "arguments": arguments},
+            }
+        ]
+        if wire == "json":
+            document = _JSON_OBJECT.validate_json(body, strict=True)
+            document["choices"] = [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": calls,
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+            body = json.dumps(document, separators=(",", ":")).encode()
+        else:
+            frame = {
+                "id": "chatcmpl-native-tool",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "provider-model-r197",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant",
+                            "tool_calls": [{"index": 0, **calls[0]}],
+                        },
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            body = (
+                b"data: "
+                + json.dumps(frame).encode()
+                + b"\n\n"
+                + b"\n\n".join(body.split(b"\n\n")[1:]).replace(
+                    b"chatcmpl-r197", b"chatcmpl-native-tool"
+                )
+            )
+    provider_release = asyncio.Event()
+    async with (
+        _OwnerAndProviderPeer(
+            provider_body=body,
+            provider_followup=followup,
+            pause_provider=provider_release if mode == "cancelled" else None,
+            provider_content_type="text/event-stream"
+            if wire == "sse"
+            else "application/json",
+        ) as peer,
+        SystemModelClient(
+            peer.origin, SecretStr("native-financial-system-fixture")
+        ) as resolver,
+    ):
+        config = AppConfig(model_allow_loopback_http=True)
+        dependencies = WorkerDependencies(
+            model_execution=lambda _: execution,
+            model=config.model,
+            sandbox=config.sandbox,
+            runtime_policy=RuntimeAssemblyPolicy.from_settings(
+                run_token_budget=config.run_token_budget,
+                recursion_limit=config.recursion_limit,
+                model=config.model,
+                sandbox=config.sandbox,
+            ),
+            manifest=production_manifest(),
+            subagent_catalog=build_subagent_catalog(None),
+            toolbox=build_toolbox(fetch_allow_private=False, search=None),
+            checkpointer=checkpointer,
+            run_repository=run_repository,
+            model_call_repository=repository,
+            memory_store=memory_store,
+            model_resolver=resolver,
+        )
+        handle = await AgentFactory(dependencies).build(request, lease, _progress)
+        from kokoro_agent.model.call_scope import ModelCallScope, bind_model_call_scope
+
+        lifecycle = ModelCallScope(timeout_s=5)
+        primary: BaseException | None = None
+        answer = ""
+        try:
+            with bind_model_call_scope(lifecycle):
+                try:
+                    from langchain_core.messages import AIMessage, AIMessageChunk
+                    from collections.abc import AsyncIterator
+
+                    stream_adapter: TypeAdapter[
+                        Callable[..., AsyncIterator[object]]
+                    ] = TypeAdapter(Callable[..., AsyncIterator[object]])
+                    invoke_adapter: TypeAdapter[
+                        Callable[..., Awaitable[dict[str, object]]]
+                    ] = TypeAdapter(Callable[..., Awaitable[dict[str, object]]])
+                    native_stream = stream_adapter.validate_python(
+                        getattr(handle.runnable, "astream"), strict=True
+                    )
+                    native_invoke = invoke_adapter.validate_python(
+                        getattr(handle.runnable, "ainvoke"), strict=True
+                    )
+
+                    cfg: RunnableConfig = {
+                        "configurable": {"thread_id": scope.scoped_thread_id}
+                    }
+                    payload = {
+                        "messages": [
+                            HumanMessage(content="native financial round trip")
+                        ]
+                    }
+
+                    async def consume_native() -> None:
+                        nonlocal answer
+                        if wire == "sse":
+                            async for part in native_stream(
+                                payload, config=cfg, stream_mode="messages"
+                            ):
+                                message = _OBJECT_TUPLE.validate_python(
+                                    part, strict=True
+                                )[0]
+                                if isinstance(message, AIMessageChunk):
+                                    answer += TypeAdapter(str).validate_python(
+                                        getattr(message, "content"), strict=True
+                                    )
+                        else:
+                            result = await native_invoke(payload, config=cfg)
+                            messages = _OBJECT_LIST.validate_python(
+                                result["messages"], strict=True
+                            )
+                            assert isinstance(messages[-1], AIMessage)
+                            answer = TypeAdapter(str).validate_python(
+                                getattr(messages[-1], "content"), strict=True
+                            )
+
+                    invocation = asyncio.create_task(consume_native())
+                    if mode == "cancelled":
+                        await asyncio.wait_for(peer.provider_started.wait(), 5)
+                        invocation.cancel()
+                    await invocation
+                except BaseException as error:
+                    primary = error
+                finally:
+                    await lifecycle.settle(cancel_active=True, primary=primary)
+            if mode in completed_modes:
+                if primary is not None:
+                    raise primary
+                assert primary is None
+                assert answer == "ok"
+            elif mode == "cancelled":
+                assert isinstance(primary, asyncio.CancelledError)
+            else:
+                assert isinstance(primary, ModelCallAuthorizationUnavailable), type(
+                    primary
+                ).__name__
+                assert "reconciliation" in str(primary)
+                assert run_failed_payload(primary).model_dump() == {
+                    "code": "model_settlement_pending",
+                    "retryable": False,
+                }
+        finally:
+            provider_release.set()
+            await handle.aclose()
+        expected_calls = 2 if mode == "tool_call" else 1
+        assert peer.provider_requests == expected_calls and not peer.unknown_requests
+        assert len(reservations) == len(settlements) == expected_calls
+        if mode == "tool_call":
+            from langchain_core.messages import ToolMessage
+
+            native_state = await handle.runnable.aget_state(
+                {"configurable": {"thread_id": scope.scoped_thread_id}}
+            )
+            values = _JSON_OBJECT.validate_python(native_state.values, strict=True)
+            messages = _OBJECT_LIST.validate_python(values["messages"], strict=True)
+            assert any(
+                isinstance(message, ToolMessage) and message.name == "write_todos"
+                for message in messages
+            )
+            assert values["todos"] == [
+                {"content": "Verify native tool execution", "status": "completed"}
+            ]
+        ack = await financial_repository.latest_ack(
+            request.execution_identity.tenant_ref, settlements[0].attempt_id
+        )
+        assert ack is not None and ack.status == (
+            "captured" if mode in completed_modes else "pending_reconciliation"
+        )
+        assert ack.captured_credits == ("1" if mode in completed_modes else "0")

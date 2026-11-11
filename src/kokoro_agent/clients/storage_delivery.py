@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import PurePosixPath
 from typing import Protocol, TypeVar
 
@@ -22,13 +22,22 @@ from kokoro_agent.clients.storage import (
     DeliveryReceipt,
     DeliveryRecoveryRequest,
     DeliveryRequest,
+    InputResourceReadReceipt,
+    InputResourceReadRequest,
     StorageClientError,
 )
+from kokoro_agent.domain.chat.projection import safe_delivery_display_path
 from kokoro_agent.domain.run.models import LeaseFence, ToolJournalRecord
+from kokoro_agent.domain.run.workspace_output import (
+    MAX_OUTPUT_BYTES,
+    output_path_digest,
+    workspace_output_mime,
+)
 from kokoro_agent.generated.kokoro.common.v1.common_pb import CommandIdentity
 from kokoro_agent.generated.kokoro.storage.v3 import storage_pb as pb
 from kokoro_agent.clients.storage_transport import DeliveryTransport
 from kokoro_agent.protocol import ArtifactKind, RunRequest
+from kokoro_agent.protocol.control import StorageResourceRef
 
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 _Response = TypeVar("_Response")
@@ -99,16 +108,25 @@ def _command(seed: str, stage: str, fields: object) -> CommandIdentity:
     )
 
 
-def _intent_stage(value: Mapping[str, object]) -> str:
-    keys = frozenset(value)
+def _intent_stage(value: Mapping[str, object]) -> tuple[str, str | None]:
+    keys = frozenset(value) - {"display_path"}
     if type(value.get("version")) is not int or value["version"] != 2:
         raise StorageClientError("DELIVERY_INTENT_VERSION_UNSUPPORTED")
+    display_path = value.get("display_path")
+    if "display_path" in value and (
+        not isinstance(display_path, str)
+        or display_path != value.get("path")
+        or not safe_delivery_display_path(display_path)
+    ):
+        raise StorageClientError("DELIVERY_INTENT_INVALID")
+    if not isinstance(display_path, str):
+        display_path = None
     if keys == _BASE_INTENT_KEYS:
-        return "frozen"
+        return "frozen", display_path
     if keys == _ADMITTED_INTENT_KEYS:
-        return "admitted"
+        return "admitted", display_path
     if keys == _SELECTED_INTENT_KEYS:
-        return "selected"
+        return "selected", display_path
     raise StorageClientError("DELIVERY_INTENT_INVALID")
 
 
@@ -208,7 +226,7 @@ class StorageDeliveryClient:
             frozen = _JSON_OBJECT.validate_json(recorded.result)
         except ValidationError as exc:
             raise StorageClientError("DELIVERY_INTENT_INVALID") from exc
-        stage = _intent_stage(frozen)
+        stage, display_path = _intent_stage(frozen)
         run = await self._canonical(
             DeliveryRequest(
                 request_id=request.request_id,
@@ -346,16 +364,23 @@ class StorageDeliveryClient:
         else:
             asset_id = status.asset_id
         await self._require_clean(owner_request, asset_id)
-        return await self._finalize(owner_request, asset_id=asset_id, size_bytes=size)
+        return await self._finalize(
+            owner_request, asset_id=asset_id, size_bytes=size, display_path=display_path
+        )
 
     async def _call(
         self, request: DeliveryRequest, method: str, message: object
     ) -> object:
         run = await self._canonical(request)
+        return await self._owner_call(run, request.request_id, method, message)
+
+    async def _owner_call(
+        self, run: RunRequest, request_id: str, method: str, message: object
+    ) -> object:
         headers = {
             "x-kokoro-tenant-id": run.execution_identity.tenant_ref,
             "x-kokoro-subject-id": run.execution_identity.subject.opaque_ref,
-            "x-kokoro-request-id": request.request_id,
+            "x-kokoro-request-id": request_id,
             "x-kokoro-scope-kind": "conversation",
             "x-kokoro-scope-id": run.session_id,
         }
@@ -375,6 +400,236 @@ class StorageDeliveryClient:
             raise StorageClientError(
                 f"STORAGE_{method.upper()}_{exc.code.name}", retryable=retryable
             ) from None
+
+    async def upload_workspace_output(
+        self,
+        run: RunRequest,
+        lease: LeaseFence,
+        version_id: str,
+        path: str,
+        content_sha256: str,
+        content: bytes,
+        selected: tuple[str, str] | None,
+        freeze: Callable[[str, str], Awaitable[bool]],
+    ) -> str:
+        """Complete one exact process Asset; never create an Artifact."""
+        if (
+            output_path_digest(path) is None
+            or len(content) > MAX_OUTPUT_BYTES
+            or hashlib.sha256(content).hexdigest() != content_sha256
+            or run.execution_identity.subject.kind != "user"
+            or run.feature_key != "chat"
+            or await self._runs.get_request(run.run_id) != run
+        ):
+            raise StorageClientError("WORKSPACE_OUTPUT_BINDING_INVALID")
+
+        async def current() -> None:
+            if not await self._runs.is_lease_current(run.run_id, lease):
+                raise StorageClientError("WORKSPACE_OUTPUT_LEASE_STALE")
+
+        request_id = _digest(["workspace-output:v1", run.run_id, version_id])
+        filename, mime = PurePosixPath(path).name, workspace_output_mime(path)
+        await current()
+        if selected is None:
+            created = _expect(
+                await self._owner_call(
+                    run,
+                    request_id,
+                    "create_upload",
+                    pb.CreateUploadRequest(
+                        command=_command(
+                            request_id,
+                            "create_upload",
+                            [
+                                filename,
+                                mime,
+                                len(content),
+                                content_sha256,
+                                int(pb.UploadPurpose.WORKSPACE_OUTPUT),
+                            ],
+                        ),
+                        filename=filename,
+                        mime_type=mime,
+                        size_bytes=len(content),
+                        content_sha256=content_sha256,
+                        upload_purpose=pb.UploadPurpose.WORKSPACE_OUTPUT,
+                    ),
+                ),
+                pb.CreateUploadResponse,
+            )
+            if not created.upload_id or created.upload_reference is None:
+                raise StorageClientError("WORKSPACE_OUTPUT_UPLOAD_MISMATCH")
+            if created.upload_reference.required_headers.get("content-type") != mime:
+                raise StorageClientError("WORKSPACE_OUTPUT_UPLOAD_MISMATCH")
+            await current()
+            try:
+                source_version = await self._transport.put(
+                    created.upload_reference, content
+                )
+            except (httpx.HTTPError, TimeoutError) as exc:
+                raise StorageClientError(
+                    "STORAGE_UPLOAD_PUT_FAILED", retryable=True
+                ) from exc
+            selected = (created.upload_id, _source_version(source_version))
+            if not await freeze(*selected):
+                raise StorageClientError("WORKSPACE_OUTPUT_LEASE_STALE")
+        upload_id, source_version = selected
+        await current()
+        completed = _expect(
+            await self._owner_call(
+                run,
+                request_id,
+                "complete_upload",
+                pb.CompleteUploadRequest(
+                    command=_command(
+                        request_id,
+                        "complete_upload",
+                        [upload_id, content_sha256, len(content), source_version],
+                    ),
+                    upload_id=upload_id,
+                    content_sha256=content_sha256,
+                    size_bytes=len(content),
+                    source_version_id=source_version,
+                ),
+            ),
+            pb.CompleteUploadResponse,
+        )
+        if (
+            completed.upload_id != upload_id
+            or not completed.asset_id
+            or completed.scan_state != pb.ScanState.CLEAN
+        ):
+            raise StorageClientError("WORKSPACE_OUTPUT_NOT_CLEAN")
+        await current()
+        return completed.asset_id
+
+    async def _read_canonical(
+        self, request: InputResourceReadRequest
+    ) -> tuple[RunRequest, StorageResourceRef]:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+        run = await self._runs.get_request(request.run_id)
+        if (
+            run is None
+            or run.run_id != request.run_id
+            or run.execution_identity != request.identity
+        ):
+            raise StorageClientError("INPUT_RUN_MISMATCH")
+        if run.execution_identity.subject.kind != "user":
+            raise StorageClientError("INPUT_READ_CONTEXT_INVALID")
+        reference = next(
+            (
+                ref
+                for ref in run.selected_resource_refs
+                if ref.kind != "final_answer" and ref == request.reference
+            ),
+            None,
+        )
+        if reference is None:
+            raise StorageClientError("INPUT_RESOURCE_NOT_SELECTED")
+        if not await self._runs.is_lease_current(request.run_id, request.lease):
+            raise StorageClientError("INPUT_LEASE_STALE")
+        return run, reference
+
+    async def _read_call(
+        self,
+        request: InputResourceReadRequest,
+        run: RunRequest,
+        reference: StorageResourceRef,
+        method: str,
+        message: object,
+    ) -> object:
+        headers = {
+            "x-kokoro-tenant-id": run.execution_identity.tenant_ref,
+            "x-kokoro-subject-id": run.execution_identity.subject.opaque_ref,
+            "x-kokoro-request-id": request.request_id,
+            "x-kokoro-scope-kind": reference.source_scope.kind,
+            "x-kokoro-scope-id": reference.source_scope.id,
+        }
+        try:
+            return await self._transport.call(method, message, headers)
+        except ConnectError as exc:
+            if exc.code == Code.CANCELED:
+                raise asyncio.CancelledError from None
+            raise StorageClientError(
+                f"STORAGE_{method.upper()}_{exc.code.name}",
+                retryable=exc.code
+                in {
+                    Code.UNKNOWN,
+                    Code.DEADLINE_EXCEEDED,
+                    Code.RESOURCE_EXHAUSTED,
+                    Code.ABORTED,
+                    Code.INTERNAL,
+                    Code.UNAVAILABLE,
+                },
+            ) from None
+
+    async def read_input(
+        self, request: InputResourceReadRequest
+    ) -> InputResourceReadReceipt:
+        """Read only the exact frozen input, rechecking its consumer lease after I/O."""
+        run, reference = await self._read_canonical(request)
+        manifest = reference.model_dump(mode="json")
+        seed = _digest([run.run_id, "selected-input", manifest])
+        if reference.kind == "artifact":
+            method = "get_final_artifact_download_reference"
+            message = pb.GetFinalArtifactDownloadReferenceRequest(
+                command=_command(seed, method, [run.run_id, manifest]),
+                artifact_id=reference.resource_id,
+                asset_id=reference.asset_id,
+                content_sha256=reference.content_sha256,
+                run_id=reference.source_run_id,
+                consumer_run_id=run.run_id,
+            )
+        else:
+            method = "get_download_reference"
+            message = pb.GetDownloadReferenceRequest(
+                command=_command(seed, method, [run.run_id, manifest]),
+                asset_id=reference.asset_id,
+                content_sha256=reference.content_sha256,
+                consumer_run_id=run.run_id,
+            )
+        response = await self._read_call(request, run, reference, method, message)
+        await self._read_canonical(request)
+        if reference.kind == "artifact":
+            final = _expect(response, pb.GetFinalArtifactDownloadReferenceResponse)
+            if final.artifact_id != reference.resource_id:
+                raise StorageClientError("INPUT_READ_RESPONSE_MISMATCH")
+            response = final
+        else:
+            asset = _expect(response, pb.GetDownloadReferenceResponse)
+            if (
+                asset.size_bytes != int(reference.size_bytes)
+                or asset.mime_type != reference.mime_type
+                or asset.scan_state != pb.ScanState.CLEAN
+            ):
+                raise StorageClientError("INPUT_READ_RESPONSE_MISMATCH")
+            response = asset
+        if (
+            response.asset_id != reference.asset_id
+            or response.content_sha256 != reference.content_sha256
+            or response.download_reference is None
+        ):
+            raise StorageClientError("INPUT_READ_RESPONSE_MISMATCH")
+        try:
+            content = await self._transport.get(response.download_reference)
+        except (httpx.HTTPError, TimeoutError) as exc:
+            raise StorageClientError(
+                "STORAGE_DOWNLOAD_GET_FAILED", retryable=True
+            ) from exc
+        await self._read_canonical(request)
+        if (
+            len(content) != int(reference.size_bytes)
+            or hashlib.sha256(content).hexdigest() != reference.content_sha256
+        ):
+            raise StorageClientError("INPUT_READ_CONTENT_MISMATCH")
+        return InputResourceReadReceipt(
+            resource_id=reference.resource_id,
+            asset_id=reference.asset_id,
+            content_sha256=reference.content_sha256,
+            content=content,
+        )
 
     async def _put(
         self, request: DeliveryRequest, reference: pb.TransferReference
@@ -480,7 +735,9 @@ class StorageDeliveryClient:
                 ):
                     raise StorageClientError("DELIVERY_INTENT_MISMATCH")
                 frozen.update(recorded)
-        stage = _intent_stage(frozen)
+        if (prior is None or not prior.result) and request.display_path is not None:
+            frozen["display_path"] = request.display_path
+        stage, display_path = _intent_stage(frozen)
         await self._intent(request, frozen)
 
         upload_id_value = frozen.get("upload_id")
@@ -642,7 +899,10 @@ class StorageDeliveryClient:
         await self._require_clean(request, asset_id)
 
         return await self._finalize(
-            request, asset_id=asset_id, size_bytes=len(request.content)
+            request,
+            asset_id=asset_id,
+            size_bytes=len(request.content),
+            display_path=display_path,
         )
 
     async def _require_clean(self, request: DeliveryRequest, asset_id: str) -> None:
@@ -672,7 +932,12 @@ class StorageDeliveryClient:
             raise StorageClientError("DELIVERY_SCAN_PENDING", retryable=True)
 
     async def _finalize(
-        self, request: DeliveryRequest, *, asset_id: str, size_bytes: int
+        self,
+        request: DeliveryRequest,
+        *,
+        asset_id: str,
+        size_bytes: int,
+        display_path: str | None,
     ) -> DeliveryReceipt:
         run = await self._canonical(request)
         seed = _digest([request.run_id, request.tool_call_id])
@@ -746,4 +1011,5 @@ class StorageDeliveryClient:
             size_bytes=size_bytes,
             mime_type=request.mime_type,
             replayed=finalized.replayed,
+            display_path=display_path,
         )

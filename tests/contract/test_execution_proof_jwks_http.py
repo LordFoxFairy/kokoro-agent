@@ -1,4 +1,4 @@
-"""Agent HTTP 6.0.0 JWKS machine-contract pins."""
+"""Current Agent HTTP JWKS machine-contract pins."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from kokoro_agent import contract_check
+from kokoro_agent.execution_proof_contract import HTTP_CONTRACT_VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
 OPENAPI = ROOT / "contract/openapi/v1/openapi.json"
@@ -52,7 +53,7 @@ def _documents() -> tuple[dict[str, Any], dict[str, Any]]:
 
 def test_jwks_contract_is_exact_anonymous_owner_wire() -> None:
     document, provenance = _documents()
-    assert document["info"]["version"] == "7.0.0"
+    assert document["info"]["version"] == HTTP_CONTRACT_VERSION
     path = document["paths"][PATH]
     assert set(path) == {"get", "head"}
     for method in ("get", "head"):
@@ -80,7 +81,7 @@ def test_jwks_contract_is_exact_anonymous_owner_wire() -> None:
             assert expected in text
     direct = provenance["http_contract"]
     assert direct == {
-        "version": "7.0.0",
+        "version": HTTP_CONTRACT_VERSION,
         "path": "contract/openapi/v1/openapi.json",
         "sha256": hashlib.sha256(OPENAPI.read_bytes()).hexdigest(),
     }

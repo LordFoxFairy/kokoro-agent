@@ -1,4 +1,4 @@
-"""System-owned model route HTTP boundary; no provider credentials or inference."""
+"""System-owned routes and controlled ephemeral credentials; no inference."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
+from kokoro_agent.model.credentials import ModelCredential
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -135,6 +137,15 @@ class ModelResolver(Protocol):
         request_id: str | None,
     ) -> ResolvedModel: ...
 
+    async def read_credential(
+        self,
+        *,
+        tenant_id: str,
+        route: ResolvedModel,
+        label: str | None,
+        request_id: str | None,
+    ) -> ModelCredential: ...
+
 
 class _Route(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
@@ -164,6 +175,19 @@ class _Route(BaseModel):
 class _Envelope(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     data: _Route
+
+
+class _CredentialRoute(ModelCredential):
+    feature_key: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    label_key: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    provider_id: _Id = Field(repr=False)
+    revision_id: _Id
+    digest: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+
+
+class _CredentialEnvelope(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", hide_input_in_errors=True)
+    data: _CredentialRoute = Field(repr=False)
 
 
 class _OwnerError(BaseModel):
@@ -246,29 +270,14 @@ class SystemModelClient:
         body = {"feature_key": feature_key}
         if label is not None:
             body["label_key"] = label
+        raw = await self._post(
+            "/v1/system/model-catalog/resolve",
+            body,
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+        )
         try:
-            async with asyncio.timeout(self._timeout_s):
-                async with self._client.stream(
-                    "POST",
-                    "/v1/system/model-catalog/resolve",
-                    json=body,
-                    headers={
-                        "x-kokoro-tenant-id": tenant_id,
-                        "x-request-id": correlation_id,
-                    },
-                ) as response:
-                    chunks = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        if len(chunks) + len(chunk) > _MAX_RESPONSE_BYTES:
-                            raise ModelResolutionError("MODEL_RESPONSE_TOO_LARGE")
-                        chunks.extend(chunk)
-                    if response.status_code != 200:
-                        self._raise_owner_error(response.status_code, bytes(chunks))
-                    route = _Envelope.model_validate_json(bytes(chunks)).data
-        except (TimeoutError, httpx.TransportError):
-            raise ModelResolutionError(
-                "MODEL_RESOLUTION_UNAVAILABLE", retryable=True
-            ) from None
+            route = _Envelope.model_validate_json(raw).data
         except ValidationError:
             raise ModelResolutionError("MODEL_RESPONSE_INVALID") from None
         if route.feature_key != feature_key or (
@@ -291,6 +300,101 @@ class SystemModelClient:
             context_window=route.context_window,
             max_output_tokens=route.max_output_tokens,
         )
+
+    async def read_credential(
+        self,
+        *,
+        tenant_id: str,
+        route: ResolvedModel,
+        label: str | None,
+        request_id: str | None,
+    ) -> ModelCredential:
+        correlation_id = request_id or str(uuid4())
+        if (
+            not _REQUEST_ID.fullmatch(correlation_id)
+            or not 1 <= len(tenant_id) <= 160
+            or not tenant_id.isascii()
+            or any(ord(char) < 33 for char in tenant_id)
+            or not 1 <= len(route.feature_key) <= 128
+            or (
+                label is not None
+                and (not 1 <= len(label) <= 128 or label != route.label_key)
+            )
+        ):
+            raise ModelResolutionError("MODEL_REQUEST_INVALID")
+        body = {
+            "feature_key": route.feature_key,
+            "provider_id": route.provider_id,
+            "revision_id": route.revision_id,
+            "digest": route.digest,
+        }
+        if label is not None:
+            body["label_key"] = label
+        raw = await self._post(
+            "/v1/system/model-catalog/credentials/read",
+            body,
+            tenant_id=tenant_id,
+            correlation_id=correlation_id,
+            no_store=True,
+        )
+        try:
+            result = _CredentialEnvelope.model_validate_json(raw).data
+        except ValidationError:
+            raise ModelResolutionError("MODEL_RESPONSE_INVALID") from None
+        if (
+            result.feature_key != route.feature_key
+            or result.label_key != route.label_key
+            or result.provider_id != route.provider_id
+            or result.revision_id != route.revision_id
+            or result.digest != route.digest
+            or result.secret_handle_ref != route.connection.secret_handle_ref
+        ):
+            raise ModelResolutionError("MODEL_RESPONSE_INVALID")
+        return ModelCredential(
+            provider_id=result.provider_id,
+            secret_handle_ref=result.secret_handle_ref,
+            api_key=result.api_key,
+        )
+
+    async def _post(
+        self,
+        path: str,
+        body: dict[str, str],
+        *,
+        tenant_id: str,
+        correlation_id: str,
+        no_store: bool = False,
+    ) -> bytes:
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                async with self._client.stream(
+                    "POST",
+                    path,
+                    json=body,
+                    headers={
+                        "x-kokoro-tenant-id": tenant_id,
+                        "x-request-id": correlation_id,
+                    },
+                ) as response:
+                    chunks = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(chunks) + len(chunk) > _MAX_RESPONSE_BYTES:
+                            raise ModelResolutionError("MODEL_RESPONSE_TOO_LARGE")
+                        chunks.extend(chunk)
+                    if response.status_code != 200:
+                        self._raise_owner_error(response.status_code, bytes(chunks))
+                    if no_store and "no-store" not in {
+                        token.strip().lower()
+                        for token in response.headers.get("cache-control", "").split(
+                            ","
+                        )
+                    }:
+                        raise ModelResolutionError("MODEL_RESPONSE_INVALID")
+                    return bytes(chunks)
+        except (TimeoutError, httpx.TransportError):
+            raise ModelResolutionError(
+                "MODEL_RESOLUTION_UNAVAILABLE", retryable=True
+            ) from None
 
     @staticmethod
     def _raise_owner_error(status: int, body: bytes) -> None:

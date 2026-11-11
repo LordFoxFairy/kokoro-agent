@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+import json
+from typing import Literal
 
 import pytest
 from pydantic import JsonValue, SecretStr, TypeAdapter
@@ -631,3 +633,142 @@ async def test_resume_required_identity_and_unique_items_fail_before_admission(
     assert (failure.value.status, failure.value.code) == (400, "invalid_run_control")
     assert repository.control_commands == {}
     assert len(bus.published) == published
+
+
+def _personal_snapshot() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "owner": {"tenant_ref": "tenant", "user_ref": "actor"},
+        "profile": None,
+        "knowledge": {"usage_revision": 0, "enabled": False, "items": []},
+    }
+
+
+async def test_personal_snapshot_is_frozen_in_dispatch_and_drift_rejected() -> None:
+    bus = FakeBus()
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    body["personal_context"] = _personal_snapshot()
+    first = await ingress.launch(body, execution_identity=identity())
+    assert not first.replayed
+    assert bus.published[0][1]["personal_context"] == _personal_snapshot()
+    assert (await ingress.launch(body, execution_identity=identity())).replayed
+    changed = _personal_snapshot()
+    changed["knowledge"] = {"usage_revision": 1, "enabled": False, "items": []}
+    body["personal_context"] = changed
+    with pytest.raises(IngressError) as denied:
+        await ingress.launch(body, execution_identity=identity())
+    assert denied.value.status == 409
+    assert len(repository.dispatches) == 1
+
+
+async def test_personal_snapshot_other_actor_rejected_before_dispatch() -> None:
+    bus = FakeBus()
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    snapshot = _personal_snapshot()
+    snapshot["owner"] = {"tenant_ref": "tenant", "user_ref": "other"}
+    body["personal_context"] = snapshot
+    with pytest.raises(IngressError) as denied:
+        await ingress.launch(body, execution_identity=identity())
+    assert denied.value.status == 400
+    assert bus.published == []
+    assert repository.dispatches == {}
+
+
+async def test_none_snapshot_keeps_exact_legacy_fence() -> None:
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=FakeBus(),
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    assert not (await ingress.launch(body, execution_identity=identity())).replayed
+    # Fingerprint taken from exact Agent 815ef5c, before Project material existed.
+    assert (
+        repository.dispatch_fences["run-1"]
+        == "sha256:424c5fb5959a7b4c05f12c00e09a9e53ee4b828d938a47080d3f5b85727b9245"
+    )
+    body["personal_context"] = None
+    assert (await ingress.launch(body, execution_identity=identity())).replayed
+
+
+async def test_project_instruction_is_exact_and_run_fenced_without_becoming_message() -> (
+    None
+):
+    bus = FakeBus()
+    repository = FakeRunRepository()
+    chat = FakeChatRepository()
+    ingress = AgentIngress(
+        bus=bus, run_repository=repository, chat_service=ChatService(chat)
+    )
+    original = "  \ufeffPROJECT_PRIVATE_D0_测试\nsecond line  "
+    body = {
+        **launch_body(),
+        "project_ref": "project-1",
+        "project_instruction": original,
+    }
+    assert not (await ingress.launch(body, execution_identity=identity())).replayed
+    published = bus.published[0][1]
+    assert published["project_instruction"] == original
+    assert published["input"] == {"message_id": "message-run-1", "content": "hello"}
+    assert "personal_context" not in published
+    assert original not in repr(
+        RunRequest.model_validate_json(json.dumps(published, ensure_ascii=False))
+    )
+    assert (await ingress.launch(body, execution_identity=identity())).replayed
+    body["project_instruction"] = "new revision"
+    with pytest.raises(IngressError) as conflict:
+        await ingress.launch(body, execution_identity=identity())
+    assert (conflict.value.status, conflict.value.code) == (
+        409,
+        "run_identity_conflict",
+    )
+    assert len(repository.dispatches) == 1
+
+
+@pytest.mark.parametrize(
+    ("changes", "actor_kind"),
+    [
+        ({"project_ref": None}, "user"),
+        ({"feature_key": "music_chat"}, "user"),
+        ({"project_instruction": " \n\t\u0085"}, "user"),
+        ({"project_instruction": None}, "user"),
+        ({"project_instruction": "\ud800"}, "user"),
+        ({}, "service"),
+    ],
+)
+async def test_project_instruction_rejected_before_dispatch_for_wrong_scope(
+    changes: dict[str, object], actor_kind: Literal["user", "service"]
+) -> None:
+    bus = FakeBus()
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    caller = identity().model_copy(
+        update={"actor": IdentityRef(kind=actor_kind, opaque_ref="actor")}
+    )
+    body = {
+        **launch_body(),
+        "project_ref": "project-1",
+        "project_instruction": "PROJECT_PRIVATE_D0",
+        **changes,
+    }
+    with pytest.raises(IngressError) as denied:
+        await ingress.launch(body, execution_identity=caller)
+    assert (denied.value.status, denied.value.code) == (400, "invalid_launch_request")
+    assert bus.published == [] and repository.dispatches == {}

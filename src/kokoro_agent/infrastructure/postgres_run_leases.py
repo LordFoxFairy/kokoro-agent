@@ -22,6 +22,7 @@ from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRep
 from kokoro_agent.infrastructure.postgres_run_interactions import (
     PostgresRunInteractions,
 )
+from kokoro_agent.infrastructure.postgres_run_effects import PostgresRunEffects
 from kokoro_agent.infrastructure.postgres_run_events import (
     PostgresRunEvents,
     outbox_row_to_frame,
@@ -43,6 +44,7 @@ from kokoro_agent.infrastructure.schema import (
     RUN_OUTBOX_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
     RUN_RECEIPTS_TABLE,
+    WORKSPACE_OUTPUT_VERSIONS_TABLE,
 )
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     close_model_call_attempts_for_terminal,
@@ -417,6 +419,7 @@ class PostgresRunLeases:
             raise ValueError("invalid cancellation outcome")
         chat = PostgresChatRepository(self._context.database_url, self._context.schema)
         events = PostgresRunEvents(self._context)
+        effects = PostgresRunEffects(self._context)
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
@@ -516,17 +519,16 @@ class PostgresRunLeases:
                             isinstance(replay_payload, RunCompletedPayload)
                             and replay_payload.status == "completed"
                         ):
-                            replay_payload = RunCompletedPayload(
-                                status="completed",
-                                token_usage=(
-                                    TokenUsage(
+                            replay_payload = replay_payload.model_copy(
+                                update={
+                                    "token_usage": TokenUsage(
                                         input_tokens=int(row["usage_input_total"]),
                                         output_tokens=int(row["usage_output_total"]),
                                     )
                                     if row["usage_input_total"]
                                     or row["usage_output_total"]
-                                    else None
-                                ),
+                                    else None,
+                                }
                             )
                         replay_projection = project_chat_fact(
                             tenant_id=request.execution_identity.tenant_ref,
@@ -637,15 +639,17 @@ class PostgresRunLeases:
                         isinstance(payload, RunCompletedPayload)
                         and payload.status == "completed"
                     ):
-                        payload = RunCompletedPayload(
-                            status="completed",
-                            token_usage=(
-                                TokenUsage(
+                        payload = payload.model_copy(
+                            update={
+                                "token_usage": TokenUsage(
                                     input_tokens=total_in, output_tokens=total_out
                                 )
                                 if total_in or total_out
-                                else None
-                            ),
+                                else None,
+                            }
+                        )
+                        await events.validate_final_answer_on_cursor(
+                            cur, request, payload
                         )
                     seq, index = (
                         int(row["durable_counter"]),
@@ -759,16 +763,7 @@ class PostgresRunLeases:
                         await events.insert_frame_on_cursor(
                             cur, frame, superseded=quarantine
                         )
-                    if isinstance(authority, CancelTerminalAuthority):
-                        await execute_sql(
-                            cur,
-                            "UPDATE {} SET status='succeeded',updated_at=to_timestamp(%s/1000.0) WHERE run_id=%s AND command_id=%s".format(
-                                qualified(
-                                    self._context.schema, RUN_CONTROL_COMMANDS_TABLE
-                                )
-                            ),
-                            (now, run_id, authority.command_id),
-                        )
+                    await effects.settle_terminal_controls(cur, run_id, authority, now)
                     await execute_sql(
                         cur,
                         """UPDATE {} SET terminal=TRUE,terminal_at=to_timestamp(%s/1000.0),
@@ -785,6 +780,12 @@ class PostgresRunLeases:
                             fence_seq,
                             run_id,
                         ),
+                    )
+                    # Unpublished native bytes are only a recovery input for an active Run.
+                    await execute_sql(
+                        cur,
+                        f"DELETE FROM {qualified(self._context.schema, WORKSPACE_OUTPUT_VERSIONS_TABLE)} WHERE run_id=%s AND pending_bytes IS NOT NULL",
+                        (run_id,),
                     )
                     await self._context.queue_bound_sandbox_cleanup(cur, row, now=now)
                     return TerminalCommitResult(

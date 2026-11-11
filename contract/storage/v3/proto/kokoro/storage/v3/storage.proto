@@ -1,17 +1,20 @@
 // Canonical contract source owned by kokoro-storage; generated clients are derived from this file.
 // Every RPC requires authenticated x-kokoro-service, x-kokoro-internal-secret,
 // x-kokoro-tenant-id, x-kokoro-subject-id, and x-kokoro-request-id transport metadata.
-// x-kokoro-scope-kind (personal|project|conversation|skill_package|skill_cover) and
+// x-kokoro-scope-kind (personal|project|conversation|skill_package|skill_cover|connector_icon) and
 // x-kokoro-scope-id are required. For skill_package, scope-id is the exact
-// Platform revision skill_id, not a series ID; skill_cover uses that same exact revision binding.
+// Platform-owned resource ID; skill_cover and connector_icon use exact owner bindings.
 // Storage does not decide Skill authorization; Platform must freshly admit every read.
 // Scope is asserted by an authenticated, permitted business owner; body identity is forbidden.
-// kokoro-agent has only conversation/artifact-purpose delivery operations;
+// kokoro-agent has conversation artifact delivery and workspace-output upload operations and
+// may read a final artifact only when the request includes the exact source
+// Run identity; it never receives generic personal/project Asset access.
 // web-bff retains ordinary personal/project Asset operations and conversation
-// final-Artifact reads, not Artifact writes or package access. kokoro-platform
+// final-Artifact reads, exact workspace-output downloads and workspace-output release,
+// not Artifact writes or package access. kokoro-platform
 // has only six package operations in skill_package scope: CreateUpload,
 // CompleteUpload, AbortUpload, GetUploadStatus, GetScanStatus, and
-// GetPackageReference. In skill_cover it has CreateUpload, CompleteUpload, AbortUpload,
+// GetPackageReference. In skill_cover and connector_icon it has CreateUpload, CompleteUpload, AbortUpload,
 // GetUploadStatus, GetScanStatus, GetAsset, GetDownloadReference, DeleteAsset only.
 // Covers are optional, but a present cover must be PNG/JPEG, fully decoded and CLEAN.
 // ListAssets permits only personal or project scope.
@@ -56,6 +59,8 @@ enum UploadPurpose {
   UPLOAD_PURPOSE_ASSET = 2;
   UPLOAD_PURPOSE_ARTIFACT = 3;
   UPLOAD_PURPOSE_SKILL_COVER = 4;
+  UPLOAD_PURPOSE_CONNECTOR_ICON = 5;
+  UPLOAD_PURPOSE_WORKSPACE_OUTPUT = 6;
 }
 
 enum UploadState {
@@ -163,7 +168,7 @@ message ImageDimensions {
 }
 
 message GetAssetResponse {
-  // Required for SKILL_COVER; absent for other purposes.
+  // Required for SKILL_COVER and CONNECTOR_ICON; absent for other purposes.
   ImageDimensions image_dimensions = 13;
   reserved 2;
   reserved "tenant_id";
@@ -179,6 +184,14 @@ message GetAssetResponse {
   string filename = 12;
 }
 
+enum PersonalLibraryFileType {
+  PERSONAL_LIBRARY_FILE_TYPE_UNSPECIFIED = 0;
+  PERSONAL_LIBRARY_FILE_TYPE_DOCUMENTS = 1;
+  PERSONAL_LIBRARY_FILE_TYPE_IMAGES = 2;
+  PERSONAL_LIBRARY_FILE_TYPE_MEDIA = 3;
+  PERSONAL_LIBRARY_FILE_TYPE_OTHER = 4;
+}
+
 // Personal files or project resources: the server fixes purpose=ASSET and scan=CLEAN before pagination.
 // Caller must be web-bff; personal scope must match authenticated subject.
 // Personal and project cursors use distinct kinds and are not access grants.
@@ -186,6 +199,11 @@ message ListAssetsRequest {
   // Required; 1..100. Zero is invalid rather than an implicit default.
   uint32 limit = 1;
   string cursor = 2;
+  // Personal only when nonempty after trim/NFC. At most 200 Unicode code points before normalization, without C0/DEL.
+  // Match a literal case-insensitive substring of filename or MIME before pagination.
+  string query = 3;
+  // Personal only when specified; UNSPECIFIED is all types.
+  PersonalLibraryFileType file_type = 4;
 }
 
 message ListAssetItem {
@@ -309,9 +327,33 @@ message GetFinalArtifactResponse {
   kokoro.storage.v3.FinalArtifactItem item = 1;
 }
 
+// Retires one exact FINAL artifact. Only web-bff in its conversation scope.
+message DeleteFinalArtifactRequest {
+  kokoro.common.v1.CommandIdentity command = 1;
+  string artifact_id = 2;
+  string asset_id = 3;
+  string content_sha256 = 4;
+  string source_run_id = 5;
+}
+
+message DeleteFinalArtifactResponse {
+  string artifact_id = 1;
+  google.protobuf.Timestamp retired_at = 2;
+  bool replayed = 3;
+}
+
 message GetFinalArtifactDownloadReferenceRequest {
   kokoro.common.v1.CommandIdentity command = 1;
   string artifact_id = 2;
+  // Required for kokoro-agent and must match the finalized artifact source run.
+  // BFF callers omit this field and remain conversation-scope readers.
+  string run_id = 3;
+  // Required for Agent: exact finalized Asset and digest from its frozen input.
+  string asset_id = 4;
+  string content_sha256 = 5;
+  // Consumption identity; lease and manifest membership are checked by Agent.
+  // This may differ from the artifact source run_id above.
+  string consumer_run_id = 6;
 }
 
 message GetFinalArtifactDownloadReferenceResponse {
@@ -327,6 +369,9 @@ message GetDownloadReferenceRequest {
   kokoro.common.v1.CommandIdentity command = 2;
   string asset_id = 4;
   string content_sha256 = 5;
+  // Required for Agent personal/project ASSET input reads. Agent checks its
+  // current lease and frozen manifest; this ID is not an authorization token.
+  string consumer_run_id = 6;
 }
 
 message GetDownloadReferenceResponse {
@@ -364,6 +409,19 @@ message ReleaseConversationScopeResponse {
   uint64 queued_object_cleanup_count = 5;
 }
 
+// Releases only the workspace-output purpose, never the whole conversation.
+message ReleaseConversationWorkspaceOutputsRequest {
+  kokoro.common.v1.CommandIdentity command = 1;
+}
+
+message ReleaseConversationWorkspaceOutputsResponse {
+  bool workspace_outputs_released = 1;
+  bool replayed = 2;
+  uint64 aborted_upload_count = 3;
+  uint64 released_asset_count = 4;
+  uint64 queued_object_cleanup_count = 5;
+}
+
 message DeleteAssetRequest {
   kokoro.common.v1.CommandIdentity command = 1;
   string asset_id = 2;
@@ -390,7 +448,9 @@ service StorageService {
   rpc GetDownloadReference(kokoro.storage.v3.GetDownloadReferenceRequest) returns (kokoro.storage.v3.GetDownloadReferenceResponse);
   rpc ListFinalArtifacts(kokoro.storage.v3.ListFinalArtifactsRequest) returns (kokoro.storage.v3.ListFinalArtifactsResponse);
   rpc GetFinalArtifact(kokoro.storage.v3.GetFinalArtifactRequest) returns (kokoro.storage.v3.GetFinalArtifactResponse);
+  rpc DeleteFinalArtifact(kokoro.storage.v3.DeleteFinalArtifactRequest) returns (kokoro.storage.v3.DeleteFinalArtifactResponse);
   rpc GetFinalArtifactDownloadReference(kokoro.storage.v3.GetFinalArtifactDownloadReferenceRequest) returns (kokoro.storage.v3.GetFinalArtifactDownloadReferenceResponse);
   rpc ReleaseProjectScope(kokoro.storage.v3.ReleaseProjectScopeRequest) returns (kokoro.storage.v3.ReleaseProjectScopeResponse);
   rpc ReleaseConversationScope(kokoro.storage.v3.ReleaseConversationScopeRequest) returns (kokoro.storage.v3.ReleaseConversationScopeResponse);
+  rpc ReleaseConversationWorkspaceOutputs(kokoro.storage.v3.ReleaseConversationWorkspaceOutputsRequest) returns (kokoro.storage.v3.ReleaseConversationWorkspaceOutputsResponse);
 }

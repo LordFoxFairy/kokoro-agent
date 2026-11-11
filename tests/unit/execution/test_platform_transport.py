@@ -26,8 +26,8 @@ async def test_snapshot_fresh_proof_bearer_and_request_id(
     calls: list[tuple[str, str, dict[str, str]]] = []
     order: list[str] = []
 
-    class Tokens:
-        async def token(self, tenant_id: str) -> str:
+    class Credentials:
+        async def credential(self, tenant_id: str) -> str:
             assert tenant_id == "tenant"
             order.append("token")
             return "TOKEN"
@@ -56,7 +56,10 @@ async def test_snapshot_fresh_proof_bearer_and_request_id(
     monkeypatch.setattr(SkillSourceServiceClient, "discover_visible_skills", send)
     async with PlatformTransport("http://127.0.0.1:1") as transport:
         client = RunPlatformClient(
-            tenant_id="tenant", tokens=Tokens(), proofs=Proof(), transport=transport
+            tenant_id="tenant",
+            credentials=Credentials(),
+            proofs=Proof(),
+            transport=transport,
         )
         request = (
             pb.DiscoverVisibleSkillsRequest(request_id="logical", query="", tags=[])
@@ -71,7 +74,7 @@ async def test_snapshot_fresh_proof_bearer_and_request_id(
         assert calls[0][0] == calls[1][0] == "logical"
         assert calls[0][1] != calls[1][1]
         assert calls[0][2] == {"authorization": "Bearer TOKEN"}
-        assert order == ["token", "proof", "send"] * 2
+        assert order == ["proof", "token", "send"] * 2
 
 
 async def test_connect_cancel_restores_python_cancellation(
@@ -121,10 +124,10 @@ async def test_runtime_calls_share_fresh_proof_snapshot_and_exact_dispatch(
     calls: list[tuple[str, str, str, int]] = []
     bindings: list[tuple[str, str]] = []
 
-    class Tokens:
-        async def token(self, tenant_id: str) -> str:
+    class Credentials:
+        async def credential(self, tenant_id: str) -> str:
             assert tenant_id == "tenant"
-            # Caller edits while token I/O is pending must not change the signed request.
+            # Caller edits while credential reading is pending must not change the signed request.
             original.tool_selector = "changed.by.caller"
             return "TOKEN"
 
@@ -195,7 +198,10 @@ async def test_runtime_calls_share_fresh_proof_snapshot_and_exact_dispatch(
     )
     async with PlatformTransport("http://127.0.0.1:1") as transport:
         client = RunPlatformClient(
-            tenant_id="tenant", tokens=Tokens(), proofs=Proof(), transport=transport
+            tenant_id="tenant",
+            credentials=Credentials(),
+            proofs=Proof(),
+            transport=transport,
         )
         for request in (original, credential, credential):
             await client.send(request, timeout_s=1)
@@ -221,8 +227,8 @@ async def test_current_declarations_use_existing_connection_rpc_and_fresh_proof(
 
     proofs: list[str] = []
 
-    class Tokens:
-        async def token(self, tenant_id: str) -> str:
+    class Credentials:
+        async def credential(self, tenant_id: str) -> str:
             return "TOKEN"
 
     class Proofs:
@@ -252,7 +258,65 @@ async def test_current_declarations_use_existing_connection_rpc_and_fresh_proof(
     )
     async with PlatformTransport("http://127.0.0.1:1") as transport:
         client = RunPlatformClient(
-            tenant_id="tenant", tokens=Tokens(), proofs=Proofs(), transport=transport
+            tenant_id="tenant",
+            credentials=Credentials(),
+            proofs=Proofs(),
+            transport=transport,
         )
         await client.send(request)
     assert len(proofs) == 1 and request.execution_proof == ""
+
+
+async def test_rotation_while_proof_is_pending_uses_only_current_secret(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from kokoro_agent.clients.platform_credentials import CredentialFile
+
+    path = tmp_path / "credentials.json"
+
+    def write(secret: str) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "entries": [
+                        {
+                            "credential_id": "key",
+                            "caller": "kokoro-agent",
+                            "surfaces": ["tenant_execution"],
+                            "tenant_id": "tenant",
+                            "secret": secret,
+                        }
+                    ],
+                }
+            )
+        )
+        path.chmod(0o600)
+
+    write("a" * 32)
+
+    class Proof:
+        async def issue(self, operation: str, request_binding_sha256: str) -> str:
+            write("b" * 32)
+            return "proof"
+
+    async def send(
+        self: object, request: pb.GetMcpConnectorRequest, **kwargs: Any
+    ) -> pb.GetMcpConnectorResponse:
+        assert kwargs["headers"] == {"authorization": "Bearer " + "b" * 32}
+        return pb.GetMcpConnectorResponse()
+
+    monkeypatch.setattr(McpConnectorServiceClient, "get_mcp_connector", send)
+    async with PlatformTransport("http://127.0.0.1:1") as transport:
+        sender = RunPlatformClient(
+            tenant_id="tenant",
+            credentials=CredentialFile(str(path)),
+            proofs=Proof(),
+            transport=transport,
+        )
+        await sender.send(
+            pb.GetMcpConnectorRequest(
+                request_id="read", connector_id=pb.McpConnectorId(value="connector")
+            )
+        )

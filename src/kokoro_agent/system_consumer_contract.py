@@ -8,7 +8,7 @@ from pathlib import Path
 
 from typing import TypeGuard
 
-_RECEIPT_SHA256 = "4c3e8f4eeb314252f2543f8b994081aa5ffe5670e3cb39128b36bd8c34a44d01"
+_RECEIPT_SHA256 = "d65e7cedb79a9d35ccb753c4675aaa5f48aaad51ae9bccd4d16428b92f0af58f"
 _RECEIPT_KEYS = {
     "owner",
     "contract",
@@ -71,8 +71,12 @@ def validate_system_consumer_receipt(root: Path) -> None:
         or not _is_object(provenance)
         or set(provenance) != {"path", "sha256"}
         or not _is_object(sources)
-        or len(sources) != 20
-        or receipt.get("operations") != ["POST /v1/system/model-catalog/resolve"]
+        or len(sources) != 23
+        or receipt.get("operations")
+        != [
+            "POST /v1/system/model-catalog/resolve",
+            "POST /v1/system/model-catalog/credentials/read",
+        ]
     ):
         raise ValueError("System dependency receipt shape differs")
     # Exact canonical equality also pins all key/value types, paths and hashes.

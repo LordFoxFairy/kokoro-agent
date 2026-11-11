@@ -13,7 +13,10 @@ from deepagents.middleware.skills import (
 from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 
-from kokoro_agent.clients.skills import SkillClientError
+from kokoro_agent.clients.skills import SkillClientError, ResolvedSkill
+from kokoro_agent.domain.chat.projection import SkillDisplay
+from pydantic import JsonValue
+from collections.abc import Mapping
 from kokoro_agent.execution.events import (
     ProgressPersistenceError,
     confirm_skill_progress,
@@ -32,6 +35,7 @@ class RunSkillsMiddleware(SkillsMiddleware):
     _expected_skill_paths: frozenset[str] | None = None
     _progress: SkillProgressSink | None = None
     _discoveries: tuple[SkillsMiddleware, ...] = ()
+    _display_sources: tuple[ResolvedSkill, ...] = ()
 
     @classmethod
     def for_selected(
@@ -41,6 +45,7 @@ class RunSkillsMiddleware(SkillsMiddleware):
         sources: Sequence[str],
         discovery_backends: Sequence[tuple[str, BackendProtocol]],
         progress: SkillProgressSink,
+        display_sources: Sequence[ResolvedSkill] = (),
     ) -> RunSkillsMiddleware:
         middleware = cls(backend=backend, sources=sources)
         middleware._expected_skill_paths = frozenset(
@@ -53,6 +58,7 @@ class RunSkillsMiddleware(SkillsMiddleware):
             for _, discovery in discovery_backends
         )
         middleware._progress = progress
+        middleware._display_sources = tuple(display_sources)
         return middleware
 
     @staticmethod
@@ -112,7 +118,7 @@ class RunSkillsMiddleware(SkillsMiddleware):
     ) -> SkillsStateUpdate:
         try:
             if self._discoveries:
-                return self._loaded(
+                loaded = self._loaded(
                     self._merge(
                         [
                             await discovery.abefore_agent(
@@ -122,9 +128,36 @@ class RunSkillsMiddleware(SkillsMiddleware):
                         ]
                     )
                 )
-            return self._loaded(
-                await super().abefore_agent(self._unloaded(state), runtime, config)
-            )
+            else:
+                loaded = self._loaded(
+                    await super().abefore_agent(self._unloaded(state), runtime, config)
+                )
+            if self._expected_skill_paths and self._progress is not None:
+                by_path = {
+                    f"/.skills/{skill.path_segment}/SKILL.md": skill
+                    for skill in self._display_sources
+                }
+                display: list[Mapping[str, JsonValue]] = []
+                for item in loaded["skills_metadata"]:
+                    skill = by_path.get(item["path"])
+                    if skill is None:
+                        continue
+                    try:
+                        fact = SkillDisplay(
+                            source_ref=skill.source_ref,
+                            name=item["name"],
+                            virtual_path=item["path"],
+                            revision=str(skill.revision),
+                        )
+                    except ValueError:
+                        continue  # Unsafe optional presentation never changes execution authorization.
+                    display.append(fact.model_dump(mode="json", exclude_none=True))
+                await confirm_skill_progress(
+                    self._progress,
+                    SkillPhase(phase="ready"),
+                    display_skills=tuple(display),
+                )
+            return loaded
         except ProgressPersistenceError:
             raise
         except Exception:

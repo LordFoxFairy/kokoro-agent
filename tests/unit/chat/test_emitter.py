@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import asyncio
 
 import pytest
 
@@ -10,6 +11,7 @@ from pydantic import JsonValue
 from support.chat import FakeChatRepository
 from support.fakes import FakeBus
 
+from kokoro_agent.domain.chat.projection import ToolDisplayCode
 from kokoro_agent.protocol import live_stream
 from kokoro_agent.execution.events import RunEmitter, message_delta_payload
 from kokoro_agent.streams.protocol import StreamItem
@@ -234,3 +236,653 @@ async def test_stopped_live_publish_preserves_critical_outbox_recovery(
     finally:
         publishing.cancel()
         await asyncio.gather(publishing, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "name,code",
+    [
+        ("mcp_call", "tool.mcp.call"),
+        ("write_file", "tool.file.write"),
+        ("deliver", "tool.file.deliver"),
+    ],
+)
+@pytest.mark.parametrize("is_error", [False, True])
+async def test_display_binding_is_run_local_stable_and_never_changes_raw_wire(
+    is_error: bool,
+    name: str,
+    code: ToolDisplayCode,
+) -> None:
+    import json
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    checked = code
+
+    bus = FakeBus()
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        bus,
+        "display-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=store,
+    )
+    emitter.bind_tool_display_codes(((name, checked),))
+    await emitter.emit(
+        ToolInvokedPayload(
+            segment_id="seg",
+            tool_id="call",
+            name=name,
+            args={
+                "file_path": "/private/SECRET/file.txt",
+                "content": "SECRET",
+                "path": "/private/SECRET/file.txt",
+            },
+        )
+    )
+    await emitter.emit(
+        ToolReturnedPayload(
+            segment_id="seg",
+            tool_id="call",
+            name=name,
+            result="SECRET",
+            is_error=is_error,
+        )
+    )
+    assert [json.loads(row.payload_json)["display_code"] for row in store.records] == [
+        checked,
+        checked,
+    ]
+    assert [json.loads(row.payload_json)["status"] for row in store.records] == [
+        "running",
+        "failed" if is_error else "completed",
+    ]
+    assert all("SECRET" not in row.payload_json for row in store.records)
+    safe = [json.loads(row.payload_json) for row in store.records]
+    assert safe[0]["activity_id"] == safe[1]["activity_id"]
+    assert all(
+        set(row) == {"activity", "activity_id", "segment_id", "status", "display_code"}
+        for row in safe
+    )
+    for _, event, _ in bus.published:
+        raw_payload = event["payload"]
+        assert isinstance(raw_payload, dict)
+        assert "display_code" not in raw_payload
+    with pytest.raises(ValueError, match="changed within"):
+        emitter.bind_tool_display_codes(((name, "tool.web.fetch"),))
+    other = FakeChatRepository([])
+    unbound = await RunEmitter.attach(
+        FakeBus(),
+        "other-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=other,
+    )
+    await unbound.emit(
+        ToolInvokedPayload(segment_id="seg", tool_id="call", name=name, args={})
+    )
+    assert json.loads(other.records[0].payload_json)["display_code"] == "tool.execution"
+
+
+async def test_display_identity_allows_call_id_reuse_between_distinct_segments() -> (
+    None
+):
+    import json
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "reuse-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=store,
+    )
+    emitter.bind_tool_display_codes(
+        (("mcp_call", "tool.mcp.call"), ("web_fetch", "tool.web.fetch"))
+    )
+    for segment, name in [("segment-a", "mcp_call"), ("segment-b", "web_fetch")]:
+        await emitter.emit(
+            ToolInvokedPayload(
+                segment_id=segment, tool_id="reused-id", name=name, args={}
+            )
+        )
+        await emitter.emit(
+            ToolReturnedPayload(
+                segment_id=segment,
+                tool_id="reused-id",
+                name=name,
+                result="private result",
+                is_error=False,
+            )
+        )
+    activities = [json.loads(row.payload_json) for row in store.records]
+    assert [item["display_code"] for item in activities] == [
+        "tool.mcp.call",
+        "tool.mcp.call",
+        "tool.web.fetch",
+        "tool.web.fetch",
+    ]
+    assert activities[0]["activity_id"] == activities[1]["activity_id"]
+    assert activities[2]["activity_id"] == activities[3]["activity_id"]
+    assert activities[0]["activity_id"] != activities[2]["activity_id"]
+    assert all("private result" not in row.payload_json for row in store.records)
+
+
+async def test_display_identity_rejects_tool_rename_within_the_same_segment_and_call() -> (
+    None
+):
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    bus = FakeBus()
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        bus,
+        "rename-run",
+        tenant_id="tenant",
+        namespace="ns",
+        session_id="s",
+        chat_repository=store,
+    )
+    emitter.bind_tool_display_codes(
+        (("mcp_call", "tool.mcp.call"), ("web_fetch", "tool.web.fetch"))
+    )
+    await emitter.emit(
+        ToolInvokedPayload(
+            segment_id="segment-a", tool_id="same-id", name="mcp_call", args={}
+        )
+    )
+    with pytest.raises(ProgressPersistenceError, match="call identity changed"):
+        await emitter.emit(
+            ToolReturnedPayload(
+                segment_id="segment-a",
+                tool_id="same-id",
+                name="web_fetch",
+                result="not published",
+                is_error=False,
+            )
+        )
+    assert len(store.records) == 1
+    assert len(bus.published) == 1
+
+
+async def test_detail_freezes_safe_basename_and_recovers_original_chat() -> None:
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+
+    async def emitter() -> RunEmitter:
+        result = await RunEmitter.attach(
+            FakeBus(),
+            "detail-run",
+            tenant_id="t",
+            namespace="n",
+            session_id="s",
+            chat_repository=store,
+        )
+        result.bind_tool_display_codes((("read_file", "tool.file.read"),))
+        result.bind_tool_display_sources(
+            (
+                ToolDisplaySource(
+                    name="read_file",
+                    code="tool.file.read",
+                    origin="native",
+                    file_scope="virtual",
+                ),
+            )
+        )
+        return result
+
+    first = await emitter()
+    await first.emit(
+        ToolInvokedPayload(
+            segment_id="c",
+            tool_id="c",
+            name="read_file",
+            args={"file_path": "/docs/report.md", "secret": "NEVER_PUBLISH"},
+        )
+    )
+    second = await emitter()
+    await second.emit(
+        ToolReturnedPayload(
+            segment_id="c",
+            tool_id="c",
+            name="read_file",
+            result="NEVER_PUBLISH",
+            is_error=True,
+        )
+    )
+    values = [json.loads(row.payload_json) for row in store.records]
+    assert [value["display_detail"] for value in values] == [
+        {"kind": "file", "name": "report.md", "virtual_path": "/docs/report.md"}
+    ] * 2
+    assert [value["status"] for value in values] == ["running", "failed"]
+    assert "NEVER_PUBLISH" not in str(values)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/Users/private/report.md",
+        "/.ssh/key",
+        "/docs/.env",
+        "/docs/../report.md",
+        "C:\\secret\\report.md",
+        "//host/share/file.md",
+        "/docs/sk-proj-secret.txt",
+        "/docs/e\u0301.md",
+        "/docs/hi\u202e.md",
+        "/docs/" + "a" * 121,
+        "/" + "a" * 4096,
+    ],
+)
+async def test_detail_sensitive_or_invalid_target_is_omitted(path: str) -> None:
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    store = FakeChatRepository([])
+    result = await RunEmitter.attach(
+        FakeBus(),
+        "detail-run",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    result.bind_tool_display_codes((("read_file", "tool.file.read"),))
+    result.bind_tool_display_sources(
+        (
+            ToolDisplaySource(
+                name="read_file",
+                code="tool.file.read",
+                origin="native",
+                file_scope="virtual",
+            ),
+        )
+    )
+    await result.emit(
+        ToolInvokedPayload(
+            segment_id="c", tool_id="c", name="read_file", args={"file_path": path}
+        )
+    )
+    assert "display_detail" not in json.loads(store.records[-1].payload_json)
+
+
+@pytest.mark.parametrize("is_error", [False, True])
+async def test_detail_old_absent_is_not_backfilled_by_new_source(
+    is_error: bool,
+) -> None:
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+    old = await RunEmitter.attach(
+        FakeBus(),
+        "old",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    await old.emit(
+        ToolInvokedPayload(
+            segment_id="c", tool_id="c", name="read_file", args={"file_path": "/old.md"}
+        )
+    )
+    original = store.records[0].payload_json
+    new = await RunEmitter.attach(
+        FakeBus(),
+        "old",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    new.bind_tool_display_codes((("read_file", "tool.file.read"),))
+    new.bind_tool_display_sources(
+        (
+            ToolDisplaySource(
+                name="read_file",
+                code="tool.file.read",
+                origin="native",
+                file_scope="virtual",
+            ),
+        )
+    )
+    await new.emit(
+        ToolReturnedPayload(
+            segment_id="c",
+            tool_id="c",
+            name="read_file",
+            result="/new.md",
+            is_error=is_error,
+        )
+    )
+    # A same-emitter resume must not reinterpret the old category either.
+    new.bind_tool_display_codes((("read_file", "tool.file.read"),))
+    assert store.records[0].payload_json == original
+    assert [json.loads(row.payload_json)["display_code"] for row in store.records] == [
+        "tool.execution"
+    ] * 2
+    assert all(
+        "display_detail" not in json.loads(row.payload_json) for row in store.records
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("PRIVATE_HISTORY_CANARY"),
+        OSError("PRIVATE_HISTORY_CANARY"),
+        asyncio.CancelledError(),
+    ],
+)
+async def test_detail_history_failure_is_never_treated_as_no_row(
+    failure: BaseException,
+) -> None:
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    class BrokenHistory(FakeChatRepository):
+        async def first_tool_activity(
+            self,
+            tenant_id: str,
+            namespace: str,
+            session_id: str,
+            run_id: str,
+            activity_id: str,
+        ):
+            raise failure
+
+    store = BrokenHistory([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    import asyncio
+
+    with pytest.raises(
+        asyncio.CancelledError
+        if isinstance(failure, asyncio.CancelledError)
+        else ProgressPersistenceError
+    ) as captured:
+        await emitter.emit(
+            ToolInvokedPayload(
+                segment_id="c",
+                tool_id="c",
+                name="read_file",
+                args={"file_path": "/report.md"},
+            )
+        )
+    assert store.records == []
+    if not isinstance(failure, asyncio.CancelledError):
+        import traceback
+
+        assert "PRIVATE_HISTORY_CANARY" not in "".join(
+            traceback.format_exception(captured.value)
+        )
+
+
+async def test_detail_mcp_label_comes_from_frozen_declaration_and_survives_restart() -> (
+    None
+):
+    import json
+    from kokoro_agent.domain.chat.projection import ToolDisplaySource
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+    for index, label in enumerate(["Search documents", "Renamed owner declaration"]):
+        emitter = await RunEmitter.attach(
+            FakeBus(),
+            "mcp",
+            tenant_id="t",
+            namespace="n",
+            session_id="s",
+            chat_repository=store,
+        )
+        emitter.bind_tool_display_codes((("mcp_call", "tool.mcp.call"),))
+        emitter.bind_tool_display_sources(
+            (
+                ToolDisplaySource(
+                    name="mcp_call",
+                    code="tool.mcp.call",
+                    origin="mcp",
+                    mcp_names=(("connection", "search", label),),
+                ),
+            )
+        )
+        if index == 0:
+            await emitter.emit(
+                ToolInvokedPayload(
+                    segment_id="c",
+                    tool_id="c",
+                    name="mcp_call",
+                    args={
+                        "server": "connection",
+                        "tool": "search",
+                        "arguments": {"title": "SECRET"},
+                    },
+                )
+            )
+        else:
+            await emitter.emit(
+                ToolReturnedPayload(
+                    segment_id="c",
+                    tool_id="c",
+                    name="mcp_call",
+                    result="SECRET",
+                    is_error=False,
+                )
+            )
+    assert [
+        json.loads(row.payload_json)["display_detail"] for row in store.records
+    ] == [{"kind": "mcp_tool", "name": "Search documents"}] * 2
+
+
+async def test_detail_history_total_deadline_cancels_reader_instead_of_inventing_absence() -> (
+    None
+):
+    import asyncio
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.domain.chat.models import ChatEventRecord
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    closed = False
+
+    class StalledHistory(FakeChatRepository):
+        async def first_tool_activity(
+            self,
+            tenant_id: str,
+            namespace: str,
+            session_id: str,
+            run_id: str,
+            activity_id: str,
+        ) -> ChatEventRecord | None:
+            nonlocal closed
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closed = True
+
+    store = StalledHistory([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    with pytest.raises(ProgressPersistenceError) as error:
+        await asyncio.wait_for(
+            emitter.emit(
+                ToolInvokedPayload(
+                    segment_id="c", tool_id="c", name="read_file", args={}
+                )
+            ),
+            timeout=4,
+        )
+    assert isinstance(error.value.__cause__, TimeoutError)
+    assert closed and store.records == []
+
+
+async def test_detail_corrupt_history_never_exposes_validation_input_in_traceback() -> (
+    None
+):
+    import json
+    import traceback
+    from kokoro_agent.domain.chat.models import ChatEventRecord
+    from kokoro_agent.execution.events import ProgressPersistenceError
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    original = FakeChatRepository([])
+    first = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=original,
+    )
+    await first.emit(
+        ToolInvokedPayload(segment_id="c", tool_id="c", name="read_file", args={})
+    )
+    value = json.loads(original.records[0].payload_json)
+    value.update(
+        display_code="tool.file.read",
+        display_detail={"kind": "file", "name": ".env_SECRET_CANARY"},
+    )
+    record = original.records[0].model_copy(update={"payload_json": json.dumps(value)})
+
+    class CorruptHistory(FakeChatRepository):
+        async def first_tool_activity(
+            self,
+            tenant_id: str,
+            namespace: str,
+            session_id: str,
+            run_id: str,
+            activity_id: str,
+        ) -> ChatEventRecord | None:
+            return record
+
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "r",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=CorruptHistory([]),
+    )
+    with pytest.raises(ProgressPersistenceError) as error:
+        await emitter.emit(
+            ToolReturnedPayload(
+                segment_id="c",
+                tool_id="c",
+                name="read_file",
+                result="unused",
+                is_error=False,
+            )
+        )
+    assert "SECRET_CANARY" not in "".join(traceback.format_exception(error.value))
+
+
+async def test_public_action_is_first_fact_and_survives_emitter_restart() -> None:
+    import json
+    from kokoro_agent.domain.chat.action_intent import (
+        ActionObservation,
+        arguments_digest,
+    )
+    from kokoro_agent.protocol import ToolInvokedPayload, ToolReturnedPayload
+
+    store = FakeChatRepository([])
+
+    async def attach() -> RunEmitter:
+        return await RunEmitter.attach(
+            FakeBus(),
+            "action-run",
+            tenant_id="t",
+            namespace="n",
+            session_id="s",
+            chat_repository=store,
+        )
+
+    first = await attach()
+    args: dict[str, JsonValue] = {"path": "/docs/plan.md"}
+    digest = arguments_digest(args)
+    assert digest is not None
+    first.observe_tool_action(
+        ActionObservation("call", "lookup", digest, "核对项目检查单")
+    )
+    await first.emit(
+        ToolInvokedPayload(segment_id="call", tool_id="call", name="lookup", args=args)
+    )
+    second = await attach()
+    second.observe_tool_action(
+        ActionObservation("call", "lookup", digest, "不应覆盖已保存说明")
+    )
+    await second.emit(
+        ToolReturnedPayload(
+            segment_id="call",
+            tool_id="call",
+            name="lookup",
+            result="provider error",
+            is_error=True,
+        )
+    )
+    values = [json.loads(row.payload_json) for row in store.records]
+    assert [v["action_title"] for v in values] == ["核对项目检查单"] * 2
+    assert [v["status"] for v in values] == ["running", "failed"]
+    assert all("provider error" not in str(v) for v in values)
+
+
+@pytest.mark.parametrize(
+    "case", ["missing", "changed-args", "different-tool", "conflict"]
+)
+async def test_action_without_exact_source_is_not_invented(case: str) -> None:
+    import json
+    from kokoro_agent.domain.chat.action_intent import (
+        ActionObservation,
+        arguments_digest,
+    )
+    from kokoro_agent.protocol import ToolInvokedPayload
+
+    store = FakeChatRepository([])
+    emitter = await RunEmitter.attach(
+        FakeBus(),
+        "action-run",
+        tenant_id="t",
+        namespace="n",
+        session_id="s",
+        chat_repository=store,
+    )
+    args: dict[str, JsonValue] = {"path": "/docs/plan.md"}
+    digest = arguments_digest(args)
+    assert digest is not None
+    if case != "missing":
+        emitter.observe_tool_action(
+            ActionObservation("call", "lookup", digest, "核对项目检查单")
+        )
+    if case == "conflict":
+        emitter.observe_tool_action(
+            ActionObservation("call", "lookup", digest, "另一个说明")
+        )
+    await emitter.emit(
+        ToolInvokedPayload(
+            segment_id="call",
+            tool_id="call",
+            name="other" if case == "different-tool" else "lookup",
+            args={"path": "/changed.md"} if case == "changed-args" else args,
+        )
+    )
+    assert "action_title" not in json.loads(store.records[0].payload_json)

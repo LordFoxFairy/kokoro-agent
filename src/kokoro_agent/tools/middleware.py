@@ -7,6 +7,11 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import Any
 
+from deepagents.middleware.filesystem import (
+    EditFileSchema,
+    ExecuteSchema,
+    WriteFileSchema,
+)
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import (
     ModelRequest,
@@ -25,8 +30,22 @@ from langgraph.runtime import Runtime
 from kokoro_agent import metrics
 from kokoro_agent.hitl import request_human
 from kokoro_agent.domain.run.repository import LeaseFence, RunRepository
+from kokoro_agent.domain.run.workspace_output import (
+    MAX_OUTPUT_BYTES,
+    NativeWorkspaceWrite,
+    WorkspaceExecuteIntent,
+    WorkspaceOutputGuard,
+)
 from kokoro_agent.protocol.events import DeliveryCreatedPayload
+from kokoro_agent.sandbox.backend import (
+    DOCKER_OUTPUT_ID_PREFIX,
+    DOCKER_OUTPUT_TEARDOWN_PREFIX,
+)
+from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+from kokoro_agent.sandbox.execution_environment import ExecutionBoundaryError
+from kokoro_agent.sandbox.output_edit import capture_output_edit
 from kokoro_agent.tools.registry import JOURNAL_EXEMPT_TOOLS, SUBAGENT_TOOL_NAME
+from kokoro_agent.tools.workspace_output import native_output_path
 
 _logger = logging.getLogger(__name__)
 
@@ -320,12 +339,192 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         run_id: str,
         lease: LeaseFence,
         exempt: frozenset[str] = JOURNAL_EXEMPT_TOOLS,
+        workspace_thread: str | None = None,
+        workspace_guard: WorkspaceOutputGuard | None = None,
+        workspace_edit: bool = False,
+        workspace_script: DockerShellBackend | None = None,
     ) -> None:
         super().__init__()
         self._run_repository = run_repository
         self._run_id = run_id
         self._lease = lease
         self._exempt = exempt
+        self._workspace_thread = workspace_thread
+        self._workspace_guard = workspace_guard
+        self._workspace_edit = workspace_edit
+        self._workspace_script = workspace_script
+
+    def for_workspace_output(
+        self,
+        thread_id: str,
+        guard: WorkspaceOutputGuard | None,
+        *,
+        edit: bool = False,
+        script: DockerShellBackend | None = None,
+    ) -> ToolEffectJournalMiddleware:
+        return ToolEffectJournalMiddleware(
+            run_repository=self._run_repository,
+            run_id=self._run_id,
+            lease=self._lease,
+            exempt=self._exempt,
+            workspace_thread=thread_id,
+            workspace_guard=guard,
+            workspace_edit=edit,
+            workspace_script=script,
+        )
+
+    def _native_write(self, request: ToolCallRequest) -> NativeWorkspaceWrite | None:
+        if self._workspace_thread is None or request.tool_call["name"] != "write_file":
+            return None
+        path = native_output_path(request, self._workspace_thread, WriteFileSchema)
+        content = request.tool_call["args"].get("content")
+        if (
+            path is None
+            or not isinstance(content, str)
+            or len(content) > MAX_OUTPUT_BYTES
+        ):
+            return None
+        try:
+            raw = content.encode("utf-8")
+        except UnicodeEncodeError:
+            return None
+        return NativeWorkspaceWrite(path, raw) if len(raw) <= MAX_OUTPUT_BYTES else None
+
+    async def _execute_workspace_script(
+        self, request: ToolCallRequest, handler: _ToolHandler
+    ) -> ToolMessage:
+        call, backend, thread = (
+            request.tool_call,
+            self._workspace_script,
+            self._workspace_thread,
+        )
+        tool_id = call["id"] or ""
+        args = call["args"]
+        command, timeout = args.get("command"), args.get("timeout")
+        path = (
+            native_output_path(request, thread, ExecuteSchema, field="output_path")
+            if thread is not None
+            else None
+        )
+
+        def error(message: str) -> ToolMessage:
+            return ToolMessage(
+                content=message, name="execute", tool_call_id=tool_id, status="error"
+            )
+
+        if (
+            backend is None
+            or path is None
+            or not isinstance(command, str)
+            or not set(args) <= {"command", "output_path", "timeout"}
+        ):
+            return error("Invalid isolated workspace output request")
+        recorded = await self._run_repository.get_tool_journal(self._run_id, tool_id)
+        if recorded is not None and recorded.name != "execute":
+            return error("Invalid isolated workspace output invocation")
+        if recorded is not None and recorded.status != "started":
+            return self._replay(recorded, tool_id=tool_id, name="execute")
+        try:
+            identity = await backend.aworkspace_output_identity()
+            intent = WorkspaceExecuteIntent.bind(
+                path=path,
+                command=command,
+                timeout=timeout,
+                run_id=self._run_id,
+                tool_call_id=tool_id,
+                identity=identity,
+            )
+        except (ValueError, ExecutionBoundaryError):
+            return error("Isolated workspace output is unavailable")
+        key = intent.key
+
+        recover = recorded is not None
+        cleanup_id: str | None = None
+        if recorded is not None:
+            if WorkspaceExecuteIntent.from_journal(recorded.result) != intent:
+                return self._replay(recorded, tool_id=tool_id, name="execute")
+        else:
+            won = await self._run_repository.journal_tool_started(
+                self._run_id,
+                self._lease,
+                tool_id,
+                "execute",
+                intent=intent.model_dump_json(),
+            )
+            if not won:
+                winner = await self._run_repository.get_tool_journal(
+                    self._run_id, tool_id
+                )
+                return self._replay(winner, tool_id=tool_id, name="execute")
+            cleanup = await self._run_repository.register_sandbox_cleanup(
+                run_id=self._run_id,
+                lease_generation=self._lease.generation,
+                backend_kind="docker",
+                sandbox_id=DOCKER_OUTPUT_ID_PREFIX + key,
+                teardown_ref=DOCKER_OUTPUT_TEARDOWN_PREFIX + identity,
+                defer_ms=600_000,
+            )
+            cleanup_id = cleanup.cleanup_id
+        await _require_current_lease(self._run_repository, self._run_id, self._lease)
+        try:
+            with backend.capture_workspace_output(
+                path, key, recover=recover
+            ) as capture:
+                native = await handler(
+                    request.override(
+                        tool_call={
+                            **call,
+                            "args": {"command": command, "timeout": timeout},
+                        }
+                    )
+                )
+            raw = (
+                capture.content
+                if isinstance(native, ToolMessage)
+                and (native.name, native.tool_call_id, native.status)
+                == ("execute", tool_id, "success")
+                else None
+            )
+        except ExecutionBoundaryError:
+            return self._replay(recorded, tool_id=tool_id, name="execute")
+        if raw is None and recover:
+            # A missing or running sandbox is not a success receipt. Preserve
+            # started, and never run the old command to manufacture a result.
+            return self._replay(recorded, tool_id=tool_id, name="execute")
+        write = None if raw is None else NativeWorkspaceWrite(path, raw, script=True)
+        result = (
+            error("Isolated command did not produce the requested workspace file")
+            if write is None
+            else ToolMessage(
+                content=write.acknowledgement,
+                name="execute",
+                tool_call_id=tool_id,
+                status="success",
+            )
+        )
+        if not await self._run_repository.journal_tool_finished(
+            self._run_id,
+            self._lease,
+            tool_id,
+            result.text,
+            write is None,
+            workspace_write=write,
+        ):
+            await _require_current_lease(
+                self._run_repository, self._run_id, self._lease
+            )
+            result = error("The workspace output could not be retained")
+            if write is None or not await self._run_repository.journal_tool_finished(
+                self._run_id, self._lease, tool_id, result.text, True
+            ):
+                raise RunSupersededError("Workspace output journal no longer active")
+        try:
+            await backend.acleanup_workspace_output(key)
+            if cleanup_id is not None:
+                await self._run_repository.complete_sandbox_cleanup(cleanup_id)
+        except Exception:
+            _logger.warning("workspace output sandbox cleanup deferred to its owner")
+        return result
 
     async def awrap_tool_call(
         self, request: ToolCallRequest, handler: _ToolHandler
@@ -333,6 +532,8 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         call = request.tool_call
         name = call["name"]
         await _require_current_lease(self._run_repository, self._run_id, self._lease)
+        if name == "execute" and call["args"].get("output_path") is not None:
+            return await self._execute_workspace_script(request, handler)
         if name in self._exempt:
             # 纯读/幂等 / Command 形态工具：不落 journal，直接放行（重执行安全）。
             return await handler(request)
@@ -374,8 +575,19 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
         mcp_token = (
             _MCP_CALL.set((self._run_id, tool_id)) if name == "mcp_call" else None
         )
+        write = self._native_write(request)
+        edit_path = (
+            native_output_path(request, self._workspace_thread, EditFileSchema)
+            if self._workspace_edit
+            and self._workspace_thread is not None
+            and name == "edit_file"
+            else None
+        )
         try:
-            result = await handler(request)
+            with capture_output_edit(edit_path) as capture:
+                result = await handler(request)
+            if capture is not None:
+                write = capture.postimage
         except GraphInterrupt:
             # MCP elicitation is inside an already-sent tools/call. Preserve started:
             # teardown cannot prove zero effects, so resume must not resend the call.
@@ -391,16 +603,26 @@ class ToolEffectJournalMiddleware(AgentMiddleware):
             if mcp_token is not None:
                 _MCP_CALL.reset(mcp_token)
         if isinstance(result, ToolMessage):
-            if name in {"deliver", "mcp_call"} and result.text.startswith("error:"):
+            if name == "deliver" and result.text.startswith("error:"):
                 result = result.model_copy(update={"status": "error"})
             # .text 是框架文本收窄口；Command 形态（状态更新）无文本结果可短路，留 started 行——
             # 重放守门对其保守判 unknown-outcome（非幂等 Command 副作用工具应入豁免表，此处不双写）。
+            if write is not None and (
+                (result.name, result.tool_call_id, result.status, result.text)
+                != (write.tool_name, tool_id, "success", write.acknowledgement)
+                or (
+                    self._workspace_guard is not None
+                    and not await self._workspace_guard(write.path, write.content)
+                )
+            ):
+                write = None
             finished = await self._run_repository.journal_tool_finished(
                 self._run_id,
                 self._lease,
                 tool_id,
                 result.text,
                 result.status == "error",
+                **({"workspace_write": write} if write is not None else {}),
             )
             if not finished:
                 raise RunSupersededError(
@@ -491,25 +713,21 @@ class SteeringMiddleware(AgentMiddleware):
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
-        # peek + 下一轮见证 ack（审计缺口：排空与 checkpoint 落盘非原子会窄窗丢插话）——
-        # 只有已出现在 state["messages"]（即已随 checkpoint 落定）的插话才从信箱删除；
-        # 未落定的每轮重注入，稳定 id 由 add_messages 去重，任意崩溃点收敛且绝不丢。
         await _require_current_lease(self._run_repository, self._run_id, self._lease)
-        steers = await self._run_repository.peek_steers(self._run_id)
+        try:
+            steers = await self._run_repository.peek_steers(self._run_id)
+        except Exception:
+            # A supplemental message does not decide the health of this Run.
+            _logger.exception("steer mailbox read deferred run_id=%s", self._run_id)
+            return None
         if not steers:
             return None
         for message_id, content in steers:
             if not content:
                 raise ValueError(f"empty steer content: message_id={message_id!r}")
         seen_ids = {message.id for message in state["messages"]}
-        landed = [message_id for message_id, _ in steers if message_id in seen_ids]
-        if landed:
-            if not await self._run_repository.ack_steers(
-                self._run_id, self._lease, landed
-            ):
-                raise RunSupersededError(
-                    f"run {self._run_id!r} lost its lease while acknowledging steering"
-                )
+        # In-memory state only deduplicates. The independently committed
+        # checkpoint settles the command and deletes the mailbox row.
         fresh = [(mid, content) for mid, content in steers if mid not in seen_ids]
         if not fresh:
             return None

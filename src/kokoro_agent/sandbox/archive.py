@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from typing import Any, Literal
 
 import boto3
 import yaml
 from botocore.config import Config as BotoConfig
 from mypy_boto3_s3 import S3Client
-from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import (
     EditResult,
     ExecuteResponse,
@@ -21,8 +21,13 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter
+from kokoro_agent.sandbox.output_edit import WorkspaceOutputLocalShellBackend
+from kokoro_agent.sandbox.file_egress import FileEgress, local_archive_paths
 
 LOGGER = logging.getLogger("kokoro_agent.sandbox.archive")
+_ARCHIVE_CANCELLATION: ContextVar[Event | None] = ContextVar(
+    "archive_cancellation", default=None
+)
 
 # 归档过滤与 session 本地档清单语义对齐：读侧 S3 list 不再过滤，写侧不推杂物即一致。
 _IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
@@ -97,6 +102,12 @@ class S3Archiver:
             self._require_open()
             self._client.upload_file(str(local_file), self._bucket, key)
 
+    def upload_bytes(self, content: bytes, key: str) -> None:
+        """Upload exactly the inspected snapshot, never reopen its source path."""
+        with self._lock:
+            self._require_open()
+            self._client.put_object(Body=content, Bucket=self._bucket, Key=key)
+
     def archive_tree(self, root: Path, prefix: str) -> int:
         """全量归档（幂等覆盖）：返回上传数。杂物与隐藏文件不推，对齐清单语义。"""
         with self._lock:
@@ -127,7 +138,7 @@ class S3Archiver:
             raise RuntimeError("workspace archiver is closed")
 
 
-class ArchivingWritesMixin(LocalShellBackend):
+class ArchivingWritesMixin(WorkspaceOutputLocalShellBackend):
     """写时归档层（叠加于 LocalShellBackend 系，含 docker 变体；C3 线性化保证
     super() 落在真正的执行基类上）：write/edit 增量上传；execute/upload_files 后
     全量兜底（shell 直写无法逐文件感知）。归档失败 log 可见、绝不打断工具结果
@@ -140,6 +151,7 @@ class ArchivingWritesMixin(LocalShellBackend):
     _archive_close_task: asyncio.Task[None] | None
     _archive_state_lock: RLock
     _archive_closing: bool
+    _file_egress: FileEgress | None = None
 
     def _init_archive_resources(self) -> None:
         self._archive_operations = set()
@@ -164,7 +176,16 @@ class ArchivingWritesMixin(LocalShellBackend):
         with self._archive_state_lock:
             if self._archive_closing:
                 raise RuntimeError("workspace archive backend is closing")
-            task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+            cancelled = Event()
+
+            def run() -> Any:
+                token = _ARCHIVE_CANCELLATION.set(cancelled)
+                try:
+                    return operation(*args, **kwargs)
+                finally:
+                    _ARCHIVE_CANCELLATION.reset(token)
+
+            task = asyncio.create_task(asyncio.to_thread(run))
             self._archive_operations.add(task)
 
         def settled(done: asyncio.Task[object]) -> None:
@@ -175,7 +196,22 @@ class ArchivingWritesMixin(LocalShellBackend):
                 done.exception()
 
         task.add_done_callback(settled)
-        return await asyncio.shield(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if self._file_egress is None:
+                raise
+            cancelled.set()
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not task.cancelled():
+                task.exception()
+            raise asyncio.CancelledError from None
 
     async def aclose_resources(self) -> None:
         """Reject new work, wait real thread completion, then close the client."""
@@ -198,6 +234,9 @@ class ArchivingWritesMixin(LocalShellBackend):
         await asyncio.to_thread(self._archiver.close)
 
     def _archive_file(self, file_path: str) -> None:
+        if self._file_egress is not None:
+            self._archive_protected([file_path])
+            return
         rel = file_path.lstrip("/")
         local = self._archive_root / rel
         try:
@@ -206,6 +245,9 @@ class ArchivingWritesMixin(LocalShellBackend):
             LOGGER.warning("workspace archive failed for %s", rel, exc_info=True)
 
     def _archive_all(self) -> None:
+        if self._file_egress is not None:
+            self._archive_protected(local_archive_paths(self._archive_root))
+            return
         try:
             self._archiver.archive_tree(self._archive_root, self._prefix)
         except Exception:
@@ -213,9 +255,24 @@ class ArchivingWritesMixin(LocalShellBackend):
                 "workspace tree archive failed for %s", self._prefix, exc_info=True
             )
 
+    def _archive_protected(self, paths: Iterable[str]) -> None:
+        if self._file_egress is None:
+            return
+        try:
+            self._file_egress.archive(
+                paths,
+                lambda content, relative: self._archiver.upload_bytes(
+                    content, f"{self._prefix}/{relative}"
+                ),
+                _ARCHIVE_CANCELLATION.get(),
+            )
+        except Exception:
+            LOGGER.warning("workspace archive blocked: sandbox_file_unavailable")
+
     def write(self, file_path: str, content: str) -> WriteResult:
         result = super().write(file_path, content)
-        self._archive_file(file_path)
+        if self._file_egress is None or result.error is None:
+            self._archive_file(file_path)
         return result
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
@@ -230,7 +287,8 @@ class ArchivingWritesMixin(LocalShellBackend):
         replace_all: bool = False,
     ) -> EditResult:
         result = super().edit(file_path, old_string, new_string, replace_all)
-        self._archive_file(file_path)
+        if self._file_egress is None or result.error is None:
+            self._archive_file(file_path)
         return result
 
     async def aedit(

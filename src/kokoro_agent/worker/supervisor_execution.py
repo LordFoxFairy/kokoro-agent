@@ -27,6 +27,7 @@ from kokoro_agent.agent_factory import AgentHandle
 from kokoro_agent.domain.chat.models import ChatEventRecord, ChatMessageDraft
 from kokoro_agent.domain.run.repository import LeaseFence, OutboxFrame
 from kokoro_agent.domain.run.scope import RunScope
+from kokoro_agent.domain.run.workspace_output import OUTPUT_METADATA
 from kokoro_agent.domain.run.models import (
     StaticRecipeAuthorityLost,
     StaticRecipeIncompatible,
@@ -40,7 +41,7 @@ from kokoro_agent.execution.events import (
     persist_outbox_chat_event,
 )
 from kokoro_agent.execution.failures import run_failed_payload
-from kokoro_agent.execution.run_agent import invoke_once
+from kokoro_agent.execution.run_agent import CheckpointMetadata, invoke_once
 from kokoro_agent.model.call_scope import ModelCallSettlementTimeout
 from kokoro_agent.protocol import (
     RunErrorCode,
@@ -90,6 +91,7 @@ class SupervisorExecutionMixin(SupervisorContext):
                 request,
                 lease,
                 emitter.skill_progress(request.selected_skill_source_refs),
+                emitter.observe_tool_action,
             )
         except ProgressPersistenceError:
             raise
@@ -102,6 +104,21 @@ class SupervisorExecutionMixin(SupervisorContext):
         primary: BaseException | None = None
         try:
             scope = RunScope.of(request)
+            if self._recover_steers is not None and lease.generation > 1:
+                # An already-saved pause releases the active lease without
+                # invoking the graph. Recover steer evidence before that branch.
+                await self._recover_steers(request, lease)
+            if (
+                built.workspace_output_root
+                and self._recover_workspace_outputs is not None
+                and lease.generation > 1
+            ):
+                await self._recover_workspace_outputs(
+                    request,
+                    lease,
+                    built.native_workspace_write,
+                    built.workspace_output_guard,
+                )
             # A committed native pause may precede the Run/Chat pause transaction.
             # Recover that fact without another graph invocation.
             try:
@@ -295,20 +312,26 @@ class SupervisorExecutionMixin(SupervisorContext):
             if request is None:
                 return
             resume = self._resume_attempts.get(run_id)
-            metadata = dict((trace or {}).get("metadata", {}))
-            for key in (
-                "kokoro_run_id",
-                "kokoro_generation",
-                "kokoro_command_id",
-                "kokoro_attempt_id",
-            ):
-                metadata.pop(key, None)
-            metadata.update(kokoro_run_id=run_id, kokoro_generation=lease.generation)
+            if self._recover_steers is not None and resume is not None:
+                # Resume assembles a graph without going through _start_run.
+                await self._recover_steers(request, lease)
+            checkpoint_metadata: CheckpointMetadata = {
+                "kokoro_run_id": run_id,
+                "kokoro_generation": lease.generation,
+            }
+            if built.workspace_output_root:
+                if not built.native_workspace_write:
+                    checkpoint_metadata[OUTPUT_METADATA] = built.workspace_output_root
+                if resume is not None and self._recover_workspace_outputs is not None:
+                    await self._recover_workspace_outputs(
+                        request,
+                        lease,
+                        built.native_workspace_write,
+                        built.workspace_output_guard,
+                    )
             if resume is not None:
-                metadata.update(
-                    kokoro_command_id=resume[0], kokoro_attempt_id=resume[1].attempt_id
-                )
-            trusted_trace: RunnableConfig = {**(trace or {}), "metadata": metadata}
+                checkpoint_metadata["kokoro_command_id"] = resume[0]
+                checkpoint_metadata["kokoro_attempt_id"] = resume[1].attempt_id
 
             async def on_native_settled(
                 seal_usage: Callable[[], Awaitable[tuple[int, int]]],
@@ -316,6 +339,18 @@ class SupervisorExecutionMixin(SupervisorContext):
                 # Reached only after interrupted() exhausts the official async
                 # iterator and its executor exit waits all child/write tasks.
                 # Cancellation never reaches this marker (task.done is insufficient).
+                if (
+                    built.workspace_output_root
+                    and self._recover_workspace_outputs is not None
+                ):
+                    await self._recover_workspace_outputs(
+                        request,
+                        lease,
+                        built.native_workspace_write,
+                        built.workspace_output_guard,
+                    )
+                if self._recover_steers is not None:
+                    await self._recover_steers(request, lease)
                 if resume is not None:
                     self._drained_attempts[
                         (run_id, lease.generation, resume[1].attempt_id)
@@ -375,8 +410,12 @@ class SupervisorExecutionMixin(SupervisorContext):
                     approval_tool_names=approval_tool_names,
                     # 审批卡数据：工具自述查询（wire 只带数据，模板文案不上线）。
                     describe_tool=built.describe_tool,
+                    tool_display_codes=built.tool_display_codes,
+                    tool_display_sources=built.tool_display_sources,
                     source_for=self._source_for,
-                    trace=trusted_trace,
+                    trace=trace,
+                    checkpoint_metadata=checkpoint_metadata,
+                    private_material=built.private_material,
                     on_native_settled=on_native_settled,
                     recursion_limit=self._recursion_limit,
                     model_call_settle_timeout_s=self._model_call_settle_timeout_s,

@@ -7,6 +7,7 @@ technical modules directly.
 
 from __future__ import annotations
 
+from kokoro_agent.domain.run.workspace_output import NativeWorkspaceWrite
 from kokoro_agent.domain.run.interactions import (
     CheckpointObservation,
     ObservationTarget,
@@ -67,7 +68,7 @@ from kokoro_agent.infrastructure.postgres_run_interactions import (
     PostgresRunInteractions,
 )
 from kokoro_agent.infrastructure.postgres_run_sandbox import PostgresRunSandbox
-from kokoro_agent.protocol import RunRequest
+from kokoro_agent.protocol import RunRequest, RunSteer
 
 DEFAULT_LEASE_TTL_S = 90
 
@@ -350,16 +351,16 @@ class PostgresRunRepository:
     async def is_terminal(self, run_id: str) -> bool:
         return await self._leases.is_terminal(run_id)
 
-    async def add_steer(self, run_id: str, message_id: str, content: str) -> None:
-        return await self._effects.add_steer(run_id, message_id, content)
+    async def store_steer(self, command: RunSteer) -> None:
+        await self._effects.store_steer(command)
 
     async def peek_steers(self, run_id: str) -> list[tuple[str, str]]:
         return await self._effects.peek_steers(run_id)
 
-    async def ack_steers(
-        self, run_id: str, lease: LeaseFence, message_ids: list[str]
+    async def confirm_steers(
+        self, run_id: str, lease: LeaseFence, messages: list[tuple[str, str]]
     ) -> bool:
-        return await self._effects.ack_steers(run_id, lease, message_ids)
+        return await self._effects.confirm_steers(run_id, lease, messages)
 
     async def put_tool_result(
         self, run_id: str, lease: LeaseFence, tool_id: str, result: str, is_error: bool
@@ -374,10 +375,16 @@ class PostgresRunRepository:
         return await self._effects.get_tool_result(run_id, tool_id)
 
     async def journal_tool_started(
-        self, run_id: str, lease: LeaseFence, tool_call_id: str, name: str
+        self,
+        run_id: str,
+        lease: LeaseFence,
+        tool_call_id: str,
+        name: str,
+        *,
+        intent: str = "",
     ) -> bool:
         return await self._effects.journal_tool_started(
-            run_id, lease, tool_call_id, name
+            run_id, lease, tool_call_id, name, intent=intent
         )
 
     async def journal_delivery_intent(
@@ -394,9 +401,16 @@ class PostgresRunRepository:
         tool_call_id: str,
         result: str,
         is_error: bool,
+        *,
+        workspace_write: NativeWorkspaceWrite | None = None,
     ) -> bool:
         return await self._effects.journal_tool_finished(
-            run_id, lease, tool_call_id, result, is_error
+            run_id,
+            lease,
+            tool_call_id,
+            result,
+            is_error,
+            workspace_write=workspace_write,
         )
 
     async def clear_tool_journal(
@@ -442,6 +456,7 @@ class PostgresRunRepository:
         backend_kind: SandboxBackendKind,
         sandbox_id: str,
         teardown_ref: str,
+        defer_ms: int = 0,
     ) -> SandboxCleanupIntent:
         return await self._sandbox.register_sandbox_cleanup(
             run_id=run_id,
@@ -449,6 +464,7 @@ class PostgresRunRepository:
             backend_kind=backend_kind,
             sandbox_id=sandbox_id,
             teardown_ref=teardown_ref,
+            defer_ms=defer_ms,
         )
 
     async def claim_sandbox_cleanups(

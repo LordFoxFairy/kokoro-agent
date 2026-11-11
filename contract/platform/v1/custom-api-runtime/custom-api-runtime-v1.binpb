@@ -1,0 +1,46 @@
+
+í
++kokoro/platform/v1/custom_api_runtime.protokokoro.platform.v1"q
+CustomApiRuntimeProfileRef
+
+profile_id (	R	profileId4
+expected_state_version (RexpectedStateVersion"©
+#DescribeCustomApiEnvironmentRequest
+
+request_id (	R	requestId#
+invocation_id (	RinvocationIdJ
+profiles (2..kokoro.platform.v1.CustomApiRuntimeProfileRefRprofiles'
+execution_proofd (	RexecutionProofR	tenant_idRactor_idR
+subject_idRrun_idR
+session_idRenvironmentRcommand"Í
+"CustomApiRuntimeProfileDescription
+
+profile_id (	R	profileId#
+state_version (RstateVersion
+name (	Rname"
+instructions (	Rinstructions+
+environment_names (	RenvironmentNames"ù
+$DescribeCustomApiEnvironmentResponse4
+request_binding_sha256 (	RrequestBindingSha256
+run_id (	RrunId0
+execution_session_id (	RexecutionSessionIdR
+profiles (26.kokoro.platform.v1.CustomApiRuntimeProfileDescriptionRprofiles"¨
+"AcquireCustomApiEnvironmentRequest
+
+request_id (	R	requestId#
+invocation_id (	RinvocationIdJ
+profiles (2..kokoro.platform.v1.CustomApiRuntimeProfileRefRprofiles'
+execution_proofd (	RexecutionProofR	tenant_idRactor_idR
+subject_idRrun_idR
+session_idRenvironmentRcommand"L
+ CustomApiRuntimeEnvironmentValue
+name (	Rname
+value (Rvalue"ü
+#AcquireCustomApiEnvironmentResponse4
+request_binding_sha256 (	RrequestBindingSha256
+run_id (	RrunId0
+execution_session_id (	RexecutionSessionIdV
+environment (24.kokoro.platform.v1.CustomApiRuntimeEnvironmentValueRenvironment2¾
+CustomApiRuntimeService‘
+DescribeCustomApiEnvironment7.kokoro.platform.v1.DescribeCustomApiEnvironmentRequest8.kokoro.platform.v1.DescribeCustomApiEnvironmentResponseŽ
+AcquireCustomApiEnvironment6.kokoro.platform.v1.AcquireCustomApiEnvironmentRequest7.kokoro.platform.v1.AcquireCustomApiEnvironmentResponsebproto3

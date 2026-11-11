@@ -158,6 +158,7 @@ class _RunRow(BaseModel):
     pause_snapshot_json: dict[str, JsonValue] | None
     pause_collection_digest: str | None
     interaction_command_id: str | None
+    assembly_recipe_bytes: bytes | None = None
 
 
 class _CommandRow(BaseModel):
@@ -478,6 +479,18 @@ class _Successor(_Strict):
     current_interrupt_ids: list[Nonempty]
 
 
+class SwarmRootHandoff(_Strict):
+    """Internal checkpoint evidence only; never a public or storage schema."""
+
+    group_id: Nonempty
+    leaf_checkpoint_id: Nonempty
+    source_peer: Nonempty
+    source_task_id: Nonempty
+    destination_peer: Nonempty
+    root_anchor_id: Nonempty
+    root_successor_ids: Annotated[list[Nonempty], Field(min_length=2, max_length=64)]
+
+
 class _ObservedGroup(_Strict):
     group_id: Nonempty
     thread_id: Nonempty
@@ -511,6 +524,55 @@ class _Observation(_Strict):
     next_pause_ref: str | None = None
     quiescence: _Quiescence | None = None
     progress_digest: str | None = None
+    swarm_root_handoff: SwarmRootHandoff | None = None
+
+
+def require_swarm_root_handoff(
+    value: _Observation, request: RunRequest, recipe_bytes: bytes | None
+) -> None:
+    """Check the witness against the original peer leaf and frozen recipe."""
+    witness = value.swarm_root_handoff
+    if witness is None:
+        return
+    if (
+        value.kind != "resume"
+        or value.next_pause is not None
+        or len(value.facts) != 1
+        or recipe_bytes is None
+    ):
+        raise InteractionCorrupt("Swarm witness outside a single completed peer resume")
+    group = value.facts[0]
+    last = group.successors[-1] if group.successors else None
+    if (
+        witness.group_id != group.group_id
+        or group.checkpoint_ns != f"{witness.source_peer}:{witness.source_task_id}"
+        or "|" in group.checkpoint_ns
+        or ":" in witness.source_task_id
+        or witness.source_peer == witness.destination_peer
+        or last is None
+        or last.checkpoint_id != witness.leaf_checkpoint_id
+        or not last.current_task_ids
+        or last.current_interrupt_ids
+    ):
+        raise InteractionCorrupt("Swarm witness differs from the original peer leaf")
+    recipe = decode_interaction_bytes(recipe_bytes)
+    feature = recipe.get("feature")
+    if not isinstance(feature, dict) or feature.get("key") != request.feature_key:
+        raise InteractionCorrupt("Swarm witness has no frozen feature")
+    edges, agents = feature.get("handoffs"), feature.get("agents")
+    if (
+        not isinstance(edges, list)
+        or not isinstance(agents, list)
+        or [witness.source_peer, witness.destination_peer] not in edges
+        or not {witness.source_peer, witness.destination_peer}.issubset(
+            str(agent.get("key")) for agent in agents if isinstance(agent, dict)
+        )
+    ):
+        raise InteractionCorrupt("Swarm witness handoff is not declared")
+    root_ids = [witness.root_anchor_id, *witness.root_successor_ids]
+    leaf_ids = {group.checkpoint_id, *(item.checkpoint_id for item in group.successors)}
+    if len(set(root_ids)) != len(root_ids) or not leaf_ids.isdisjoint(root_ids):
+        raise InteractionCorrupt("Swarm witness root lineage reuses a checkpoint")
 
 
 def decode_checkpoint_observation(
@@ -616,6 +678,8 @@ def decode_checkpoint_observation(
             raise InteractionCorrupt("pause observation collection coverage differs")
     elif decoded.pause is not None:
         raise InteractionCorrupt("unexpected original pause payload")
+    if decoded.swarm_root_handoff is not None and decoded.kind != "resume":
+        raise InteractionCorrupt("non-resume observation claims Swarm handoff")
     if decoded.kind == "resume":
         if (
             not decoded.pause_ref
@@ -1197,7 +1261,11 @@ class PostgresRunInteractions:
             )
 
     def _observation_command(
-        self, value: _Observation, command: _CommandRow, request: RunRequest
+        self,
+        value: _Observation,
+        command: _CommandRow,
+        request: RunRequest,
+        recipe_bytes: bytes | None,
     ) -> None:
         _intent(command, request)
         if (value.attempt_id, value.generation) != (
@@ -1231,6 +1299,7 @@ class PostgresRunInteractions:
         if expected != actual:
             raise InteractionCorrupt("observation differs from original locator")
         if value.kind == "resume":
+            require_swarm_root_handoff(value, request, recipe_bytes)
             if (value.pause_revision, value.pause_ref, value.collection_digest) != (
                 command.resume_pause_revision,
                 command.resume_pause_ref,
@@ -1250,10 +1319,14 @@ class PostgresRunInteractions:
                         )
                 # Validation may re-interrupt in the original checkpoint. A full
                 # exact appended vector proves that round; success needs successor.
-                if value.next_pause is None and (
-                    not group.successors
-                    or group.successors[-1].current_task_ids
-                    or group.successors[-1].current_interrupt_ids
+                if (
+                    value.next_pause is None
+                    and value.swarm_root_handoff is None
+                    and (
+                        not group.successors
+                        or group.successors[-1].current_task_ids
+                        or group.successors[-1].current_interrupt_ids
+                    )
                 ):
                     raise InteractionCorrupt("missing stable causal successor")
             if value.next_pause is not None:
@@ -1273,6 +1346,80 @@ class PostgresRunInteractions:
                     )
                 )
 
+    async def _check_swarm_root_rows(self, cur: Any, value: _Observation) -> None:
+        witness = value.swarm_root_handoff
+        if witness is None:
+            return
+        group = value.facts[0]
+        checkpoints = qualified(self._context.schema, "checkpoints")
+        writes = qualified(self._context.schema, "checkpoint_writes")
+        root_ids = [witness.root_anchor_id, *witness.root_successor_ids]
+        await execute_sql(
+            cur,
+            f"""SELECT checkpoint_ns, checkpoint_id, parent_checkpoint_id, metadata,
+            metadata -> 'parents' ->> '' AS root_anchor_id
+            FROM {checkpoints} WHERE thread_id=%s AND
+            ((checkpoint_ns=%s AND checkpoint_id=%s) OR
+             (checkpoint_ns='' AND checkpoint_id=ANY(%s)))""",
+            (group.thread_id, group.checkpoint_ns, group.checkpoint_id, root_ids),
+        )
+        rows = {
+            (row["checkpoint_ns"], row["checkpoint_id"]): row
+            for row in await fetch_all(cur)
+        }
+        leaf = rows.get((group.checkpoint_ns, group.checkpoint_id))
+        anchor = rows.get(("", witness.root_anchor_id))
+        if (
+            leaf is None
+            or anchor is None
+            or leaf["metadata"].get("kokoro_run_id") != value.run_id
+            or anchor["metadata"].get("kokoro_run_id") != value.run_id
+            or leaf["root_anchor_id"] != witness.root_anchor_id
+        ):
+            raise InteractionCorrupt(
+                "Swarm witness does not match the committed root anchor"
+            )
+        for parent_id, checkpoint_id in zip(root_ids, root_ids[1:]):
+            root = rows.get(("", checkpoint_id))
+            if (
+                root is None
+                or root["parent_checkpoint_id"] != parent_id
+                or tuple(
+                    root["metadata"].get(key)
+                    for key in (
+                        "kokoro_run_id",
+                        "kokoro_generation",
+                        "kokoro_command_id",
+                        "kokoro_attempt_id",
+                    )
+                )
+                != (value.run_id, value.generation, value.command_id, value.attempt_id)
+            ):
+                raise InteractionCorrupt(
+                    "Swarm witness root checkpoint is not from this attempt"
+                )
+        await execute_sql(
+            cur,
+            f"""SELECT
+              (SELECT checkpoint_id FROM {checkpoints} WHERE thread_id=%s AND checkpoint_ns=''
+               ORDER BY checkpoint_id DESC LIMIT 1) AS root_head,
+              (SELECT count(*) FROM {writes} WHERE thread_id=%s AND checkpoint_ns=''
+               AND checkpoint_id=%s AND task_id=%s AND channel='active_agent') AS handoff_count""",
+            (
+                group.thread_id,
+                group.thread_id,
+                witness.root_anchor_id,
+                witness.source_task_id,
+            ),
+        )
+        head = await fetch_one(cur)
+        if (
+            head is None
+            or head["root_head"] != witness.root_successor_ids[-1]
+            or head["handoff_count"] != 1
+        ):
+            raise InteractionCorrupt("Swarm witness root head or source task changed")
+
     async def _store_observation(
         self,
         cur: Any,
@@ -1286,7 +1433,10 @@ class PostgresRunInteractions:
         if value.generation != lease.generation:
             raise InteractionCorrupt("observation fence differs")
         if command is not None:
-            self._observation_command(value, command, request)
+            self._observation_command(
+                value, command, request, row.assembly_recipe_bytes
+            )
+            await self._check_swarm_root_rows(cur, value)
         elif value.command_id is not None or value.generation != row.lease_generation:
             raise InteractionCorrupt("unattributed observation")
         table = qualified(self._context.schema, RUN_CHECKPOINT_OBSERVATIONS_TABLE)
@@ -1480,7 +1630,10 @@ class PostgresRunInteractions:
                     digest=digest,
                 )
                 decoded = decode_checkpoint_observation(observed, request)
-                self._observation_command(decoded, command, request)
+                self._observation_command(
+                    decoded, command, request, row.assembly_recipe_bytes
+                )
+                await self._check_swarm_root_rows(cur, decoded)
                 if raw["disposition"] != "current":
                     raise InteractionAuthorityLost("audit evidence cannot advance")
                 if (

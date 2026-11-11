@@ -35,7 +35,7 @@ def trace_config(
     CallbackHandler() 内部 get_client() 自行从进程 env 读 public/secret/host 并维护单例——
     这是 langfuse SDK 的既有行为；本仓只用注入 settings 做开关判定。
     """
-    if not settings.configured:
+    if request.has_private_prompt_material or not settings.configured:
         return None
     scope = RunScope.of(request)
     feature = get_feature(request.feature_key)

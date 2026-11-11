@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from langchain_core.messages import ToolCall
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
+
+from kokoro_agent.domain.chat.display_text import public_action_title
 
 
 ASK_USER_TOOL_NAME = "ask_user_question"
@@ -15,6 +18,14 @@ class AskUserArgs(BaseModel):
     question: str
     choices: tuple[str, ...] = ()
     allow_free_text: bool = Field(default=True)
+
+
+def ask_user_pause_description(
+    tool_call: ToolCall, state: object, runtime: object
+) -> str:
+    """Give the native pause only the bounded user-facing question, not an args repr."""
+    del state, runtime
+    return public_action_title(tool_call["args"].get("question")) or ""
 
 
 def _ask_user_uninterrupted(

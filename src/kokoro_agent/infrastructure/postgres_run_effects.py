@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 
+from psycopg import AsyncCursor
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from kokoro_agent.domain.chat.projection import safe_delivery_display_path
+from kokoro_agent.domain.run.models import CancelTerminalAuthority, TerminalAuthority
 from kokoro_agent.domain.run.workspace_output import (
     MAX_OUTPUT_BYTES,
     MAX_OUTPUT_VERSIONS,
@@ -263,6 +265,41 @@ class PostgresRunEffects:
                     ),
                 )
         return True
+
+    async def settle_terminal_controls(
+        self,
+        cur: AsyncCursor[dict[str, object]],
+        run_id: str,
+        authority: TerminalAuthority,
+        now: int,
+    ) -> None:
+        """Settle controls under the caller's existing terminal claim lock."""
+        if isinstance(authority, CancelTerminalAuthority):
+            await execute_sql(
+                cur,
+                "UPDATE {} SET status='succeeded',updated_at=to_timestamp(%s/1000.0) WHERE run_id=%s AND command_id=%s".format(
+                    qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
+                ),
+                (now, run_id, authority.command_id),
+            )
+        # This Run cannot consume further supplements. Preserve confirmed receipts.
+        await execute_sql(
+            cur,
+            """UPDATE {} SET status='failed',error_code='control_superseded',
+                        updated_at=to_timestamp(%s/1000.0)
+                        WHERE run_id=%s AND status IN ('admitted','persisted')
+                        AND body::jsonb->>'kind'='run.steer'""".format(
+                qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
+            ),
+            (now, run_id),
+        )
+        await execute_sql(
+            cur,
+            "DELETE FROM {} WHERE run_id=%s".format(
+                qualified(self._context.schema, RUN_STEERS_TABLE)
+            ),
+            (run_id,),
+        )
 
     async def put_tool_result(
         self,

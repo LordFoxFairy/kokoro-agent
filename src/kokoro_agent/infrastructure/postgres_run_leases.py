@@ -22,6 +22,7 @@ from kokoro_agent.infrastructure.postgres_chat_repository import PostgresChatRep
 from kokoro_agent.infrastructure.postgres_run_interactions import (
     PostgresRunInteractions,
 )
+from kokoro_agent.infrastructure.postgres_run_effects import PostgresRunEffects
 from kokoro_agent.infrastructure.postgres_run_events import (
     PostgresRunEvents,
     outbox_row_to_frame,
@@ -43,7 +44,6 @@ from kokoro_agent.infrastructure.schema import (
     RUN_OUTBOX_TABLE,
     RUN_USAGE_SEGMENTS_TABLE,
     RUN_RECEIPTS_TABLE,
-    RUN_STEERS_TABLE,
     WORKSPACE_OUTPUT_VERSIONS_TABLE,
 )
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
@@ -419,6 +419,7 @@ class PostgresRunLeases:
             raise ValueError("invalid cancellation outcome")
         chat = PostgresChatRepository(self._context.database_url, self._context.schema)
         events = PostgresRunEvents(self._context)
+        effects = PostgresRunEffects(self._context)
         async with connect_pg(self._context.database_url) as conn:
             async with conn.transaction():
                 async with conn.cursor() as cur:
@@ -762,36 +763,7 @@ class PostgresRunLeases:
                         await events.insert_frame_on_cursor(
                             cur, frame, superseded=quarantine
                         )
-                    if isinstance(authority, CancelTerminalAuthority):
-                        await execute_sql(
-                            cur,
-                            "UPDATE {} SET status='succeeded',updated_at=to_timestamp(%s/1000.0) WHERE run_id=%s AND command_id=%s".format(
-                                qualified(
-                                    self._context.schema, RUN_CONTROL_COMMANDS_TABLE
-                                )
-                            ),
-                            (now, run_id, authority.command_id),
-                        )
-                    # This Run cannot consume further supplements. Preserve
-                    # confirmed receipts, and settle all remaining steer
-                    # commands under the same claim lock as terminal outcome.
-                    await execute_sql(
-                        cur,
-                        """UPDATE {} SET status='failed',error_code='control_superseded',
-                        updated_at=to_timestamp(%s/1000.0)
-                        WHERE run_id=%s AND status IN ('admitted','persisted')
-                        AND body::jsonb->>'kind'='run.steer'""".format(
-                            qualified(self._context.schema, RUN_CONTROL_COMMANDS_TABLE)
-                        ),
-                        (now, run_id),
-                    )
-                    await execute_sql(
-                        cur,
-                        "DELETE FROM {} WHERE run_id=%s".format(
-                            qualified(self._context.schema, RUN_STEERS_TABLE)
-                        ),
-                        (run_id,),
-                    )
+                    await effects.settle_terminal_controls(cur, run_id, authority, now)
                     await execute_sql(
                         cur,
                         """UPDATE {} SET terminal=TRUE,terminal_at=to_timestamp(%s/1000.0),

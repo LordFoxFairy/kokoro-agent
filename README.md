@@ -77,29 +77,30 @@ Redis LaunchRunRequest
 ## 运行
 
 ```bash
-uv sync
+uv sync --frozen
 # Worker 通过受信 System 路由领取本次连接的凭据；仍需正式模型执行许可：
-KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
-  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent \
+KOKORO_REDIS_URL=TARGET \
+  KOKORO_AGENT_DATABASE_URL=TARGET \
   KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
-  KOKORO_SYSTEM_BASE_URL=http://127.0.0.1:4240 \
-  KOKORO_INTERNAL_SECRET_AGENT=... \
+  KOKORO_SYSTEM_BASE_URL=HOST \
+  KOKORO_INTERNAL_SECRET_AGENT=TOKEN \
   uv run kokoro-agent-worker
 ```
 
-BFF business ingress 与 worker 分进程运行；两者都只使用本仓自己的 PostgreSQL/Redis：
+BFF business ingress 与 Worker 分进程运行；使用同一共享 PostgreSQL 应用库中的 Agent owner schema，Redis 复用实例并隔离 namespace／logical DB：
 
 ```bash
-KOKORO_REDIS_URL=redis://127.0.0.1:56380/9 \
-  KOKORO_AGENT_DATABASE_URL=postgresql://kokoro:kokoro@127.0.0.1:55433/kokoro_worker_agent \
+KOKORO_REDIS_URL=TARGET \
+  KOKORO_AGENT_DATABASE_URL=TARGET \
   KOKORO_AGENT_DATABASE_SCHEMA=kokoro_agent \
-  KOKORO_INTERNAL_SECRET_AGENT=... KOKORO_AGENT_HTTP_PORT=4401 \
+  KOKORO_INTERNAL_SECRET_AGENT=TOKEN KOKORO_AGENT_HTTP_PORT=PORT \
 uv run kokoro-agent-http
 ```
 
-以上是本地 profile 的共享依赖基线：复用 `127.0.0.1:55433` 的 PostgreSQL，并只使用 Agent 自己的
-`kokoro_worker_agent` database；复用 `127.0.0.1:56380` 的 Redis logical DB `9`。启动前先探测现有实例，
-不要为 Agent 重复启动 PostgreSQL 或 Redis。CI 继续使用 workflow 显式注入的 service 端口，不继承本地默认值。
+`TARGET`／`HOST`／`PORT`／`TOKEN` 均为占位符，从各进程的受管配置／私有材料注入，不是可直接执行的默认值。
+本地遵循 Root 单 PostgreSQL 实例、单应用库与 owner schema 规则；不为 Agent 新建独立应用数据库或 Redis。
+HTTP 入站凭据与 Worker→System 的出站凭据角色不同，示例同名配置应按进程分别注入，不混用或复制为同一秘密。
+启动前探测并复用现有实例；CI 使用 workflow 显式注入的隔离测试资源，不继承某台机器的历史端口。
 
 Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本地 profile 只启动 Web、BFF
 和它们的 PostgreSQL/Redis；此时 BFF readiness 仍可通过，Chat/调度执行路由返回稳定的

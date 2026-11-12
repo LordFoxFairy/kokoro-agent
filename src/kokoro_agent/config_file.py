@@ -46,6 +46,7 @@ _YAML_TO_ENV: dict[str, str] = {
     "database.url": "KOKORO_AGENT_DATABASE_URL",
     "database.schema": "KOKORO_AGENT_DATABASE_SCHEMA",
     "run_repository.lease_ttl_s": "KOKORO_LEASE_TTL_S",
+    "sandbox.chat_backend": "KOKORO_AGENT_CHAT_BACKEND",
     "sandbox.local_shell.root": "KOKORO_AGENT_LOCAL_SHELL_ROOT",
     "sandbox.local_shell.inherit_env": "KOKORO_AGENT_LOCAL_SHELL_INHERIT_ENV",
     "sandbox.local_shell.timeout": "KOKORO_AGENT_LOCAL_SHELL_TIMEOUT",

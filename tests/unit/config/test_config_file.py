@@ -159,3 +159,30 @@ class TestExamplesStayValid:
         assert config.sandbox.custom.factory_ref == "my_pkg.sandbox:make_backend"
         assert config.sandbox.custom.teardown_ref == "my_pkg.sandbox:destroy_backend"
         assert config.enabled_builtin_subagents == frozenset({"web-researcher"})
+
+
+def test_chat_backend_uses_existing_worker_config_precedence(tmp_path: Path) -> None:
+    assert AppConfig.from_env({}).sandbox.chat_backend is None
+    configured = _config_from(
+        tmp_path,
+        FULL_TREE.replace("sandbox:\n", "sandbox:\n  chat_backend: docker\n", 1),
+    )
+    assert configured.sandbox.chat_backend == "docker"
+    overridden = _config_from(
+        tmp_path,
+        FULL_TREE.replace("sandbox:\n", "sandbox:\n  chat_backend: docker\n", 1),
+        {"KOKORO_AGENT_CHAT_BACKEND": "state"},
+    )
+    assert overridden.sandbox.chat_backend == "state"
+
+
+@pytest.mark.parametrize("kind", ["local_shell", "unregistered"])
+def test_ordinary_chat_cannot_select_host_shell_or_unknown_backend(kind: str) -> None:
+    with pytest.raises(ValueError):
+        AppConfig.from_env({"KOKORO_AGENT_CHAT_BACKEND": kind})
+
+
+@pytest.mark.parametrize("kind", ["docker", "e2b", "custom"])
+def test_configured_chat_backend_requires_its_real_settings(kind: str) -> None:
+    with pytest.raises(ValueError):
+        AppConfig.from_env({"KOKORO_AGENT_CHAT_BACKEND": kind})

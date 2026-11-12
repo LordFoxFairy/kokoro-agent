@@ -1,3 +1,9 @@
+## 2026-11-12 · 普通 Chat 沙箱候选（待正常 Worker 激活）
+
+普通 Chat 配置、Factory 的构建／清理和冻结配方共用已有 backend；Docker execute/scratch 不再要求选择 Custom API，新建主容器总带原隔离与日志限制。未变公开 wire／Schema／owner，实际 Custom API fresh Acquire 和 FileEgress 保持。主控在生产源码停写后运行默认 `uv run pytest -q`：3626 PASS／955 deselected；全 Ruff、pyright、contract-check、wheel/sdist build 通过。真实 Docker 的 execute、scratch/recover、inspect 限额、root 只读／workspace 可写三个定向用例通过，相关容器已回收；scratch 初轮缺 fixture 目录失败后仅补测试目录创建并重跑通过。该排除在默认选择之外的测试修正未改变生产／默认测试输入。
+
+以上是组件验收，不是 Skills→MCP→FINAL→浏览器全链通过。正常 Storage／Capability 已从既有持久配置恢复并 ready；普通 Docker、Platform／Storage 的 Worker 配置已配对，但尚未切换运行 Worker。最终候选 SHA 由提交和 Root 精确组合绑定，不以本段冒已交付。
+
 ## 2026-11-12 · 正常主链运行补口（未交付）
 
 真实开发工作台任务在HTTP／预算准入后，由供应商兼容流的顶层error触发锁定SDK基类APIError；先前误显示internal_error。现精确承接该基类为model_unavailable/false，保原transport分支及status／response-validation子类，不解析或公开私有错误正文，不自动重试／补零／释放hold。主控现test_invoke默认选择99通过、4 deselected（既有标记选择），新case先RED；尚未宣称实际模型响应恢复。预算补口已完成本地候选：首次赢家reserve，已有pending只recover；严格余额拒绝在现Run/lease事务内原子封存denied/not_dispatched，不发零usage或资金ACK；旧unknown不回填。recover迟到ACK取消窗口由独审发现，主控真PG先RED后修check()并GREEN；独审Approved。主控四文件focused unit 262 PASS／4既有deselected，两个真实PG文件最终54 PASS／0 SKIP，全pyright0、相关Ruff/format通过。源码候选432bd322已在原正常官方Worker激活，无诊断observer。真实已登录浏览器新任务conv_86a7b392经正常BFF→Agent→Billing余额拒绝→既有AG-UI得到model_access_denied，刷新一致；owner事实为authorization_denied/denied、sealed1、dispatch0，原两个financial pending未增加。该证据只证明候选正常负路径，不代表Root精确组合／供应商正常答案／Skills沙箱FINAL通过。Root发现原开发积分20是held而非已确认扣费，不释放未知hold；PR尚未交付，公开合同／Schema未变。

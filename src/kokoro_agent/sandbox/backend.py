@@ -78,7 +78,7 @@ async def _to_thread_owned(operation: Callable[..., Any], /, *args: object) -> A
 
 
 class SandboxSettings(BaseModel):
-    """各 backend 的进程级参数；具体选择由受信 Agent/Feature 声明决定。"""
+    """各 backend 的进程级参数；Chat可显式覆盖原受信Feature声明。"""
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -86,6 +86,7 @@ class SandboxSettings(BaseModel):
     local_shell_inherit_env: bool
     local_shell_timeout: Annotated[int, Field(gt=0)]
     local_shell_max_output_bytes: Annotated[int, Field(gt=0)]
+    chat_backend: Backend | None = None
     # 存储形态（ADR-009，与 session 读同一 yaml）：None=local 默认档，无归档动作。
     workspace: LocalWorkspace | S3Workspace | None
     workspace_s3_access_key: SecretStr | None
@@ -105,6 +106,24 @@ class SandboxSettings(BaseModel):
             raise ValueError(
                 "workspace type s3 requires KOKORO_WORKSPACE_S3_ACCESS_KEY/SECRET_KEY"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _chat_backend_is_available(self) -> SandboxSettings:
+        if self.chat_backend == "local_shell":
+            raise ValueError("ordinary Chat cannot select a host local_shell backend")
+        if self.chat_backend == "docker" and (
+            not self.docker.image or not self.local_shell_root
+        ):
+            raise ValueError(
+                "Chat Docker backend requires its image and workspace root"
+            )
+        if self.chat_backend == "e2b" and self.e2b.api_key is None:
+            raise ValueError("Chat E2B backend requires its configured credential")
+        if self.chat_backend == "custom" and (
+            not self.custom.factory_ref or not self.custom.teardown_ref
+        ):
+            raise ValueError("Chat custom backend requires factory and teardown")
         return self
 
 

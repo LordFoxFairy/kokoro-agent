@@ -1,3 +1,7 @@
+## 2026-11-12 · 普通 Chat 后端配置，wire 不变
+
+普通 Chat 的后端仅由 Worker `KOKORO_AGENT_CHAT_BACKEND`／`sandbox.chat_backend` 配置；不新增浏览器或 LaunchRequest 字段，HTTP/Redis/Storage 版本不变。原 Custom API 选择仍只运输授权环境引用；只有实际 provider 存在时才有该路径的 fresh Acquire／秘密保护，普通无 provider 执行不冒此保证。
+
 ## 2026-11-10 · A‑15 当前待答问题
 
 现 `interaction.state` 的 `display.description` 可呈现新原生 `ask_user_question` 暂停的精确有界问句。仅同一已提交 action、原 `respond` 决策和安全问句与 native description 完全相等时投影；旧暂停保原说明与标识，其他参数和决定不出投影。无字段、版本、共享链接或控制语义改动。

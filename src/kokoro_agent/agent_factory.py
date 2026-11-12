@@ -629,11 +629,22 @@ class AgentFactory:
         """Resolve a trusted product Feature from this worker's catalog."""
         return self._catalog.get(key)
 
+    def _execution_feature(self, request: RunRequest) -> Feature:
+        feature = self.feature(request.feature_key)
+        settings = self._dependencies.sandbox
+        if feature.key == "chat" and settings.chat_backend is not None:
+            feature = replace(
+                feature,
+                agents=tuple(
+                    replace(agent, backend=settings.chat_backend)
+                    for agent in feature.agents
+                ),
+            )
+        return feature_for_custom_api(feature, request, settings)
+
     def backend_for(self, request: RunRequest) -> Backend:
         """Return the Feature-declared sandbox kind for terminal cleanup."""
-        feature = feature_for_custom_api(
-            self.feature(request.feature_key), request, self._dependencies.sandbox
-        )
+        feature = self._execution_feature(request)
         return feature.agents[0].backend
 
     async def build(
@@ -644,9 +655,7 @@ class AgentFactory:
         action_observer: ActionObservationSink = lambda _observation: None,
     ) -> AgentHandle:
         """按受信 Feature key 构造；请求本身不携带 Agent/图配方。"""
-        feature = feature_for_custom_api(
-            self.feature(request.feature_key), request, self._dependencies.sandbox
-        )
+        feature = self._execution_feature(request)
         if request.selected_mcp_connection_ids:
             # A Run's choice augments only its entry Agent, before recipe freeze.
             # Never mutate the catalog or grant these refs to unrelated peers.

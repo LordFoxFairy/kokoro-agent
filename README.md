@@ -107,6 +107,11 @@ Agent 是可选执行 profile，不是 Web/BFF 的启动前置条件。最小本
 durable ingress）和 `kokoro-agent-worker`（实际执行 loop）；只运行 HTTP 进程只能完成 admission，
 不会执行任务。
 
+普通任务沙箱由 Worker `KOKORO_AGENT_CHAT_BACKEND`／YAML `sandbox.chat_backend` 配置，见
+[环境示例](.env.example)和[完整配置](agent.example.full.yaml)。省略继承 Feature；Docker 需显式 image
+和 workspace root，无需选择 Custom API。普通 Chat 禁止宿主 local_shell，配置不全失败；恢复继续核冻结配方，
+不透明迁移到变更后的后端。秘密保护仍只属实际 Custom API provider，scratch 过程版本不自动成为 FINAL。
+
 Worker 的财务恢复另需 `KOKORO_BFF_BASE_URL` 与 env-only
 `KOKORO_BFF_MODEL_ADMISSION_SECRETS`：后者是受信部署注入的 tenant ID → 专用机器
 secret JSON 对象，最多32项／64KiB，不接受重复键或跨租户默认 secret。它不是模型 API Key，
@@ -122,7 +127,7 @@ System6 独占后台写入的加密模型 Key；Agent 每次按当前业务与�
 不进 Run、证据、日志或浏览器。领取无重试/跳转且必须 no-store。
 默认直连，LiteLLM 可选；完整 base URL 原样保留，只拼接 `/chat/completions`，不猜 `/v1`。
 旧 `KOKORO_MODEL_CREDENTIALS_FILE`（包括空值）与 YAML `model.credentials_file` 明确拒绝；
-旧 `KOKORO_LITELLM_*` 仍拒绝。正常 worker 本批不启用；每次实际调用仍需正式 Billing 许可。
+旧 `KOKORO_LITELLM_*` 仍拒绝。正常 Worker 实际启用状态以 Root 当前运行记录为准；每次实际调用仍需正式 Billing 许可。
 
 本候选新写 usage2，HTTP7.1 按实际证据版本返回原始字节；冻结 usage1 仅支持已封存历史读取。
 升级前先停旧 producer 并由旧版本收尾其未封存调用，再启动新 worker；新启动屏障拒绝旧/未知

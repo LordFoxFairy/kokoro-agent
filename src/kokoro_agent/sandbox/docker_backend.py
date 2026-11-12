@@ -384,9 +384,7 @@ class DockerShellBackend(WorkspaceOutputLocalShellBackend):
         name, scratch = output_names(key)
         leaf = path.removeprefix(OUTPUT_ROOT)
         if (
-            self._environment is None
-            or self._file_egress is None
-            or not path.startswith(OUTPUT_ROOT)
+            not path.startswith(OUTPUT_ROOT)
             or "/" in leaf
             or output_path_digest(path) is None
             or (not recover and (not command or "\x00" in command))
@@ -518,7 +516,10 @@ class DockerShellBackend(WorkspaceOutputLocalShellBackend):
             if recover:
                 content = await asyncio.to_thread(capture, None)
             else:
-                await self._environment.aexecute(effective, run)
+                runner = self._environment or ExecutionEnvironmentRunner(
+                    None, max_output_bytes=self._max_output_bytes
+                )
+                await runner.aexecute(effective, run)
         except (OSError, RuntimeError, subprocess.SubprocessError):
             return None
         finally:
@@ -669,17 +670,13 @@ def connect_docker_sandbox(
             docker_cli_environment=context,
         )
     isolation = (
-        (
-            *_TASK_ISOLATION,
-            "--log-driver",
-            "local",
-            "--log-opt",
-            "max-size=10m",
-            "--log-opt",
-            "max-file=2",
-        )
-        if environment_provider is not None
-        else ()
+        *_TASK_ISOLATION,
+        "--log-driver",
+        "local",
+        "--log-opt",
+        "max-size=10m",
+        "--log-opt",
+        "max-file=2",
     )
     result = _docker_in_context(
         "run",

@@ -1,3 +1,9 @@
+## 2026-11-12 · 普通 Chat 的可插拔沙箱
+
+Worker 可用 `KOKORO_AGENT_CHAT_BACKEND`（YAML `sandbox.chat_backend`）选择现有后端；省略时继承 Feature，普通 Chat 禁止宿主 `local_shell`。Docker 需显式 image 和 workspace root，E2B/custom 需各自原配置，缺配置在启动解析时失败，不降级。Factory 的构建和清理使用同一有效 Feature，不修改 catalog；恢复仍比较原冻结配方，配置漂移不透明迁移。
+
+新建 Docker 任务容器统一使用既有 CPU/内存/PID、只读 root、tmpfs、capability 和日志轮转限制；不依赖 Custom API 选择。普通 execute 与 scratch 输出捕获无需凭据 provider；只有实际选择 Custom API 时才使用原 fresh Acquire 和 FileEgress，未授予普通任务秘密文件保护能力。旧容器复用不等于自动升级隔离配置。scratch `execute.output_path` 的不可变过程版本与普通 workspace 文件分别取证；前者不因同名就成为 workspace→deliver 的 FINAL 来源。
+
 ## 2026-11-10 · A‑10 Docker/Local 原生 write_file / edit_file 过程版本
 
 受信配置、普通单 peer Chat 的 Docker/Local 虚拟工作区才开 `/outputs/`。锁定 SDK `write_file` 的实际 ToolRuntime、原规范路径与成功 ACK 必须相符；直接写的后像是原 UTF‑8 输入；编辑使用锁定 SDK 的换行与替换规则，在无跟随父目录描述符下将同文件系统的暂存后像原子替换，从同次 mutation 捕获实际写入字节，不回读可变盘。链接、不可信类型或父目录替换不产生版本；这不承诺与外部写进程互斥。Custom API Docker 复用现 FileEgress，原路径与原 bytes 在写入版本和接管上传前重新查凭据；拒绝不生成公开版本。脚本和 E2B 不接本片。
@@ -71,6 +77,8 @@ E2B目录仍OPEN：公开files.list无响应预算；commands.run硬编码bash -
 沿既有本人 RunDisplay 只读接口补齐 execute 预览，不新增事件、表或消费者契约。冻结配方中的所有 peer 均为 Docker/E2B 且无 execute approval/review/pause 改写，才允许 execute；StateBackend 文件白名单维持原行为，混合或未知后端不推断权限。原始 typed call/result、同 Run opaque activity ID、终态和持久 journal 的 name/status/result 必须完全一致；仅 command 公共参数及已记录输出进入既有脱敏预览（2048/4096 UTF-8字节），不读取当前凭据、环境或文件。无 MCP/Skill journal 需求时只预算和读取 execute journal，避免无关工具挤占文件详情预算。既有 RR只读、5秒期限、8MiB预算及版本/主体边界保持。
 
 ## 2026-10-29 已批准 Custom API 隔离执行接线
+
+本节记录当时 Custom API 接线；普通 Chat 选择和新建 Docker 的通用隔离已由上方 2026-11-12 节扩展，不再以选中 API 为前提。
 
 Platform唯一拥有加密配置；本仓只消费固定Describe/Acquire运行契约，沿既有RunPlatformClient与在线proof，执行器使用现Docker/E2B而非宿主local_shell或通用HTTP代理。每次execute获取局部env，值不进argv/命令/prompt/recipe/日志，不写.env；描述为用户配置数据。adapter/provider及 Run/factory 已接入候选；正常进程尚未配对激活。
 

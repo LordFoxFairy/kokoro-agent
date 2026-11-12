@@ -1776,11 +1776,13 @@ inactive/routable=false 是发布标记而非运行开关；本仓直接门已�
 下文 W1E 的 v1 来源和“worker transport 尚未接线”陈述为历史阶段，不作为当前验收事实。
 
 
-## W2-F2-S4 Storage consumer 与 `artifact_kind` 事件契约（2026-09-28）
+## 历史：W2-F2-S4 Storage consumer 与 `artifact_kind` 事件契约（2026-09-28）
+
+本节描述当时 v2 消费，不是当前协议入口；当前固定输入见 `contract/storage/` 和其 provenance。
 
 Storage `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 的
-[`storage.proto`](../../kokoro-storage/contract/proto/kokoro/storage/v2/storage.proto) 和
-[`common.proto`](../../kokoro-storage/contract/proto/kokoro/common/v1/common.proto) 是唯一 owner
+[`storage.proto`（当时 owner 固定版本）](https://github.com/LordFoxFairy/kokoro-storage/blob/d5cfc442c675e32363ae767f5ec662a9e0d9eaea/contract/proto/kokoro/storage/v2/storage.proto) 和
+[`common.proto`（当时 owner 固定版本）](https://github.com/LordFoxFairy/kokoro-storage/blob/d5cfc442c675e32363ae767f5ec662a9e0d9eaea/contract/proto/kokoro/common/v1/common.proto) 是唯一 owner
 机器源；Agent 已将其只读 pin 于 `contract/storage/v2/` 并生成 Python Connect client。
 两份 owner Proto 原字节 SHA-256 分别为
 `5a5dcaec2e1fd0d5eed369b8f79477fd0f8f653b32f9ebe14a8c339f4eb713ac`、

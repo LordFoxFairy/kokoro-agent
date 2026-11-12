@@ -1,4 +1,14 @@
-## 2026-11-12 · 普通 Chat 沙箱候选（待正常 Worker 激活）
+## 2026-11-12 · 正常持久环境真实主链阶段通过
+
+生产修复 `c2c563e`（后继 `ea20468` 仅 README）已在正常独立 Worker 激活，Root 精确组合 `ff698689`。普通任务复用原 BackendProtocol，未选择 Custom API 也可使用配置的 Docker 沙箱。真实开发账号经 native IAM 登录；真实模型、已安装 Skill、公开 Context7 MCP、隔离 Docker 与 Storage FINAL 已在正常 BFF／浏览器链路验证，不是模型或协议 fixture。
+
+- 报告任务重新生成完成：12 次实际模型派发封存，Skill 读取和 Context7 文档工具成功；实际 workspace 版本、FINAL/CLEAN 和浏览器下载同为 1469 bytes、SHA `de656263…ae12cf4`，刷新恢复正文与产物。额外绝对 `/outputs` 检查命令 exit 1 保留，不冒全部工具成功。终态容器已回收。
+- 普通 Python execute 无 Custom API／output_path，实际写入 `/workspace/outputs` 的 108 bytes 文件；随后资金不足令原 Run 失败。后续同会话新 Run 仅 deliver 原文件，不重跑脚本／MCP；FINAL／下载 SHA `49daae46…7cde86e` 与原文件相同，刷新保持，容器回收。此为两 Run 的真实恢复，不称单 Run 全成功。
+- 原供应商 overload 的未知用量和 held 额度保留，未猜零／退款；后继正常开发模型已通过，现默认路由指向同一已验 revision。
+
+以上是 G1／G2 首片验收。App 的实时 AI SDK 正文单轨、旧失败过程终态呈现、首页／文档及最终 PR 集成仍在推进，整体 Goal 未完成。详细组合与独有边界由 Root 当前 TODO／实施方案维护；凭据、原始收据和机器配置不入 Git。下文标注旧阶段的未激活／未验陈述只描述当时状态。
+
+## 2026-11-12 · 普通 Chat 沙箱组件验收（后续真实主链见上文）
 
 普通 Chat 配置、Factory 的构建／清理和冻结配方共用已有 backend；Docker execute/scratch 不再要求选择 Custom API，新建主容器总带原隔离与日志限制。未变公开 wire／Schema／owner，实际 Custom API fresh Acquire 和 FileEgress 保持。主控在生产源码停写后运行默认 `uv run pytest -q`：3626 PASS／955 deselected；全 Ruff、pyright、contract-check、wheel/sdist build 通过。真实 Docker 的 execute、scratch/recover、inspect 限额、root 只读／workspace 可写三个定向用例通过，相关容器已回收；scratch 初轮缺 fixture 目录失败后仅补测试目录创建并重跑通过。该排除在默认选择之外的测试修正未改变生产／默认测试输入。
 

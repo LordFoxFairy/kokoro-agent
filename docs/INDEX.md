@@ -1,4 +1,4 @@
-B08 personal_context 首片实施说明见 API_CONTRACT / TECHNICAL_DESIGN / CURRENT；尚未发布或真实模型验收。
+当前执行事实以 CURRENT 顶部为准；历史专题中的未验状态不覆盖后继收据。
 
 # kokoro-agent 文档索引
 
@@ -10,7 +10,7 @@ B08 personal_context 首片实施说明见 API_CONTRACT / TECHNICAL_DESIGN / CUR
 ## 推荐阅读顺序
 
 1. [`../README.md`](../README.md)：五分钟启动和入口。
-2. [`CURRENT.md`](CURRENT.md)：当前实现、证据和已知缺口；HTTP7.2精确历史sealed读取及待装配资金链。
+2. [`CURRENT.md`](CURRENT.md)：当前实现、证据和已知缺口；当前普通 Chat 沙箱与真实 Skill／MCP／FINAL 首片收据；后续 App 呈现与集成边界。
 3. [`TECHNICAL_DESIGN.md`](TECHNICAL_DESIGN.md)：分层、状态机、事务和恢复。
 4. [`API_CONTRACT.md`](API_CONTRACT.md)：HTTP、Redis command/event 和固定BFF internal1.3预算／结算／恢复接入边界。
 5. [`DATA_MODEL.md`](DATA_MODEL.md)：表 owner、不变量、索引和 retention。

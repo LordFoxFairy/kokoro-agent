@@ -140,7 +140,7 @@ EXPECTED_RPC_SHAPES = {
 
 def test_platform_vendor_inputs_match_the_pinned_owner_digests() -> None:
     pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-    assert pin["owner_commit"] == "24094960bad58d1b6a85a273d3bc94b0a0e0d1dc"
+    assert pin["owner_commit"] == "573a8f00a92991ae1e6eee6feb238e0132f71f50"
     assert {
         source["path"]: source["sha256"] for source in pin["sources"]
     } == EXPECTED_SOURCE_DIGESTS

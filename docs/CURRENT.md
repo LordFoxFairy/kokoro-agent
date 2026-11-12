@@ -1,3 +1,23 @@
+## 2026-11-12 · 正常持久环境真实主链阶段通过
+
+生产修复 `c2c563e`（后继 `ea20468` 仅 README）已在正常独立 Worker 激活，Root 精确组合 `ff698689`。普通任务复用原 BackendProtocol，未选择 Custom API 也可使用配置的 Docker 沙箱。真实开发账号经 native IAM 登录；真实模型、已安装 Skill、公开 Context7 MCP、隔离 Docker 与 Storage FINAL 已在正常 BFF／浏览器链路验证，不是模型或协议 fixture。
+
+- 报告任务重新生成完成：12 次实际模型派发封存，Skill 读取和 Context7 文档工具成功；实际 workspace 版本、FINAL/CLEAN 和浏览器下载同为 1469 bytes、SHA `de656263…ae12cf4`，刷新恢复正文与产物。额外绝对 `/outputs` 检查命令 exit 1 保留，不冒全部工具成功。终态容器已回收。
+- 普通 Python execute 无 Custom API／output_path，实际写入 `/workspace/outputs` 的 108 bytes 文件；随后资金不足令原 Run 失败。后续同会话新 Run 仅 deliver 原文件，不重跑脚本／MCP；FINAL／下载 SHA `49daae46…7cde86e` 与原文件相同，刷新保持，容器回收。此为两 Run 的真实恢复，不称单 Run 全成功。
+- 原供应商 overload 的未知用量和 held 额度保留，未猜零／退款；后继正常开发模型已通过，现默认路由指向同一已验 revision。
+
+以上是 G1／G2 首片验收。App 的实时 AI SDK 正文单轨、旧失败过程终态呈现、首页／文档及最终 PR 集成仍在推进，整体 Goal 未完成。详细组合与独有边界由 Root 当前 TODO／实施方案维护；凭据、原始收据和机器配置不入 Git。下文标注旧阶段的未激活／未验陈述只描述当时状态。
+
+## 2026-11-12 · 普通 Chat 沙箱组件验收（后续真实主链见上文）
+
+普通 Chat 配置、Factory 的构建／清理和冻结配方共用已有 backend；Docker execute/scratch 不再要求选择 Custom API，新建主容器总带原隔离与日志限制。未变公开 wire／Schema／owner，实际 Custom API fresh Acquire 和 FileEgress 保持。主控在生产源码停写后运行默认 `uv run pytest -q`：3626 PASS／955 deselected；全 Ruff、pyright、contract-check、wheel/sdist build 通过。真实 Docker 的 execute、scratch/recover、inspect 限额、root 只读／workspace 可写三个定向用例通过，相关容器已回收；scratch 初轮缺 fixture 目录失败后仅补测试目录创建并重跑通过。该排除在默认选择之外的测试修正未改变生产／默认测试输入。
+
+以上是组件验收，不是 Skills→MCP→FINAL→浏览器全链通过。正常 Storage／Capability 已从既有持久配置恢复并 ready；普通 Docker、Platform／Storage 的 Worker 配置已配对，但尚未切换运行 Worker。最终候选 SHA 由提交和 Root 精确组合绑定，不以本段冒已交付。
+
+## 2026-11-12 · 正常主链运行补口（未交付）
+
+真实开发工作台任务在HTTP／预算准入后，由供应商兼容流的顶层error触发锁定SDK基类APIError；先前误显示internal_error。现精确承接该基类为model_unavailable/false，保原transport分支及status／response-validation子类，不解析或公开私有错误正文，不自动重试／补零／释放hold。主控现test_invoke默认选择99通过、4 deselected（既有标记选择），新case先RED；尚未宣称实际模型响应恢复。预算补口已完成本地候选：首次赢家reserve，已有pending只recover；严格余额拒绝在现Run/lease事务内原子封存denied/not_dispatched，不发零usage或资金ACK；旧unknown不回填。recover迟到ACK取消窗口由独审发现，主控真PG先RED后修check()并GREEN；独审Approved。主控四文件focused unit 262 PASS／4既有deselected，两个真实PG文件最终54 PASS／0 SKIP，全pyright0、相关Ruff/format通过。源码候选432bd322已在原正常官方Worker激活，无诊断observer。真实已登录浏览器新任务conv_86a7b392经正常BFF→Agent→Billing余额拒绝→既有AG-UI得到model_access_denied，刷新一致；owner事实为authorization_denied/denied、sealed1、dispatch0，原两个financial pending未增加。该证据只证明候选正常负路径，不代表Root精确组合／供应商正常答案／Skills沙箱FINAL通过。Root发现原开发积分20是held而非已确认扣费，不释放未知hold；PR尚未交付，公开合同／Schema未变。
+
 ## A‑10 native E2B output write and edit
 
 The existing E2B Chat also uses native `edit_file` on a protected output. It verifies the exact UTF-8 postimage on the installed file descriptor and passes it only to the existing private edit capture and publish guard. The public tool result remains the path and occurrence count. Local write/edit, profile and the related Docker output regression passed; the E2B provider was a protocol double. Live cloud and script output remain open.

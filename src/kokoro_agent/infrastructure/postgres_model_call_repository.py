@@ -18,6 +18,7 @@ from kokoro_agent.infrastructure.postgres import (
 )
 from kokoro_agent.infrastructure.postgres_model_call_evidence import (
     append_evidence_locked,
+    seal_credit_denial_locked,
     recompute_run_completeness,
 )
 from kokoro_agent.infrastructure.postgres_model_call_final import (
@@ -45,6 +46,7 @@ from kokoro_agent.model.call_artifacts import (
     encode_not_requested_artifact,
     encode_planned_artifact,
     encode_requested_artifact,
+    encode_denied_artifact,
     recipe_feature_for_peer_path,
     strict_granted_artifact,
 )
@@ -59,6 +61,7 @@ from kokoro_agent.model.call_models import (
     BeginModelCallAuthorization,
     FinalModelCallEvidence,
     GrantModelCallAuthorization,
+    DenyModelCallAuthorization,
     ModelCallAuthorityLost,
     ModelCallAuthorizationReceipt,
     ModelCallDispatchPermit,
@@ -250,6 +253,14 @@ class PostgresModelCallRepository:
                             row, authorization_bytes, authorization_digest
                         )
                         newly_requested = False
+                    elif current == "authorization_denied":
+                        authorization_bytes, authorization_digest = (
+                            encode_denied_artifact(command.request_ref)
+                        )
+                        _require_authorization(
+                            row, authorization_bytes, authorization_digest
+                        )
+                        newly_requested = False
                     else:
                         try:
                             current_bytes = _bytes(row["authorization_bytes"])
@@ -332,6 +343,33 @@ class PostgresModelCallRepository:
             authorization_digest=authorization_digest,
             newly_recorded=newly_recorded,
         )
+
+    async def deny_authorization(
+        self, command: DenyModelCallAuthorization
+    ) -> ModelCallEvidenceReceipt:
+        requested_bytes, requested_digest = encode_requested_artifact(
+            command.request_ref
+        )
+        denied_bytes, denied_digest = encode_denied_artifact(command.request_ref)
+        if command.expected_authorization_digest != requested_digest:
+            raise ModelCallIdentityConflict("credit denial predecessor conflicts")
+        async with asyncio.timeout(self._total_timeout_seconds):
+            async with connect_pg(self._database_url) as connection:
+                async with connection.transaction(), connection.cursor() as cursor:
+                    row, clock = await self._lock_attempt(cursor, command)
+                    if row["status"] == "authorization_denied":
+                        _require_authorization(row, denied_bytes, denied_digest)
+                    else:
+                        _require_authorization(row, requested_bytes, requested_digest)
+                    return await seal_credit_denial_locked(
+                        cursor,
+                        schema=self._schema,
+                        command=command,
+                        attempt=row,
+                        database_now=clock,
+                        denied_bytes=denied_bytes,
+                        denied_digest=denied_digest,
+                    )
 
     async def start_dispatch(
         self, command: StartModelCallDispatch
@@ -620,6 +658,7 @@ class PostgresModelCallRepository:
         cursor: object,
         command: BeginModelCallAuthorization
         | GrantModelCallAuthorization
+        | DenyModelCallAuthorization
         | StartModelCallDispatch,
     ) -> tuple[Mapping[str, object], datetime]:
         await execute_sql(cursor, f"SET LOCAL lock_timeout='{self._lock_timeout_ms}ms'")

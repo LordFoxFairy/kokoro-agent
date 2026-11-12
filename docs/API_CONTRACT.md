@@ -1,3 +1,7 @@
+## 2026-11-12 · 普通 Chat 后端配置，wire 不变
+
+普通 Chat 的后端仅由 Worker `KOKORO_AGENT_CHAT_BACKEND`／`sandbox.chat_backend` 配置；不新增浏览器或 LaunchRequest 字段，HTTP/Redis/Storage 版本不变。原 Custom API 选择仍只运输授权环境引用；只有实际 provider 存在时才有该路径的 fresh Acquire／秘密保护，普通无 provider 执行不冒此保证。
+
 ## 2026-11-10 · A‑15 当前待答问题
 
 现 `interaction.state` 的 `display.description` 可呈现新原生 `ask_user_question` 暂停的精确有界问句。仅同一已提交 action、原 `respond` 决策和安全问句与 native description 完全相等时投影；旧暂停保原说明与标识，其他参数和决定不出投影。无字段、版本、共享链接或控制语义改动。
@@ -202,7 +206,7 @@ SSE SDK入场要求root已配置实际handler；缺失时静态MCP_SESSION_FAILE
 
 ## 2026-10-25 SDK 连接失败的安全分类
 
-仅真实 OpenAI SDK `APIConnectionError`／`APITimeoutError`（`isinstance`）归为既有 `model_unavailable`、`retryable=false`，优先于装配调用点提供的缺省码；同名普通异常或错误文字不参与归类。此为安全失败分类，不证明供应商 TCP/DNS/TLS 子因或可用性，不增加 wire／重试。原 API 主异常、secondary settlement 处理、pending financial ACK／hold、single-dispatch、历史终态和 preflight/start 顺序保持，不释放资金或重派模型。
+真实 OpenAI SDK `APIConnectionError`／`APITimeoutError`（`isinstance`），以及锁定SDK为流内error直接抛出的基类 `APIError`（精确type，不包含status／response-validation子类），归为既有 `model_unavailable`、`retryable=false`，优先于装配调用点提供的缺省码；同名普通异常或错误文字不参与归类。此为安全失败分类，不证明供应商 TCP/DNS/TLS 子因或可用性，不增加 wire／重试。原 API 主异常、secondary settlement 处理、pending financial ACK／hold、single-dispatch、历史终态和 preflight/start 顺序保持，不释放资金或重派模型。
 
 ## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
 
@@ -236,6 +240,8 @@ HTTP7.2、usage2、BFF settle wire 不变。内部 PhysicalUsageObservation 与 
 ## AGENT-1：本地金融投递回执（2026-10-23，本地已验；worker装配待接）
 
 不新增HTTP／RPC／wire版本。既有BFF1.3 consumer原请求／原key及ACK使用不变；Agent存独立预算关联与完整本地canonical ACK／domain digest供崩溃恢复，不对外投影金额或更改sealed证据。历史reader同cursor复用保持HTTP7.2语义与原canonical bytes。requested_unknown恢复不改granted授权、不授旧fence执行权；miss只留待核对。
+
+当前consumer仅在首次reserve的完整有效422 `model_admission_insufficient_credit`建立私有typed denial；公开Run使用既有`model_access_denied/retryable=false`，不暴露owner error message或钱包事实。相同attempt已有pending只使用原recover，不再次reserve／签proof；recover404、503、坏ACK、取消均不证明永久拒绝。没有公开字段或版本增量，不自动重试模型。
 
 ## AGENT-1：固定 BFF internal1.3（2026-10-23，本地已验）
 
@@ -1748,7 +1754,7 @@ Agent-owned OpenAPI `2.0.0`（URL 仍 `/v1`）与 HTTP/Redis `RunRequest` 已要
 | Agent→Platform 包引用 | `GetApprovedSkillPackageReference` 输入同一个 typed ref 与 fresh proof；响应核 `asset_ref/content_digest/manifest_identity` 与 Resolve 完全一致，`transfer_reference` 必须包含 `url/method/required_headers/expires_at`。该读取重新做 Platform 当前授权/安装和 Storage CLEAN；旧 Proto 裸 `read_reference` 已 reserved，不接受。 |
 | Agent→ObjectStore | 仅按上述批准的短期 `GET` 与安全 headers 获取原始 ZIP bytes；URL 不等于 authorization，禁 redirect、凭据、签名持久化、任意 host。响应须 200、无压缩编码变化、长度有界、SHA-256 等于 `content_digest`；ZIP/manifest 身份再按 Platform v4 profile 核验。 |
 
-`SkillSourceRef` 的 owner 格式为 exact `skill:` 加合法 `SkillId`，总长 7..197 ASCII bytes、区分大小写，不 trim、不允许重复 prefix、不以 `series_id`、`installation_id`、name 或 BFF 列表 item 代替。唯一权威是 Platform `6a09913a96c686b316bfe707b823d039e625607a` 的 [`contract/proto/kokoro/platform/v1/platform_runtime.proto`](../../kokoro-capability/contract/proto/kokoro/platform/v1/platform_runtime.proto)（SHA-256 `8ccab4aee4efdfd8210f2e5f02ae8ec85c2c470e90451915209406e16621289a`）、[`contract/execution-operations/v4/manifest.json`](../../kokoro-capability/contract/execution-operations/v4/manifest.json)（`7058e2d2e11c885765ceb4e813e1f4f208e170c97a9b27e8d5f0178fcffc8d5d`）、[`zip-profile-v1.json`](../../kokoro-capability/contract/execution-operations/v4/zip-profile-v1.json)（`18ef03a3d7ea84f0e2a38c6e625146f607b96689957210052116b557008024fc`）和 Storage `16a6c1ce95832df6dc839e0d50e957405c5c7005` 的 [`contract/proto/kokoro/storage/v2/storage.proto`](../../kokoro-storage/contract/proto/kokoro/storage/v2/storage.proto)（`02266d53b8bfb7fdd6991b17d59ebb17399d4f189b6a3135fedcb69b6b364276`）；这些链接为只读来源，Agent 不编辑 owner Proto。Agent 当前 vendored/generated 仍来自 Platform v3 `5b6eb2c`，v4 `inactive/routable=false`；v3 的六个证明绑定 operation 仍为 `3.0.0`，但 v4 的 GET transfer 与 ZIP profile 不可由 v3 旧字段猜出。下一机器片必须固定 exact owner commit/direct digests、生成物与 drift gate 后才使用。
+`SkillSourceRef` 的 owner 格式为 exact `skill:` 加合法 `SkillId`，总长 7..197 ASCII bytes、区分大小写，不 trim、不允许重复 prefix、不以 `series_id`、`installation_id`、name 或 BFF 列表 item 代替。唯一权威是 Platform `6a09913a96c686b316bfe707b823d039e625607a` 的 [`contract/proto/kokoro/platform/v1/platform_runtime.proto`](https://github.com/LordFoxFairy/kokoro-capability/blob/6a09913a96c686b316bfe707b823d039e625607a/contract/proto/kokoro/platform/v1/platform_runtime.proto)（SHA-256 `8ccab4aee4efdfd8210f2e5f02ae8ec85c2c470e90451915209406e16621289a`）、[`contract/execution-operations/v4/manifest.json`](https://github.com/LordFoxFairy/kokoro-capability/blob/6a09913a96c686b316bfe707b823d039e625607a/contract/execution-operations/v4/manifest.json)（`7058e2d2e11c885765ceb4e813e1f4f208e170c97a9b27e8d5f0178fcffc8d5d`）、[`zip-profile-v1.json`](https://github.com/LordFoxFairy/kokoro-capability/blob/6a09913a96c686b316bfe707b823d039e625607a/contract/execution-operations/v4/zip-profile-v1.json)（`18ef03a3d7ea84f0e2a38c6e625146f607b96689957210052116b557008024fc`）和 Storage `16a6c1ce95832df6dc839e0d50e957405c5c7005` 的 [`contract/proto/kokoro/storage/v2/storage.proto`](https://github.com/LordFoxFairy/kokoro-storage/blob/16a6c1ce95832df6dc839e0d50e957405c5c7005/contract/proto/kokoro/storage/v2/storage.proto)（`02266d53b8bfb7fdd6991b17d59ebb17399d4f189b6a3135fedcb69b6b364276`）；这些链接为只读来源，Agent 不编辑 owner Proto。Agent 当前 vendored/generated 仍来自 Platform v3 `5b6eb2c`，v4 `inactive/routable=false`；v3 的六个证明绑定 operation 仍为 `3.0.0`，但 v4 的 GET transfer 与 ZIP profile 不可由 v3 旧字段猜出。下一机器片必须固定 exact owner commit/direct digests、生成物与 drift gate 后才使用。
 
 Platform Resolve/包引用的 `NOT_FOUND`/`PERMISSION_DENIED`/`UNAUTHENTICATED`、过期/撤权/未安装/感染/未知扫描、5xx/限流/timeout 都不得映射成空 Skill 或旧缓存命中；在已声明选择的 Run 中 fail closed。相同逻辑读取重试保留 ref/request_id，但重新获取当次 bearer/DB-clock lease/proof/JTI/reference；服务器完成与网络 ACK 未知只重试无 mutation 的读取，不发第二种选择或绕过当前授权。对外错误用本仓稳定 Run failure/evidence code，不能回显签名 URL、headers、token、包内容、owner 内部 message。每次 `/.skills/` 再读都须新获当前授权；缓存仅在当次授权通过且资产/hash/manifest 未漂移时复用同 Run 已校验字节。
 
@@ -1770,11 +1776,13 @@ inactive/routable=false 是发布标记而非运行开关；本仓直接门已�
 下文 W1E 的 v1 来源和“worker transport 尚未接线”陈述为历史阶段，不作为当前验收事实。
 
 
-## W2-F2-S4 Storage consumer 与 `artifact_kind` 事件契约（2026-09-28）
+## 历史：W2-F2-S4 Storage consumer 与 `artifact_kind` 事件契约（2026-09-28）
+
+本节描述当时 v2 消费，不是当前协议入口；当前固定输入见 `contract/storage/` 和其 provenance。
 
 Storage `d5cfc442c675e32363ae767f5ec662a9e0d9eaea` 的
-[`storage.proto`](../../kokoro-storage/contract/proto/kokoro/storage/v2/storage.proto) 和
-[`common.proto`](../../kokoro-storage/contract/proto/kokoro/common/v1/common.proto) 是唯一 owner
+[`storage.proto`（当时 owner 固定版本）](https://github.com/LordFoxFairy/kokoro-storage/blob/d5cfc442c675e32363ae767f5ec662a9e0d9eaea/contract/proto/kokoro/storage/v2/storage.proto) 和
+[`common.proto`（当时 owner 固定版本）](https://github.com/LordFoxFairy/kokoro-storage/blob/d5cfc442c675e32363ae767f5ec662a9e0d9eaea/contract/proto/kokoro/common/v1/common.proto) 是唯一 owner
 机器源；Agent 已将其只读 pin 于 `contract/storage/v2/` 并生成 Python Connect client。
 两份 owner Proto 原字节 SHA-256 分别为
 `5a5dcaec2e1fd0d5eed369b8f79477fd0f8f653b32f9ebe14a8c339f4eb713ac`、

@@ -1,3 +1,9 @@
+## 2026-11-12 · 普通 Chat 的可插拔沙箱
+
+Worker 可用 `KOKORO_AGENT_CHAT_BACKEND`（YAML `sandbox.chat_backend`）选择现有后端；省略时继承 Feature，普通 Chat 禁止宿主 `local_shell`。Docker 需显式 image 和 workspace root，E2B/custom 需各自原配置，缺配置在启动解析时失败，不降级。Factory 的构建和清理使用同一有效 Feature，不修改 catalog；恢复仍比较原冻结配方，配置漂移不透明迁移。
+
+新建 Docker 任务容器统一使用既有 CPU/内存/PID、只读 root、tmpfs、capability 和日志轮转限制；不依赖 Custom API 选择。普通 execute 与 scratch 输出捕获无需凭据 provider；只有实际选择 Custom API 时才使用原 fresh Acquire 和 FileEgress，未授予普通任务秘密文件保护能力。旧容器复用不等于自动升级隔离配置。scratch `execute.output_path` 的不可变过程版本与普通 workspace 文件分别取证；前者不因同名就成为 workspace→deliver 的 FINAL 来源。
+
 ## 2026-11-10 · A‑10 Docker/Local 原生 write_file / edit_file 过程版本
 
 受信配置、普通单 peer Chat 的 Docker/Local 虚拟工作区才开 `/outputs/`。锁定 SDK `write_file` 的实际 ToolRuntime、原规范路径与成功 ACK 必须相符；直接写的后像是原 UTF‑8 输入；编辑使用锁定 SDK 的换行与替换规则，在无跟随父目录描述符下将同文件系统的暂存后像原子替换，从同次 mutation 捕获实际写入字节，不回读可变盘。链接、不可信类型或父目录替换不产生版本；这不承诺与外部写进程互斥。Custom API Docker 复用现 FileEgress，原路径与原 bytes 在写入版本和接管上传前重新查凭据；拒绝不生成公开版本。脚本和 E2B 不接本片。
@@ -71,6 +77,8 @@ E2B目录仍OPEN：公开files.list无响应预算；commands.run硬编码bash -
 沿既有本人 RunDisplay 只读接口补齐 execute 预览，不新增事件、表或消费者契约。冻结配方中的所有 peer 均为 Docker/E2B 且无 execute approval/review/pause 改写，才允许 execute；StateBackend 文件白名单维持原行为，混合或未知后端不推断权限。原始 typed call/result、同 Run opaque activity ID、终态和持久 journal 的 name/status/result 必须完全一致；仅 command 公共参数及已记录输出进入既有脱敏预览（2048/4096 UTF-8字节），不读取当前凭据、环境或文件。无 MCP/Skill journal 需求时只预算和读取 execute journal，避免无关工具挤占文件详情预算。既有 RR只读、5秒期限、8MiB预算及版本/主体边界保持。
 
 ## 2026-10-29 已批准 Custom API 隔离执行接线
+
+本节记录当时 Custom API 接线；普通 Chat 选择和新建 Docker 的通用隔离已由上方 2026-11-12 节扩展，不再以选中 API 为前提。
 
 Platform唯一拥有加密配置；本仓只消费固定Describe/Acquire运行契约，沿既有RunPlatformClient与在线proof，执行器使用现Docker/E2B而非宿主local_shell或通用HTTP代理。每次execute获取局部env，值不进argv/命令/prompt/recipe/日志，不写.env；描述为用户配置数据。adapter/provider及 Run/factory 已接入候选；正常进程尚未配对激活。
 
@@ -299,7 +307,7 @@ DeepAgents 的原生摘要在同一 `model` 节点内调用，现 publisher 仅�
 
 ## 2026-10-25 SDK 连接失败的安全分类
 
-在既有 `execution/failures.py` 安全归码边界，以真实 SDK `APIConnectionError`／`APITimeoutError` 的类型判断输出既有 `model_unavailable/false`，即使 assembly supplied default 也保留该分类；不按类名或文字猜测，不公开原异常。仅修正失败表达，不改变 API 主异常与 secondary settlement 的优先级、pending ACK／hold、single-dispatch、零自动重试、历史终态或 preflight/start。底层连接子因仍未证明，本片不声明外部供应商恢复可用。
+在既有 `execution/failures.py` 安全归码边界，以真实 SDK `APIConnectionError`／`APITimeoutError` 的类型判断，以及锁定SDK流内错误直接抛出的基类 `type(error) is APIError`，输出既有 `model_unavailable/false`，即使 assembly supplied default 也保留该分类；不按类名或文字猜测，不公开原异常。仅修正失败表达，不改变 API 主异常与 secondary settlement 的优先级、pending ACK／hold、single-dispatch、零自动重试、历史终态或 preflight/start。status／response-validation等APIError子类不由新增分支承接；流内错误不按原message/body猜细因。底层连接子因仍未证明，本片不声明外部供应商恢复可用。
 
 ## 2026-10-25 原生摘要结果的最小持久恢复（设计门，未实施）
 
@@ -1171,6 +1179,8 @@ Root批准A1仅含Agent attempt journal、immutable strict evidence revisions、
 | `observed` | `granted` | 非NULL | 是/有 | `completed|failed|cancelled` | 依latest usage分类 | 只允许append合法后继revision并保持observed，不能改已知事实 |
 | `unknown` | `granted` | 非NULL | 是/有 | `unknown` | unknown_count+1，Run unknown | A1普通worker只读；未来具名reconciler另设计 |
 | `not_dispatched` | `not_requested|requested_unknown|granted` | NULL | 是/有 | `not_dispatched` | 已证明未外发，不计unknown | 终态，只读重放 |
+
+当前预算编排仅允许`begin_authorization.newly_requested`赢家发送一次reserve/proof；已有pending只按原command/key走已存在的recover，读miss或取消仍unknown，granted重放无HTTP。首次reserve的严格422 insufficient_credit经typed denial后，在原Run→attempt锁／数据库当前租约下，原子提交denied bytes、首条not_dispatched sealed evidence/head和唯一Run completeness；不先单写状态，不伪dispatch、零用量或financial ACK。迟到recover ACK在持久化前重核取消。历史封存unknown不凭当前404回填拒绝。公开失败使用既有model_access_denied/false，无新wire或Schema。
 
 `denied`只配`authorization_denied`，避免denied与通用not_dispatched双表示。只有`authorized -> dispatch_started`；prepared/pending绝不直接dispatch。unknown已经sealed，不进入unsealed扫描。finalizer未封存索引覆盖`prepared|authorization_pending|authorized|dispatch_started`；未来reconcile索引若获准只覆盖sealed `unknown`，A1不实现其writer。
 

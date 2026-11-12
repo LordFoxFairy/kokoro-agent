@@ -174,6 +174,11 @@ class _Journal(ModelCallRepository):
     async def grant_authorization(self, command: Any) -> Any:
         raise AssertionError("named execution double owns fixture authorization")
 
+    async def deny_authorization(self, command: Any) -> Any:
+        raise AssertionError(
+            "named execution double does not deny fixture authorization"
+        )
+
     async def start_dispatch(self, command: Any) -> Any:
         raise AssertionError("named execution double owns fixture dispatch")
 

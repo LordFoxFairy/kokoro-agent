@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 import uuid
 from collections.abc import Iterator
 from contextlib import closing
@@ -122,10 +123,52 @@ class TestDockerSandbox:
         assert result.output.strip() == backend.container_id[:12]
         assert result.exit_code == 0
 
-    def test_container_writes_land_in_host_workspace(self, tmp_path: Path) -> None:
+    def test_plain_container_limits_and_workspace_writes(self, tmp_path: Path) -> None:
         backend = _connect(tmp_path)
-        backend.execute("echo from-container > shell.txt")
+        actual = json.loads(
+            subprocess.check_output(["docker", "inspect", backend.container_id])
+        )[0]
+        host = actual["HostConfig"]
+        assert host["NanoCpus"] == 500_000_000
+        assert host["Memory"] == 512 * 1024 * 1024 and host["PidsLimit"] == 128
+        assert host["ReadonlyRootfs"] is True and "ALL" in host["CapDrop"]
+        assert "no-new-privileges" in host["SecurityOpt"]
+        assert host["Tmpfs"]["/tmp"] == "rw,nosuid,nodev,size=64m"
+        assert host["LogConfig"] == {
+            "Type": "local",
+            "Config": {"max-file": "2", "max-size": "10m"},
+        }
+        assert backend.execute("touch /kokoro-read-only-probe").exit_code != 0
+        assert backend.execute("echo from-container > shell.txt").exit_code == 0
         assert (tmp_path / "shell.txt").read_text() == "from-container\n"
+
+    @pytest.mark.asyncio
+    async def test_plain_script_capture_is_not_the_same_named_workspace_file(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "workspace"
+        root.mkdir()
+        backend = _connect(root)
+        (root / "outputs").mkdir(exist_ok=True)
+        original = root / "outputs" / "report.txt"
+        original.write_bytes(b"workspace version\n")
+        key = uuid.uuid4().hex + uuid.uuid4().hex
+        try:
+            with backend.capture_workspace_output(
+                "/outputs/report.txt", key
+            ) as captured:
+                result = await backend.aexecute(
+                    "printf 'process version\\n' > outputs/report.txt", timeout=10
+                )
+            assert result.exit_code == 0 and captured.content == b"process version\n"
+            assert original.read_bytes() == b"workspace version\n"
+            with backend.capture_workspace_output(
+                "/outputs/report.txt", key, recover=True
+            ) as restored:
+                await backend.aexecute("must-not-execute", timeout=10)
+            assert restored.content == captured.content
+        finally:
+            await backend.acleanup_workspace_output(key)
 
     def test_file_tools_stay_on_host_workspace(self, tmp_path: Path) -> None:
         # 文件工具走宿主虚拟根（session 直读/S3 归档全兼容），无需容器在场。

@@ -13,6 +13,7 @@ from kokoro_agent.domain.run.models import LeaseFence, LeasedRun
 from kokoro_agent.protocol import RunRequest
 from kokoro_agent.model.call_artifacts import (
     encode_requested_artifact,
+    encode_denied_artifact,
     strict_granted_artifact,
 )
 from kokoro_agent.model.call_models import (
@@ -21,8 +22,11 @@ from kokoro_agent.model.call_models import (
     ModelCallAuthorizationReceipt,
     ModelCallInputInvalid,
     ModelCallIdentityConflict,
+    ModelCallAuthorizationUnavailable,
     BeginModelCallAuthorization,
     GrantModelCallAuthorization,
+    DenyModelCallAuthorization,
+    ModelCallAuthorizationDenied,
 )
 
 
@@ -51,6 +55,15 @@ class ModelBudgetClient(Protocol):
         key: str,
         request_id: str,
     ) -> ModelBudgetGrant: ...
+
+    async def recover(
+        self,
+        *,
+        tenant_id: str,
+        command: ModelBudgetCommand,
+        key: str,
+        request_id: str,
+    ) -> ModelBudgetGrant | None: ...
 
 
 class BudgetProofs(Protocol):
@@ -181,23 +194,59 @@ class ModelBudgetAuthorizer:
                 pending.authorization_bytes == requested_bytes
                 and pending.authorization_digest == requested_digest
             ):
-                digest = model_budget_request_digest(
-                    prepared.tenant_id,
-                    self._request.execution_identity.subject.opaque_ref,
-                    command,
-                )
-                proof = await self._proofs.issue("billing.credit.consume", digest)
-                check()
-                grant = await self._budget.reserve(
-                    tenant_id=prepared.tenant_id,
-                    command=command,
-                    proof=SecretStr(proof),
-                    key=request_ref,
-                    request_id=str(uuid4()),
-                )
-                check()
+                if pending.newly_requested:
+                    digest = model_budget_request_digest(
+                        prepared.tenant_id,
+                        self._request.execution_identity.subject.opaque_ref,
+                        command,
+                    )
+                    proof = await self._proofs.issue("billing.credit.consume", digest)
+                    check()
+                    try:
+                        grant = await self._budget.reserve(
+                            tenant_id=prepared.tenant_id,
+                            command=command,
+                            proof=SecretStr(proof),
+                            key=request_ref,
+                            request_id=str(uuid4()),
+                        )
+                        check()
+                    except ModelCallAuthorizationDenied:
+                        check()
+                        await self._repository.deny_authorization(
+                            DenyModelCallAuthorization.model_validate(
+                                {
+                                    **base,
+                                    "expected_authorization_digest": requested_digest,
+                                }
+                            )
+                        )
+                        check()
+                        raise
+                else:
+                    # An existing intent is not permission to send another reserve.
+                    # A point-in-time miss also never proves the first request failed.
+                    grant = await self._budget.recover(
+                        tenant_id=prepared.tenant_id,
+                        command=command,
+                        key=request_ref,
+                        request_id=str(uuid4()),
+                    )
+                    check()
+                    if grant is None:
+                        raise ModelCallAuthorizationUnavailable(
+                            "original model admission remains unknown"
+                        )
                 admission_ref = grant.admission_ref
             else:
+                denied_bytes, denied_digest = encode_denied_artifact(request_ref)
+                if (pending.authorization_bytes, pending.authorization_digest) == (
+                    denied_bytes,
+                    denied_digest,
+                ):
+                    raise ModelCallAuthorizationDenied(
+                        "MODEL_BUDGET_INSUFFICIENT_CREDIT"
+                    )
                 granted, digest = strict_granted_artifact(pending.authorization_bytes)
                 if (
                     digest != pending.authorization_digest

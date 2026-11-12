@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 from kokoro_agent.config_file import load_config_file
+from kokoro_agent.policy import Backend
 from kokoro_agent.model.call_scope import DEFAULT_MODEL_CALL_SETTLE_TIMEOUT_S
 from kokoro_agent.model.factory import ChatModelSettings
 from kokoro_agent.observability import ObservabilitySettings
@@ -115,6 +116,9 @@ class AppConfig(BaseModel):
     )
 
     # --- sandbox 域 ---
+    chat_backend: Backend | None = Field(
+        default=None, validation_alias="KOKORO_AGENT_CHAT_BACKEND"
+    )
     local_shell_root: OptStr = Field(
         default=None, validation_alias="KOKORO_AGENT_LOCAL_SHELL_ROOT"
     )
@@ -312,6 +316,13 @@ class AppConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def chat_backend_settings_complete(self) -> AppConfig:
+        if self.chat_backend is not None:
+            # Keep backend eligibility in the existing settings owner, before Worker I/O.
+            _ = self.sandbox
+        return self
+
     @classmethod
     def from_env(cls, source: Mapping[str, str]) -> AppConfig:
         # 统一配置树（ADR-010）：yaml 摊平（原生值）作底座，env 叠加覆盖；一次 coerce+校验。
@@ -382,6 +393,7 @@ class AppConfig(BaseModel):
     def sandbox(self) -> SandboxSettings:
         return SandboxSettings.model_validate(
             {
+                "chat_backend": self.chat_backend,
                 "local_shell_root": self.local_shell_root,
                 "local_shell_inherit_env": self.local_shell_inherit_env,
                 "local_shell_timeout": self.local_shell_timeout,

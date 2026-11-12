@@ -18,6 +18,8 @@ database:
 run_repository:
   lease_ttl_s: 90
 sandbox:
+  # Omit to inherit the trusted Feature; product Chat never enables host local_shell.
+  chat_backend: docker
   local_shell:
     root: /tmp/kokoro-agent-workspace
     inherit_env: false

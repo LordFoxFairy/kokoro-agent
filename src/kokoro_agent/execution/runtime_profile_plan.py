@@ -327,10 +327,7 @@ def prepare_feature(
         )
         native_edit = bool(output_root and native_write and "edit_file" not in gated)
         native_script = bool(
-            output_root
-            and custom_api_selected
-            and agent.backend == "docker"
-            and "execute" not in gated
+            output_root and agent.backend == "docker" and "execute" not in gated
         )
         peers.append(
             PreparedPeerPlan(

@@ -2028,6 +2028,18 @@ async def test_native_graph_dispatch_seals_same_stream_before_returning(
                 admission_ref=admissions.setdefault(command.attempt_id, str(uuid4()))
             )
 
+        async def recover(
+            self,
+            *,
+            tenant_id: str,
+            command: ModelBudgetCommand,
+            key: str,
+            request_id: str,
+        ) -> ModelBudgetGrant | None:
+            raise AssertionError(
+                "fresh native model calls must not recover an old reservation"
+            )
+
     class NamedProofPeer:
         async def issue(self, operation: str, request_binding_sha256: str) -> str:
             assert (

@@ -24,6 +24,7 @@ from kokoro_agent.clients.bff_admission_generated import (
     AgentModelSettlementError,
 )
 from kokoro_agent.model.budget import ModelBudgetCommand, ModelBudgetGrant
+from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
 from kokoro_agent.model.settlement import ModelSettlementCommand, ModelSettlementReceipt
 
 _T = TypeVar("_T")
@@ -158,7 +159,7 @@ class BffModelBudgetClient:
                     key=key,
                     request_id=request_id,
                 )
-        except ModelBudgetError:
+        except (ModelBudgetError, ModelCallAuthorizationDenied):
             raise
         except Exception:
             # Leave the except block before constructing the safe error: no credential-bearing cause.
@@ -252,7 +253,7 @@ class BffModelBudgetClient:
                     closed = await self._close_response(response)
                     if decoded and not closed:
                         raise ModelBudgetError("MODEL_BUDGET_UNAVAILABLE")
-        except ModelBudgetError:
+        except (ModelBudgetError, ModelCallAuthorizationDenied):
             raise
         except Exception:
             failed = True
@@ -499,6 +500,12 @@ class BffModelBudgetClient:
             and _ERROR_STATUS.get(error.error.code) == status
             and error.error.retryable is (status == 503)
         ):
+            if (
+                success_status == 201
+                and status == 422
+                and error.error.code == "model_admission_insufficient_credit"
+            ):
+                raise ModelCallAuthorizationDenied("MODEL_BUDGET_INSUFFICIENT_CREDIT")
             raise ModelBudgetError(
                 "MODEL_BUDGET_"
                 + error.error.code.removeprefix("model_admission_").upper()

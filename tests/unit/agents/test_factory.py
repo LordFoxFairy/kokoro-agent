@@ -63,6 +63,7 @@ from kokoro_agent.model.call_models import (
     AuthorizationPendingReceipt,
     BeginModelCallAuthorization,
     GrantModelCallAuthorization,
+    DenyModelCallAuthorization,
     FinalModelCallEvidence,
     ModelCallAuthorizationReceipt,
     ModelCallDispatchPermit,
@@ -195,6 +196,7 @@ def _factory(
     checkpointer: InMemorySaver | None = None,
     isolate_model_call_gate_for_unrelated_unit_scope: bool = False,
     toolbox: ProcessToolbox | None = None,
+    run_repository: FakeRunRepository | None = None,
 ) -> tuple[AgentFactory, FakeRunRepository]:
     # The deterministic model is a test driver, not a production configuration option.
     # Inject it at the test boundary while exercising the real AgentFactory/DeepAgents path.
@@ -220,7 +222,7 @@ def _factory(
         )
     active_config = config or AppConfig.from_env({})
     clients = WorkerClients()
-    repository = FakeRunRepository()
+    repository = run_repository if run_repository is not None else FakeRunRepository()
     return AgentFactory(
         WorkerDependencies(
             model_execution=unavailable_model_execution,
@@ -2368,6 +2370,11 @@ class _UnusedModelCallRepository:
     ) -> ModelCallAuthorizationReceipt:
         raise AssertionError(f"unexpected authorization grant: {command.attempt_id}")
 
+    async def deny_authorization(
+        self, command: DenyModelCallAuthorization
+    ) -> ModelCallEvidenceReceipt:
+        raise AssertionError(f"unexpected authorization denial: {command.attempt_id}")
+
     async def start_dispatch(
         self, command: StartModelCallDispatch
     ) -> ModelCallDispatchPermit:
@@ -3579,3 +3586,65 @@ async def test_selected_input_native_factory_reads_or_fails_without_success_fina
             assert not calls
     finally:
         await handle.aclose()
+
+
+@pytest.mark.parametrize("drift", ["backend", "image"])
+async def test_ordinary_chat_configures_docker_without_custom_api_and_freezes_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, drift: str
+) -> None:
+    from unittest.mock import AsyncMock
+    from kokoro_agent.sandbox.docker_backend import DockerShellBackend
+    from kokoro_agent.domain.run.models import StaticRecipeIncompatible
+
+    config = AppConfig(
+        chat_backend="docker",
+        docker_image="configured-image:v1",
+        local_shell_root=str(tmp_path),
+    )
+    resolver = RouteResolver()
+    factory, repository = _factory(monkeypatch, resolver, config=config)
+
+    def construct_backend(*_args: object, **_kwargs: object) -> DockerShellBackend:
+        return DockerShellBackend(
+            root=tmp_path, container_id="fixture", timeout=10, max_output_bytes=4096
+        )
+
+    backend = AsyncMock(side_effect=construct_backend)
+    monkeypatch.setattr(agent_factory_module, "make_backend_for_run", backend)
+    request = _request("chat")
+    assert not request.selected_custom_api_profiles
+    assert factory.backend_for(request) == "docker"
+    assert factory.feature("chat").agents[0].backend == "state"  # no catalog mutation
+    lease = await repository.try_claim(request)
+    assert lease is not None
+    handle = await factory.build(
+        request, lease, await _r93_progress(repository, request, lease)
+    )
+    await handle.aclose()
+    original = repository.static_recipes[request.run_id]
+    assert backend.call_args.args[0] == "docker"
+    assert backend.call_args.kwargs["environment_provider"] is None
+    assert await repository.pause(request.run_id, lease)
+    restored = await repository.adopt(request.run_id, "next-worker")
+    assert restored is not None
+    handle = await factory.build(
+        request, restored, await _r93_progress(repository, request, restored)
+    )
+    await handle.aclose()
+    assert repository.static_recipes[request.run_id] is original
+    changed_config = config.model_copy(
+        update={"chat_backend": "state"}
+        if drift == "backend"
+        else {"docker_image": "configured-image:v2"}
+    )
+    changed, _ = _factory(
+        monkeypatch, resolver, config=changed_config, run_repository=repository
+    )
+    backend.reset_mock()
+    resolver.calls.clear()
+    with pytest.raises(StaticRecipeIncompatible):
+        await changed.build(
+            request, restored, await _r93_progress(repository, request, restored)
+        )
+    backend.assert_not_awaited()
+    assert not resolver.calls

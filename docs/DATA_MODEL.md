@@ -1,3 +1,7 @@
+## 当前准入拒绝转移（2026-11-12，无DDL变化）
+
+现canonical已有`authorization_denied/denied`。仅第一次reserve收到已验证的明确余额拒绝时，原Run→attempt事务锁和当前lease保护下写原授权canonical bytes／digest、首条not_dispatched sealed usage2、head／sealed_at及Run completeness；任一步失败整笔回滚，未dispatch且无零usage、资金ACK或金额写入。重复拒绝只读原事件，不能覆盖granted／dispatch或改变历史unknown。已有requested_unknown仅recover，404不转denied；因此denied自然不进入原financial待处理扫描，不放宽扫描或资金闸。数据列、CHECK、索引及Billing owner不变。
+
 ## 2026-11-10 · A‑10 非 State 版本来源
 
 原 `kokoro_agent_workspace_output_version` 同一表新增暂存 `pending_bytes`，只给受信 native `write_file` / `edit_file`，与成功 journal 同事务插入；该分支 checkpoint/task 全空，不借 State 身份。原 State 行 checkpoint/task 仍必有且从不存正文。发布只留原资产回执并清 pending，未公开 native 暂存在 Run 终态回收。仅 fresh canonical Agent schema，无独立迁移链；当前不部署。

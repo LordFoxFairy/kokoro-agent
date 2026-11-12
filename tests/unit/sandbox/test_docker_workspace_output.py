@@ -19,8 +19,9 @@ class Environment:
         return (("API_TOKEN", SecretStr("fixture-only-secret")),)
 
 
+@pytest.mark.parametrize("selected", [False, True])
 async def test_exact_stopped_docker_output_recovery_never_reexecutes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selected: bool
 ):
     normal = tmp_path / "run-workspace"
     normal.mkdir()
@@ -53,7 +54,8 @@ async def test_exact_stopped_docker_output_recovery_never_reexecutes(
             return subprocess.CompletedProcess(args, 0, container, "")
         if args[0] == "start":
             assert args[-1] == container and "--interactive" in args
-            assert secret in kwargs["script"] and "print-fixture" in kwargs["script"]
+            assert (secret in kwargs["script"]) is selected
+            assert "print-fixture" in kwargs["script"]
             starts += 1
             (scratch / "report.md").write_bytes(original)
             state = "exited"
@@ -100,7 +102,7 @@ async def test_exact_stopped_docker_output_recovery_never_reexecutes(
         container_id="owned-run-container",
         timeout=4,
         max_output_bytes=128,
-        environment_provider=Environment(),
+        environment_provider=Environment() if selected else None,
         docker_cli_environment={},
     )
 
@@ -137,10 +139,10 @@ async def test_exact_stopped_docker_output_recovery_never_reexecutes(
     state = "exited"
     artifact = scratch / "report.md"
     artifact.write_bytes(secret.encode())
-    assert (
-        await capture("print-fixture", "/outputs/report.md", key, 4, recover=True)
-        is None
+    captured_secret = await capture(
+        "print-fixture", "/outputs/report.md", key, 4, recover=True
     )
+    assert captured_secret == (None if selected else secret.encode())
     artifact.unlink()
     ordinary_file = normal / "report.md"
     ordinary_file.write_bytes(b"not the captured output")

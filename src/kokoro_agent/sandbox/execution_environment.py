@@ -159,7 +159,7 @@ class ExecutionEnvironmentRunner:
 
     def __init__(
         self,
-        provider: ExecutionEnvironmentProvider,
+        provider: ExecutionEnvironmentProvider | None,
         *,
         max_output_bytes: int,
         owner_loop: asyncio.AbstractEventLoop | None = None,
@@ -171,6 +171,8 @@ class ExecutionEnvironmentRunner:
         self._max_output_bytes = max_output_bytes
 
     async def _acquire(self, deadline: float) -> _Environment:
+        if self._provider is None:
+            return _Environment.checked(())
         async with asyncio.timeout(max(0, deadline - time.monotonic())):
             return _Environment.checked(
                 await self._provider.acquire(deadline_monotonic=deadline)

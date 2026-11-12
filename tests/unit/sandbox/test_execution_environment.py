@@ -519,6 +519,7 @@ async def test_docker_same_context_for_create_reuse_execute_and_destroy(
 ) -> None:
     context = {"HOME": "/fixture/home", "DOCKER_CONTEXT": "other-daemon"}
     calls: list[tuple[str, dict[str, str] | None]] = []
+    creates: list[tuple[str, ...]] = []
 
     def run(
         *args: str, timeout: int = 30, env: dict[str, str] | None = None
@@ -529,6 +530,7 @@ async def test_docker_same_context_for_create_reuse_execute_and_destroy(
                 args, 0, "true" if prior == "alive" else "false", ""
             )
         if args[0] == "run":
+            creates.append(args)
             return subprocess.CompletedProcess(args, 0, "new-container", "")
         return subprocess.CompletedProcess(args, 0, "ok", "")
 
@@ -560,6 +562,21 @@ async def test_docker_same_context_for_create_reuse_execute_and_destroy(
             if selected and kind == "exec"
             else context
         )
+
+    if prior != "alive":
+        argv = creates[0]
+        for flag, value in [
+            ("--cpus", "0.5"),
+            ("--memory", "512m"),
+            ("--pids-limit", "128"),
+            ("--cap-drop", "ALL"),
+            ("--security-opt", "no-new-privileges"),
+            ("--tmpfs", "/tmp:rw,nosuid,nodev,size=64m"),
+            ("--log-driver", "local"),
+        ]:
+            assert argv[argv.index(flag) + 1] == value
+        assert "--read-only" in argv
+        assert "max-size=10m" in argv and "max-file=2" in argv
 
 
 @pytest.mark.parametrize("operation", ["create", "reuse", "destroy"])

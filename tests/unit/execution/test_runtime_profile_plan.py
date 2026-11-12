@@ -351,3 +351,24 @@ def test_recipe_freezes_explicit_connection_ref_not_a_deployment_name() -> None:
         agents=(replace(agent, mcp=(McpConnectionRef(connection_id="connection-2"),)),),
     )
     assert prepare(changed).fingerprint != plan.fingerprint
+
+
+@pytest.mark.parametrize("gated", [False, True])
+def test_docker_script_capability_does_not_require_custom_api(gated: bool) -> None:
+    from kokoro_agent.policy import Permissions
+
+    agent = replace(
+        CHAT_FEATURE.agents[0],
+        backend="docker",
+        permissions=Permissions(
+            filesystem="workspace_write", approval_tools=("execute",) if gated else ()
+        ),
+    )
+    configured = AppConfig.from_env(
+        {
+            "KOKORO_AGENT_LOCAL_SHELL_ROOT": "/tmp/configured-workspace",
+            "KOKORO_DOCKER_IMAGE": "configured-image:v1",
+        }
+    )
+    plan = prepare(replace(CHAT_FEATURE, agents=(agent,)), config=configured)
+    assert plan.peers[0].native_workspace_script is (not gated)

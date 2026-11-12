@@ -13,6 +13,7 @@ import pytest
 from pydantic import SecretStr
 
 from kokoro_agent.clients.model_budget import BffModelBudgetClient, ModelBudgetError
+from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
 from kokoro_agent.model.budget import ModelBudgetCommand
 
 COMMAND = ModelBudgetCommand(
@@ -305,7 +306,10 @@ async def test_exact_safe_owner_errors_do_not_expose_message(
         )
     ) as c:
         with pytest.raises(
-            ModelBudgetError, match="MODEL_BUDGET_" + code.upper()
+            ModelCallAuthorizationDenied
+            if code == "insufficient_credit"
+            else ModelBudgetError,
+            match="MODEL_BUDGET_" + code.upper(),
         ) as error:
             await reserve(c)
     assert "TOKEN_SENTINEL" not in str(error.value)
@@ -352,3 +356,30 @@ async def test_body_and_close_stalls_have_bounded_deadline_and_cancellation(
         with pytest.raises(asyncio.CancelledError if cancel else ModelBudgetError):
             await task
     assert calls == 1 and body.closed
+
+
+async def test_confirmed_reserve_credit_denial_is_typed_but_recover_denial_is_not() -> (
+    None
+):
+    from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
+
+    payload = {
+        "error": {
+            "code": "model_admission_insufficient_credit",
+            "message": "PRIVATE_OWNER_DIAGNOSTIC",
+            "retryable": False,
+        }
+    }
+    async with client(lambda _: response(payload, 422)) as c:
+        with pytest.raises(
+            ModelCallAuthorizationDenied, match="MODEL_BUDGET_INSUFFICIENT_CREDIT"
+        ) as error:
+            await reserve(c)
+        assert "PRIVATE_OWNER_DIAGNOSTIC" not in str(error.value)
+        with pytest.raises(ModelBudgetError, match="MODEL_BUDGET_INSUFFICIENT_CREDIT"):
+            await c.recover(
+                tenant_id="tenant-1",
+                command=COMMAND,
+                key="original-key",
+                request_id="test-budget",
+            )

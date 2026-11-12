@@ -1,6 +1,6 @@
 ## 2026-11-12 · 正常主链运行补口（未交付）
 
-真实开发工作台任务在HTTP／预算准入后，由供应商兼容流的顶层error触发锁定SDK基类APIError；先前误显示internal_error。现精确承接该基类为model_unavailable/false，保原transport分支及status／response-validation子类，不解析或公开私有错误正文，不自动重试／补零／释放hold。主控现test_invoke默认选择99通过、4 deselected（既有标记选择），新case先RED；尚未宣称实际模型响应恢复。预算known denial及同attempt重复reserve由Root当前Goal继续收口；未改公开合同／Schema。
+真实开发工作台任务在HTTP／预算准入后，由供应商兼容流的顶层error触发锁定SDK基类APIError；先前误显示internal_error。现精确承接该基类为model_unavailable/false，保原transport分支及status／response-validation子类，不解析或公开私有错误正文，不自动重试／补零／释放hold。主控现test_invoke默认选择99通过、4 deselected（既有标记选择），新case先RED；尚未宣称实际模型响应恢复。预算补口已完成本地候选：首次赢家reserve，已有pending只recover；严格余额拒绝在现Run/lease事务内原子封存denied/not_dispatched，不发零usage或资金ACK；旧unknown不回填。recover迟到ACK取消窗口由独审发现，主控真PG先RED后修check()并GREEN；独审Approved。主控四文件focused unit 262 PASS／4既有deselected，两个真实PG文件最终54 PASS／0 SKIP，全pyright0、相关Ruff/format通过。尚未进入正常Worker激活／浏览器复验或PR交付；公开合同／Schema未变。
 
 ## A‑10 native E2B output write and edit
 

@@ -165,6 +165,20 @@ class GrantModelCallAuthorization(BaseModel):
     admission_ref: Opaque
 
 
+class DenyModelCallAuthorization(BaseModel):
+    """Seal a strict first-send credit refusal; never infer denial from a read miss."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    tenant_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    attempt_id: Uuid
+    lease: LeaseFence
+    attempt_binding_digest: Digest
+    planned_digest: Digest
+    expected_authorization_digest: Digest
+    request_ref: Opaque
+
+
 class ModelCallAuthorizationReceipt(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
@@ -288,6 +302,10 @@ class ModelCallEvidenceInvariantFailed(RuntimeError):
     pass
 
 
+class ModelCallAuthorizationDenied(RuntimeError):
+    """A validated first reservation was refused without creating an admission."""
+
+
 class ModelCallAuthorizationUnavailable(RuntimeError):
     """No published Billing admission consumer can authorize this attempt."""
 
@@ -315,6 +333,10 @@ class ModelCallRepository(Protocol):
         self, command: GrantModelCallAuthorization
     ) -> ModelCallAuthorizationReceipt: ...
 
+    async def deny_authorization(
+        self, command: DenyModelCallAuthorization
+    ) -> ModelCallEvidenceReceipt: ...
+
     async def start_dispatch(
         self, command: StartModelCallDispatch
     ) -> ModelCallDispatchPermit: ...
@@ -338,6 +360,8 @@ __all__ = [
     "AuthorizationPendingReceipt",
     "BeginModelCallAuthorization",
     "GrantModelCallAuthorization",
+    "DenyModelCallAuthorization",
+    "ModelCallAuthorizationDenied",
     "FinalModelCallEvidence",
     "ModelCallAuthorityLost",
     "ModelCallIdentityConflict",

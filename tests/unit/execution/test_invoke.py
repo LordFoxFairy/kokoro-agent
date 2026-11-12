@@ -135,6 +135,20 @@ def test_unknown_model_financial_ack_is_a_nonretryable_dependency_failure(
     )
 
 
+@pytest.mark.parametrize("default", [None, "assembly_failed", "internal_error"])
+def test_known_credit_denial_is_a_nonretryable_access_failure(
+    default: Literal["assembly_failed", "internal_error"] | None,
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
+
+    error = ModelCallAuthorizationDenied("private owner diagnostic")
+    assert failure_code(error) == "model_access_denied"
+    assert run_failed_payload(error, code=default).model_dump() == {
+        "code": "model_access_denied",
+        "retryable": False,
+    }
+
+
 def test_only_owned_handler_deadline_is_nonretryable_model_unavailable() -> None:
     from kokoro_agent.model.call_models import ModelCallDeadlineExceeded
 

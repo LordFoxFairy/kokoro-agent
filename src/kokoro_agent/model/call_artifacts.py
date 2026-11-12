@@ -80,6 +80,14 @@ def encode_requested_artifact(request_ref: Opaque) -> tuple[bytes, str]:
     )
 
 
+def encode_denied_artifact(request_ref: Opaque) -> tuple[bytes, str]:
+    return _canonical(
+        AuthorizationRequested(state="denied", request_ref=request_ref).model_dump(
+            mode="json"
+        )
+    )
+
+
 def encode_granted_artifact(
     request_ref: Opaque, admission_ref: Opaque
 ) -> tuple[bytes, str]:

@@ -15,16 +15,109 @@ from kokoro_agent.infrastructure.sql import execute_sql, fetch_all, fetch_one
 from kokoro_agent.model.call_evidence import (
     ValidatedModelCallEvidence,
     build_terminal_closure_evidence,
+    build_denied_call_evidence,
     validate_sealed_evidence,
     validate_frozen_attempt,
 )
 from kokoro_agent.model.call_models import (
     AppendModelCallEvidence,
+    DenyModelCallAuthorization,
     ModelCallAuthorityLost,
     ModelCallEvidenceReceipt,
     ModelCallIdentityConflict,
 )
 from kokoro_agent.model.usage_evidence_v2 import parse_evidence, validate_successor
+
+
+async def seal_credit_denial_locked(
+    cursor: object,
+    *,
+    schema: str,
+    command: DenyModelCallAuthorization,
+    attempt: Mapping[str, object],
+    database_now: datetime,
+    denied_bytes: bytes,
+    denied_digest: str,
+) -> ModelCallEvidenceReceipt:
+    run_table = qualified(schema, RUN_CLAIMS_TABLE)
+    attempt_table = qualified(schema, MODEL_CALL_ATTEMPTS_TABLE)
+    evidence_table = qualified(schema, MODEL_USAGE_EVIDENCE_TABLE)
+    if attempt["status"] == "authorization_denied":
+        await _validate_sealed_head(cursor, evidence_table, attempt, database_now)
+        await execute_sql(
+            cursor,
+            f"SELECT evidence_bytes FROM {evidence_table} WHERE tenant_id=%s AND attempt_id=%s AND event_id=%s",
+            (command.tenant_id, command.attempt_id, attempt["latest_event_id"]),
+        )
+        existing = await fetch_one(cursor)
+        if existing is None:
+            raise ModelCallIdentityConflict("denied model-call evidence is missing")
+        artifact = validate_sealed_evidence(
+            _bytes(existing["evidence_bytes"]),
+            attempt_binding_bytes=_bytes(attempt["attempt_binding_bytes"]),
+            planned_bytes=_bytes(attempt["planned_bytes"]),
+            authorization_bytes=denied_bytes,
+            prepared_at=_datetime(attempt["prepared_at"]),
+            dispatch_started_at=None,
+            database_now=database_now,
+        )
+        return _receipt(command, artifact, replayed=True)
+    if (
+        attempt["status"] != "authorization_pending"
+        or attempt["authorization_state"] != "requested_unknown"
+        or attempt["dispatch_started_at"] is not None
+        or _integer(attempt["latest_revision"]) != 0
+        or attempt["financial_admission_ref"] is not None
+    ):
+        raise ModelCallIdentityConflict(
+            "credit denial cannot overwrite an admitted or observed attempt"
+        )
+    raw, artifact = build_denied_call_evidence(attempt, database_now, denied_bytes)
+    await execute_sql(
+        cursor,
+        f"""INSERT INTO {evidence_table} (
+        event_id,tenant_id,run_id,attempt_id,call_id,revision,
+        predecessor_event_id,predecessor_digest,evidence_bytes,evidence_digest,
+        execution_outcome,usage_state,totals_state,classification_state,sealed,observed_at)
+        VALUES (%s,%s,%s,%s,%s,1,NULL,NULL,%s,%s,%s,%s,%s,%s,TRUE,%s)""",
+        (
+            artifact.event_id,
+            command.tenant_id,
+            command.run_id,
+            command.attempt_id,
+            artifact.evidence.identity.call_id,
+            raw,
+            artifact.digest,
+            artifact.outcome,
+            artifact.usage_state,
+            artifact.totals_state,
+            artifact.classification_state,
+            artifact.observed_at,
+        ),
+    )
+    # One update satisfies the canonical denied + sealed-head constraint atomically.
+    await execute_sql(
+        cursor,
+        f"""UPDATE {attempt_table}
+        SET authorization_bytes=%s,authorization_digest=%s,authorization_state='denied',
+            status='authorization_denied',sealed_at=%s,latest_revision=1,
+            latest_event_id=%s,latest_evidence_digest=%s,updated_at=clock_timestamp()
+        WHERE tenant_id=%s AND run_id=%s AND attempt_id=%s""",
+        (
+            denied_bytes,
+            denied_digest,
+            artifact.observed_at,
+            artifact.event_id,
+            artifact.digest,
+            command.tenant_id,
+            command.run_id,
+            command.attempt_id,
+        ),
+    )
+    await recompute_run_completeness(
+        cursor, run_table, attempt_table, evidence_table, command.run_id
+    )
+    return _receipt(command, artifact, replayed=False)
 
 
 async def append_evidence_locked(
@@ -216,7 +309,7 @@ async def recompute_run_completeness(
 
 
 def _receipt(
-    command: AppendModelCallEvidence,
+    command: AppendModelCallEvidence | DenyModelCallAuthorization,
     artifact: ValidatedModelCallEvidence,
     *,
     replayed: bool,

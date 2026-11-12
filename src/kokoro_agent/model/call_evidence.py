@@ -177,6 +177,36 @@ def _validate_evidence_binding(
     )
 
 
+def build_denied_call_evidence(
+    attempt: Mapping[str, object], database_now: datetime, denied_bytes: bytes
+) -> tuple[bytes, ValidatedModelCallEvidence]:
+    if (
+        attempt["status"] != "authorization_pending"
+        or attempt["authorization_state"] != "requested_unknown"
+    ):
+        raise ModelCallIdentityConflict(
+            "credit denial requires original pending authorization"
+        )
+    # Reuse the existing not-dispatched closure shape, never a synthetic zero-usage receipt.
+    raw, _ = build_terminal_closure_evidence(attempt, database_now)
+    document = _json_object(raw)
+    document.pop("digest")
+    document["authorization_observation"] = _json_object(denied_bytes)
+    document["digest"] = hashlib.sha256(
+        _EVIDENCE_DOMAIN + rfc8785.dumps(document)
+    ).hexdigest()
+    raw = rfc8785.dumps(document)
+    return raw, validate_append_evidence(
+        raw,
+        attempt_binding_bytes=_bytes(attempt["attempt_binding_bytes"]),
+        planned_bytes=_bytes(attempt["planned_bytes"]),
+        authorization_bytes=denied_bytes,
+        prepared_at=_instant(attempt["prepared_at"]),
+        dispatch_started_at=None,
+        database_now=database_now,
+    )
+
+
 def build_observed_call_evidence(
     attempt: Mapping[str, object],
     command: SealModelCallObservation,

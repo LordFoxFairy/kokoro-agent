@@ -25,6 +25,7 @@ from kokoro_agent.model.call_models import (
     PrepareModelCall,
     PreparedModelCall,
     ModelCallAuthorityLost,
+    ModelCallAuthorizationUnavailable,
 )
 from kokoro_agent.model.budget import (
     ModelBudgetAuthorizer,
@@ -171,6 +172,9 @@ class Budget:
         self.calls: list[tuple[ModelBudgetCommand, str]] = []
         self.effect = effect
         self.admission_ref = admission_ref
+        self.recover_calls: list[tuple[ModelBudgetCommand, str]] = []
+        self.recover_found = True
+        self.recover_effect: Callable[[], Awaitable[None]] | None = None
 
     async def reserve(
         self,
@@ -186,6 +190,19 @@ class Budget:
         if self.effect:
             await self.effect()
         return ModelBudgetGrant(admission_ref=self.admission_ref)
+
+    async def recover(
+        self, *, tenant_id: str, command: ModelBudgetCommand, key: str, request_id: str
+    ) -> ModelBudgetGrant | None:
+        assert tenant_id == "tenant-1"
+        self.recover_calls.append((command, key))
+        if self.recover_effect:
+            await self.recover_effect()
+        return (
+            ModelBudgetGrant(admission_ref=self.admission_ref)
+            if self.recover_found
+            else None
+        )
 
 
 def authorizer(p: Prepared, b: Budget, proofs: Proofs) -> ModelBudgetAuthorizer:
@@ -210,10 +227,10 @@ async def test_pending_unknown_recovers_same_request_then_granted_skips_http(
     b.effect = None
     grant = await a.authorize(prepared.prepared)
     assert grant.newly_recorded
-    assert b.calls[0] == b.calls[1]
+    assert b.calls == b.recover_calls
     before = await prepared.row()
     assert not (await a.authorize(prepared.prepared)).newly_recorded
-    assert len(b.calls) == len(proofs.calls) == 2
+    assert len(b.calls) == len(proofs.calls) == len(b.recover_calls) == 1
     assert await prepared.row() == before
     assert before["dispatch_started_at"] is None
 
@@ -244,26 +261,49 @@ async def test_held_ack_after_authority_loss_stays_pending(
     )
 
 
-async def test_two_concurrent_same_acks_grant_only_once(prepared: Prepared) -> None:
-    entered = 0
-    both = asyncio.Event()
+async def test_concurrent_authorization_never_sends_a_second_reserve(
+    prepared: Prepared,
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
 
-    async def barrier():
-        nonlocal entered
-        entered += 1
-        if entered == 2:
-            both.set()
-        await asyncio.wait_for(both.wait(), 5)
+    async def wait_for_owner():
+        entered.set()
+        await asyncio.wait_for(release.wait(), 5)
 
-    b = Budget(barrier)
-    a = authorizer(prepared, b, Proofs())
-    results = await asyncio.gather(
-        a.authorize(prepared.prepared), a.authorize(prepared.prepared)
-    )
-    assert sorted(r.newly_recorded for r in results) == [False, True]
-    assert b.calls[0] == b.calls[1]
-    assert results[0].admission_ref == results[1].admission_ref
+    b, proofs = Budget(wait_for_owner), Proofs()
+    b.recover_found = False
+    a = authorizer(prepared, b, proofs)
+    first = asyncio.create_task(a.authorize(prepared.prepared))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        with pytest.raises(ModelCallAuthorizationUnavailable):
+            await a.authorize(prepared.prepared)
+        assert len(b.calls) == len(proofs.calls) == len(b.recover_calls) == 1
+        assert (await prepared.row())["authorization_state"] == "requested_unknown"
+    finally:
+        release.set()
+        await first
+    assert not (await a.authorize(prepared.prepared)).newly_recorded
+    assert len(b.calls) == 1
     assert (await prepared.row())["dispatch_started_at"] is None
+
+
+async def test_recover_miss_preserves_pending_and_does_not_reserve_again(
+    prepared: Prepared,
+) -> None:
+    async def unknown():
+        raise TimeoutError("unknown original acknowledgement")
+
+    b, proofs = Budget(unknown), Proofs()
+    a = authorizer(prepared, b, proofs)
+    with pytest.raises(TimeoutError):
+        await a.authorize(prepared.prepared)
+    before = await prepared.row()
+    b.recover_found = False
+    with pytest.raises(ModelCallAuthorizationUnavailable):
+        await a.authorize(prepared.prepared)
+    assert await prepared.row() == before
+    assert len(b.calls) == len(proofs.calls) == len(b.recover_calls) == 1
 
 
 async def test_cancel_with_late_held_ack_never_grants(prepared: Prepared) -> None:
@@ -876,3 +916,182 @@ async def test_seal_observation_preserves_known_totals_with_profile_assessment(
         p.tenant_id, p.attempt_id, receipt.event_id
     )
     assert preserved is not None and preserved.evidence_bytes == stored.evidence_bytes
+
+
+async def test_confirmed_credit_denial_is_atomically_sealed_and_never_reserved_again(
+    prepared: Prepared,
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
+    from kokoro_agent.model.usage_evidence_v2 import parse_evidence
+    from kokoro_agent.infrastructure.postgres_model_financial_repository import (
+        PostgresModelFinancialRepository,
+    )
+
+    async def deny():
+        raise ModelCallAuthorizationDenied("MODEL_BUDGET_INSUFFICIENT_CREDIT")
+
+    b, proofs = Budget(deny), Proofs()
+    a = authorizer(prepared, b, proofs)
+    with pytest.raises(ModelCallAuthorizationDenied):
+        await a.authorize(prepared.prepared)
+    row = await prepared.row()
+    assert (row["status"], row["authorization_state"], row["dispatch_started_at"]) == (
+        "authorization_denied",
+        "denied",
+        None,
+    )
+    assert json.loads(row["authorization_bytes"]) == {
+        "state": "denied",
+        "request_ref": b.calls[0][1],
+    }
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"SELECT evidence_bytes FROM {qualified(prepared.schema, 'kokoro_agent_model_usage_evidence')} WHERE attempt_id=%s",
+            (prepared.prepared.attempt_id,),
+        )
+        evidence_row = await fetch_one(cur)
+        assert evidence_row
+        evidence = parse_evidence(evidence_row["evidence_bytes"])
+        assert evidence.authorization_observation.state == "denied"
+        assert (
+            evidence.execution.outcome == "not_dispatched" and evidence.execution.seal
+        )
+        assert (
+            evidence.usage.state == "unresolved"
+        )  # no invented zero usage or money ACK
+        await execute_sql(
+            cur,
+            f"SELECT model_attempt_count,model_dispatched_attempt_count,model_sealed_attempt_count FROM {qualified(prepared.schema, 'kokoro_agent_run')} WHERE run_id=%s",
+            ("run-1",),
+        )
+        assert await fetch_one(cur) == {
+            "model_attempt_count": 1,
+            "model_dispatched_attempt_count": 0,
+            "model_sealed_attempt_count": 1,
+        }
+    financial = PostgresModelFinancialRepository(prepared.url, prepared.schema)
+    assert await financial.list_pending(limit=16) == []
+    from kokoro_agent.model.call_models import (
+        DenyModelCallAuthorization,
+        GrantModelCallAuthorization,
+        ModelCallIdentityConflict,
+    )
+    from kokoro_agent.model.call_artifacts import encode_requested_artifact
+
+    command = DenyModelCallAuthorization(
+        tenant_id=prepared.prepared.tenant_id,
+        run_id=prepared.prepared.run_id,
+        attempt_id=prepared.prepared.attempt_id,
+        lease=prepared.prepared.lease,
+        attempt_binding_digest=prepared.prepared.attempt_binding_digest,
+        planned_digest=prepared.prepared.planned_digest,
+        request_ref=b.calls[0][1],
+        expected_authorization_digest=encode_requested_artifact(b.calls[0][1])[1],
+    )
+    replay = await prepared.repo.deny_authorization(command)
+    assert replay.replayed and replay.event_id == evidence.identity.event_id
+    assert await prepared.row() == row
+    with pytest.raises(ModelCallIdentityConflict):
+        await prepared.repo.grant_authorization(
+            GrantModelCallAuthorization(
+                **command.model_dump(), admission_ref=b.admission_ref
+            )
+        )
+    with pytest.raises(ModelCallAuthorizationDenied):
+        await a.authorize(prepared.prepared)
+    assert await prepared.row() == row
+    assert len(b.calls) == len(proofs.calls) == 1 and not b.recover_calls
+
+
+@pytest.mark.parametrize("retire", ["expiry", "generation", "terminal"])
+async def test_credit_denial_after_lease_loss_cannot_rewrite_pending(
+    prepared: Prepared, retire: str
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
+
+    async def denied_after_retirement():
+        clause = {
+            "expiry": "lease_expires_at=clock_timestamp()-interval '1 second'",
+            "generation": "lease_generation=8",
+            "terminal": "terminal=TRUE,interaction_phase='terminal'",
+        }[retire]
+        async with connect_pg(prepared.url) as c, c.cursor() as cur:
+            await execute_sql(
+                cur,
+                f"UPDATE {qualified(prepared.schema, 'kokoro_agent_run')} SET {clause} WHERE run_id=%s",
+                ("run-1",),
+            )
+        raise ModelCallAuthorizationDenied("MODEL_BUDGET_INSUFFICIENT_CREDIT")
+
+    with pytest.raises(ModelCallAuthorityLost):
+        await authorizer(prepared, Budget(denied_after_retirement), Proofs()).authorize(
+            prepared.prepared
+        )
+    row = await prepared.row()
+    assert (
+        row["status"] == "authorization_pending"
+        and row["authorization_state"] == "requested_unknown"
+    )
+    assert row["dispatch_started_at"] is None
+
+
+async def test_cancelled_denial_transaction_keeps_pending_and_has_no_evidence(
+    prepared: Prepared, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
+    import kokoro_agent.infrastructure.postgres_model_call_evidence as evidence_writer
+
+    async def refuse():
+        raise ModelCallAuthorizationDenied("MODEL_BUDGET_INSUFFICIENT_CREDIT")
+
+    async def cancel_after_writes(*_args: object, **_kwargs: object) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        evidence_writer, "recompute_run_completeness", cancel_after_writes
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await authorizer(prepared, Budget(refuse), Proofs()).authorize(
+            prepared.prepared
+        )
+    row = await prepared.row()
+    assert (row["status"], row["authorization_state"]) == (
+        "authorization_pending",
+        "requested_unknown",
+    )
+    async with connect_pg(prepared.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"SELECT count(*) AS n FROM {qualified(prepared.schema, 'kokoro_agent_model_usage_evidence')} WHERE attempt_id=%s",
+            (prepared.prepared.attempt_id,),
+        )
+        assert await fetch_one(cur) == {"n": 0}
+
+
+async def test_cancel_with_late_recovered_ack_never_grants(prepared: Prepared) -> None:
+    async def unknown():
+        raise TimeoutError("original acknowledgement unknown")
+
+    b, proofs = Budget(unknown), Proofs()
+    a = authorizer(prepared, b, proofs)
+    with pytest.raises(TimeoutError):
+        await a.authorize(prepared.prepared)
+    before = await prepared.row()
+    entered = asyncio.Event()
+
+    async def late():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return
+
+    b.recover_effect = late
+    task = asyncio.create_task(a.authorize(prepared.prepared))
+    await asyncio.wait_for(entered.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await prepared.row() == before
+    assert len(b.calls) == len(proofs.calls) == len(b.recover_calls) == 1

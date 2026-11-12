@@ -63,6 +63,7 @@ from kokoro_agent.model.call_models import (
     AuthorizationPendingReceipt,
     BeginModelCallAuthorization,
     GrantModelCallAuthorization,
+    DenyModelCallAuthorization,
     FinalModelCallEvidence,
     ModelCallAuthorizationReceipt,
     ModelCallDispatchPermit,
@@ -2367,6 +2368,11 @@ class _UnusedModelCallRepository:
         self, command: GrantModelCallAuthorization
     ) -> ModelCallAuthorizationReceipt:
         raise AssertionError(f"unexpected authorization grant: {command.attempt_id}")
+
+    async def deny_authorization(
+        self, command: DenyModelCallAuthorization
+    ) -> ModelCallEvidenceReceipt:
+        raise AssertionError(f"unexpected authorization denial: {command.attempt_id}")
 
     async def start_dispatch(
         self, command: StartModelCallDispatch

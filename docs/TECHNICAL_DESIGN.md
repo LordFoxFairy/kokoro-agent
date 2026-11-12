@@ -1172,6 +1172,8 @@ Root批准A1仅含Agent attempt journal、immutable strict evidence revisions、
 | `unknown` | `granted` | 非NULL | 是/有 | `unknown` | unknown_count+1，Run unknown | A1普通worker只读；未来具名reconciler另设计 |
 | `not_dispatched` | `not_requested|requested_unknown|granted` | NULL | 是/有 | `not_dispatched` | 已证明未外发，不计unknown | 终态，只读重放 |
 
+当前预算编排仅允许`begin_authorization.newly_requested`赢家发送一次reserve/proof；已有pending只按原command/key走已存在的recover，读miss或取消仍unknown，granted重放无HTTP。首次reserve的严格422 insufficient_credit经typed denial后，在原Run→attempt锁／数据库当前租约下，原子提交denied bytes、首条not_dispatched sealed evidence/head和唯一Run completeness；不先单写状态，不伪dispatch、零用量或financial ACK。迟到recover ACK在持久化前重核取消。历史封存unknown不凭当前404回填拒绝。公开失败使用既有model_access_denied/false，无新wire或Schema。
+
 `denied`只配`authorization_denied`，避免denied与通用not_dispatched双表示。只有`authorized -> dispatch_started`；prepared/pending绝不直接dispatch。unknown已经sealed，不进入unsealed扫描。finalizer未封存索引覆盖`prepared|authorization_pending|authorized|dispatch_started`；未来reconcile索引若获准只覆盖sealed `unknown`，A1不实现其writer。
 
 ### exact CAS、ordinal与重放

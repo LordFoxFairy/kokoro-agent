@@ -15,6 +15,7 @@ from kokoro_agent.clients.custom_api_runtime import (
 )
 from kokoro_agent.model.call_models import (
     ModelCallAuthorizationUnavailable,
+    ModelCallAuthorizationDenied,
     ModelCallDeadlineExceeded,
     ModelCallSettlementPending,
     ModelCallInputInvalid,
@@ -59,6 +60,8 @@ def failure_code(error: BaseException) -> RunErrorCode:
         return "contract_incompatible"
     if isinstance(error, ModelCallSettlementPending):
         return "model_settlement_pending"
+    if isinstance(error, ModelCallAuthorizationDenied):
+        return "model_access_denied"
     if isinstance(error, ModelCallAuthorizationUnavailable):
         return "dependency_unavailable"
     if (
@@ -99,6 +102,8 @@ def run_failed_payload(
         return RunFailedPayload(code="dependency_unavailable", retryable=False)
     if isinstance(error, ModelCallSettlementPending):
         return RunFailedPayload(code="model_settlement_pending", retryable=False)
+    if isinstance(error, ModelCallAuthorizationDenied):
+        return RunFailedPayload(code="model_access_denied", retryable=False)
     if isinstance(error, ModelCallAuthorizationUnavailable):
         return RunFailedPayload(code="dependency_unavailable", retryable=False)
     if (

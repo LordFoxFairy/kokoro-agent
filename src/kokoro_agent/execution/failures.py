@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from langgraph.errors import GraphRecursionError
-from openai import APIConnectionError, APITimeoutError
+from openai import APIConnectionError, APIError, APITimeoutError
 
 from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
 from kokoro_agent.domain.run.models import StaticRecipeIncompatible
@@ -66,8 +66,11 @@ def failure_code(error: BaseException) -> RunErrorCode:
         and error.code in _FINANCIAL_UNAVAILABLE_CODES
     ):
         return "dependency_unavailable"
-    if isinstance(
-        error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded
+    if (
+        isinstance(
+            error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded
+        )
+        or type(error) is APIError
     ):
         return "model_unavailable"
     if isinstance(error, ModelResolutionError):
@@ -103,10 +106,14 @@ def run_failed_payload(
         and error.code in _FINANCIAL_UNAVAILABLE_CODES
     ):
         return RunFailedPayload(code="dependency_unavailable", retryable=False)
-    if isinstance(
-        error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded
+    if (
+        isinstance(
+            error, APIConnectionError | APITimeoutError | ModelCallDeadlineExceeded
+        )
+        or type(error) is APIError
     ):
-        # A transport failure never grants permission to retry dispatched work.
+        # The locked SDK raises the base APIError for an in-band SSE error.
+        # Do not swallow status/validation subclasses or grant permission to retry dispatched work.
         return RunFailedPayload(code="model_unavailable", retryable=False)
     typed = isinstance(error, ModelResolutionError)
     classified = failure_code(error) if typed else code or failure_code(error)

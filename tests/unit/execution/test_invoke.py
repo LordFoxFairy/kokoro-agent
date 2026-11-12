@@ -28,7 +28,13 @@ from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langgraph.types import Interrupt
 from langgraph.checkpoint.memory import InMemorySaver
-from openai import APIConnectionError, APITimeoutError
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    BadRequestError,
+    APIResponseValidationError,
+)
 from pydantic import BaseModel as PydanticBaseModel
 
 from support.fakes import (
@@ -146,6 +152,41 @@ def test_only_owned_handler_deadline_is_nonretryable_model_unavailable() -> None
     assert failure_code(ordinary) == "internal_error"
 
 
+@pytest.mark.parametrize("default_code", [None, "assembly_failed", "internal_error"])
+def test_sdk_in_band_stream_error_is_nonretryable_model_failure(
+    default_code: Literal["assembly_failed", "internal_error"] | None,
+) -> None:
+    # The real SDK raises APIError for a top-level SSE error after HTTP admission.
+    # A provider diagnostic is not a public response or proof of zero usage.
+    error = APIError(
+        "private provider diagnostic",
+        request=httpx.Request("POST", "https://model.invalid/"),
+        body={"code": "overloaded", "message": "private provider diagnostic"},
+    )
+    assert failure_code(error) == "model_unavailable"
+    assert run_failed_payload(error, code=default_code).model_dump() == {
+        "code": "model_unavailable",
+        "retryable": False,
+    }
+
+
+@pytest.mark.parametrize("error_type", [BadRequestError, APIResponseValidationError])
+def test_sdk_status_and_validation_errors_are_not_in_band_stream_errors(
+    error_type: type[BadRequestError] | type[APIResponseValidationError],
+) -> None:
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://model.invalid/")
+    )
+    if error_type is BadRequestError:
+        error = BadRequestError("private diagnostic", response=response, body={})
+    else:
+        error = APIResponseValidationError(response=response, body={})
+    assert failure_code(error) == "internal_error"
+    assert run_failed_payload(error) == RunFailedPayload(
+        code="internal_error", retryable=False
+    )
+
+
 @pytest.mark.parametrize("error_type", [APIConnectionError, APITimeoutError])
 def test_sdk_transport_failure_is_nonretryable_model_unavailable(
     error_type: type[APIConnectionError],
@@ -169,7 +210,9 @@ def test_sdk_transport_classification_takes_precedence_over_assembly_default(
     )
 
 
-@pytest.mark.parametrize("error_name", ["APIConnectionError", "APITimeoutError"])
+@pytest.mark.parametrize(
+    "error_name", ["APIConnectionError", "APITimeoutError", "APIError"]
+)
 def test_same_named_ordinary_exception_is_not_an_sdk_transport_failure(
     error_name: str,
 ) -> None:

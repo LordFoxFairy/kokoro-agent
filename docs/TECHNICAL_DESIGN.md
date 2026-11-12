@@ -299,7 +299,7 @@ DeepAgents 的原生摘要在同一 `model` 节点内调用，现 publisher 仅�
 
 ## 2026-10-25 SDK 连接失败的安全分类
 
-在既有 `execution/failures.py` 安全归码边界，以真实 SDK `APIConnectionError`／`APITimeoutError` 的类型判断输出既有 `model_unavailable/false`，即使 assembly supplied default 也保留该分类；不按类名或文字猜测，不公开原异常。仅修正失败表达，不改变 API 主异常与 secondary settlement 的优先级、pending ACK／hold、single-dispatch、零自动重试、历史终态或 preflight/start。底层连接子因仍未证明，本片不声明外部供应商恢复可用。
+在既有 `execution/failures.py` 安全归码边界，以真实 SDK `APIConnectionError`／`APITimeoutError` 的类型判断，以及锁定SDK流内错误直接抛出的基类 `type(error) is APIError`，输出既有 `model_unavailable/false`，即使 assembly supplied default 也保留该分类；不按类名或文字猜测，不公开原异常。仅修正失败表达，不改变 API 主异常与 secondary settlement 的优先级、pending ACK／hold、single-dispatch、零自动重试、历史终态或 preflight/start。status／response-validation等APIError子类不由新增分支承接；流内错误不按原message/body猜细因。底层连接子因仍未证明，本片不声明外部供应商恢复可用。
 
 ## 2026-10-25 原生摘要结果的最小持久恢复（设计门，未实施）
 

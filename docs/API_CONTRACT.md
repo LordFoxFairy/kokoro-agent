@@ -202,7 +202,7 @@ SSE SDK入场要求root已配置实际handler；缺失时静态MCP_SESSION_FAILE
 
 ## 2026-10-25 SDK 连接失败的安全分类
 
-仅真实 OpenAI SDK `APIConnectionError`／`APITimeoutError`（`isinstance`）归为既有 `model_unavailable`、`retryable=false`，优先于装配调用点提供的缺省码；同名普通异常或错误文字不参与归类。此为安全失败分类，不证明供应商 TCP/DNS/TLS 子因或可用性，不增加 wire／重试。原 API 主异常、secondary settlement 处理、pending financial ACK／hold、single-dispatch、历史终态和 preflight/start 顺序保持，不释放资金或重派模型。
+真实 OpenAI SDK `APIConnectionError`／`APITimeoutError`（`isinstance`），以及锁定SDK为流内error直接抛出的基类 `APIError`（精确type，不包含status／response-validation子类），归为既有 `model_unavailable`、`retryable=false`，优先于装配调用点提供的缺省码；同名普通异常或错误文字不参与归类。此为安全失败分类，不证明供应商 TCP/DNS/TLS 子因或可用性，不增加 wire／重试。原 API 主异常、secondary settlement 处理、pending financial ACK／hold、single-dispatch、历史终态和 preflight/start 顺序保持，不释放资金或重派模型。
 
 ## 2026-10-24 普通会话 MCP 精确选择（Agent 候选实施，尚未正常配对）
 

@@ -1,3 +1,7 @@
+## 2026-11-12 · 正常主链运行补口（未交付）
+
+真实开发工作台任务在HTTP／预算准入后，由供应商兼容流的顶层error触发锁定SDK基类APIError；先前误显示internal_error。现精确承接该基类为model_unavailable/false，保原transport分支及status／response-validation子类，不解析或公开私有错误正文，不自动重试／补零／释放hold。主控现test_invoke默认选择99通过、4 deselected（既有标记选择），新case先RED；尚未宣称实际模型响应恢复。预算known denial及同attempt重复reserve由Root当前Goal继续收口；未改公开合同／Schema。
+
 ## A‑10 native E2B output write and edit
 
 The existing E2B Chat also uses native `edit_file` on a protected output. It verifies the exact UTF-8 postimage on the installed file descriptor and passes it only to the existing private edit capture and publish guard. The public tool result remains the path and occurrence count. Local write/edit, profile and the related Docker output regression passed; the E2B provider was a protocol double. Live cloud and script output remain open.

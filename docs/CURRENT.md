@@ -1,3 +1,11 @@
+## 2026-11-12 · Task B Platform发布pin精确配对
+
+顶层Platform owner从24094960配对到候选573a8f00；仅provenance和对应常量／断言共4行，四Proto与生成物字节不变，独立execution-v4／package／runtime／Custom API历史锚全部保留。无wire、Schema、执行配方或认证变化。
+
+主控在正常Python3.14.3复验4个contract文件129 PASS、contract-check通过；四输入SHA与隔离源码fixture核等。fixture正规generator --check、Ruff／format／Pyright及wheel/sdist／安装smoke通过。最初fixture Python3.11因既存TypedDict兼容问题未收集、失败保留；3.13静态阶段及3.14.3运行阶段明确区分，未改依赖或放宽测试。未跑全默认／新模型／DB写入。
+
+切换前52个Run均终态、dispatch及BFF相关pending为0；主控SIGTERM正常HTTP／Worker／Platform后配对源码并恢复，Agent／Platform health和ready均200，官方Worker重新消费。两笔历史未知财务恢复记录保持，不改账、不以readiness冒真实Provider授权或整个Task B验收。精确Root组合与PR出口由Root唯一TODO继续维护。
+
 ## 2026-11-12 · 正常持久环境真实主链阶段通过
 
 生产修复 `c2c563e`（后继 `ea20468` 仅 README）已在正常独立 Worker 激活，Root 精确组合 `ff698689`。普通任务复用原 BackendProtocol，未选择 Custom API 也可使用配置的 Docker 沙箱。真实开发账号经 native IAM 登录；真实模型、已安装 Skill、公开 Context7 MCP、隔离 Docker 与 Storage FINAL 已在正常 BFF／浏览器链路验证，不是模型或协议 fixture。

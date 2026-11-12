@@ -1,7 +1,7 @@
 {
   "owner": "kokoro-platform",
   "owner_repository": "apps/kokoro-capability",
-  "owner_commit": "24094960bad58d1b6a85a273d3bc94b0a0e0d1dc",
+  "owner_commit": "573a8f00a92991ae1e6eee6feb238e0132f71f50",
   "sources": [
     {
       "owner_path": "contract/proto/kokoro/common/v1/common.proto",

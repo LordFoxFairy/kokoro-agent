@@ -25,7 +25,7 @@ def test_runtime_binding_uses_current_platform_v4_owner_release() -> None:
 
     pin = _json(PIN_PATH)
     execution = _object(pin["execution_operations"])
-    assert pin["owner_commit"] == "24094960bad58d1b6a85a273d3bc94b0a0e0d1dc"
+    assert pin["owner_commit"] == "573a8f00a92991ae1e6eee6feb238e0132f71f50"
     assert execution["owner_commit"] == "6a09913a96c686b316bfe707b823d039e625607a"
     assert execution["aggregate_sha256"] == (
         "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"

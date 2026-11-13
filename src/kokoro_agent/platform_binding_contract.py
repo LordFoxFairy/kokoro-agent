@@ -34,7 +34,7 @@ from kokoro_agent.execution.platform_request_binding_values import (
 
 JsonObject: TypeAlias = dict[str, object]
 PLATFORM_PROVENANCE_RELATIVE = "contract/platform/v1/provenance.json"
-EXPECTED_OWNER_COMMIT = "573a8f00a92991ae1e6eee6feb238e0132f71f50"
+EXPECTED_OWNER_COMMIT = "efe18a1f697f3ff2189e342e40ffed581bedda2b"
 EXPECTED_EXECUTION_OWNER_COMMIT = "6a09913a96c686b316bfe707b823d039e625607a"
 EXPECTED_OWNER_REPOSITORY = "apps/kokoro-capability"
 EXPECTED_AGGREGATE = "902f8f2c2fbeb95a441820c1cf16b0a9c793eadac7106f9fcd5e41e3878b7f79"

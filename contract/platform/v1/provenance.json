@@ -1,7 +1,7 @@
 {
   "owner": "kokoro-platform",
   "owner_repository": "apps/kokoro-capability",
-  "owner_commit": "573a8f00a92991ae1e6eee6feb238e0132f71f50",
+  "owner_commit": "efe18a1f697f3ff2189e342e40ffed581bedda2b",
   "sources": [
     {
       "owner_path": "contract/proto/kokoro/common/v1/common.proto",
@@ -11,7 +11,7 @@
     {
       "owner_path": "contract/proto/kokoro/platform/v1/platform_runtime.proto",
       "path": "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto",
-      "sha256": "7bc9253cd91a03f20e263a79be7183436497cc205d321e704e3c2338cdc8fe9c"
+      "sha256": "c895b7f7b727f88e171b954c1d2bf932b4f7065a827ff0f892a7c6fd977b8f02"
     },
     {
       "path": "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto",

@@ -133,6 +133,7 @@ class SupervisorControlMixin(SupervisorContext):
         self._leases[request.run_id] = lease
         try:
             emitter = await self._emitter(bus, request.run_id, lease)
+            self._ensure_control_listener(bus, request.run_id)
             built = await self._build_owned(
                 request,
                 lease,

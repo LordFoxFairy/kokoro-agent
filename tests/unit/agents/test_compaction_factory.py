@@ -1546,3 +1546,216 @@ async def test_project_instruction_refuses_sdk_content_observer(
             resolver=_Resolver(),
             run_request=_project_request("PROJECT_PRIVATE_D0"),
         )
+
+
+def _shared_request(*, input_words: int = 0) -> RunRequest:
+    body = _request().model_dump(mode="json")
+    body["project_ref"] = "project"
+    body["shared_conversation_context"] = {
+        "project_ref": "project",
+        "conversation_id": body["session_id"],
+        "messages": [
+            {
+                "message_id": "old-user",
+                "sequence": "1",
+                "role": "user",
+                "content": "SAFE_SHARED_USER",
+            },
+            {
+                "message_id": "old-final",
+                "sequence": "2",
+                "role": "assistant",
+                "content": "CONFIRMED_FINAL_ONLY",
+            },
+        ],
+        "has_earlier_messages": True,
+    }
+    if input_words:
+        body["input"]["content"] = "current input " * input_words
+    return RunRequest.model_validate_json(json.dumps(body))
+
+
+async def test_shared_context_does_not_load_old_thread_and_same_run_restores_native_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.domain.run.scope import RunScope
+
+    request = _shared_request()
+    handle, request, journal, execution, bodies = await _handle(
+        monkeypatch, resolver=_Resolver(context_window=20000), run_request=request
+    )
+    graph: Any = handle.runnable
+    old = request.model_dump(mode="json")
+    del old["shared_conversation_context"]
+    legacy = RunRequest.model_validate_json(json.dumps(old))
+    old_config = {"configurable": {"thread_id": RunScope.of(legacy).scoped_thread_id}}
+    config = {
+        "configurable": {"thread_id": RunScope.of(request).scoped_thread_id},
+        "metadata": {"kokoro_run_id": request.run_id},
+    }
+    try:
+        await graph.aupdate_state(
+            old_config,
+            {
+                "messages": [HumanMessage(content="CREATOR_PRIVATE_CHECKPOINT")],
+                "files": {
+                    "/private.txt": {
+                        "content": ["OLD_PRIVATE_FILE"],
+                        "created_at": "2026-11-13T00:00:00+00:00",
+                        "modified_at": "2026-11-13T00:00:00+00:00",
+                    }
+                },
+            },
+        )
+        assert not (await graph.aget_state(config)).values
+        from kokoro_agent.execution.run_agent import invoke_once
+        from kokoro_agent.domain.run.models import (
+            ExecutionTerminalAuthority,
+            RunTerminalOutcome,
+            RunUsageSegment,
+        )
+        from kokoro_agent.protocol import RunCompletedPayload, RunFailedPayload
+
+        repository = execution.repository
+        lease = repository.current_lease(request.run_id)
+        assert lease is not None
+        chat = repository.chat_repository
+        assert chat is not None
+        emitter = await RunEmitter.attach(
+            FakeBus(),
+            request.run_id,
+            outbox=repository,
+            lease=lease,
+            tenant_id="tenant",
+            namespace=RunScope.of(request).namespace,
+            session_id=request.session_id,
+            chat_repository=chat,
+        )
+
+        async def finish(
+            payload: RunCompletedPayload | RunFailedPayload, usage: tuple[int, int]
+        ) -> bool:
+            outcome = RunTerminalOutcome(
+                payload=payload,
+                usage=RunUsageSegment(input_tokens=usage[0], output_tokens=usage[1]),
+            )
+            result = await repository.finalize_terminal(
+                request.run_id,
+                ExecutionTerminalAuthority(lease=lease),
+                outcome,
+                tuple(await repository.list_delivery_journal(request.run_id)),
+            )
+            return result.status == "committed"
+
+        async def record_usage(
+            input_tokens: int, output_tokens: int
+        ) -> tuple[int, int]:
+            totals = await repository.add_usage(
+                request.run_id, lease, input_tokens, output_tokens
+            )
+            assert totals is not None
+            return totals
+
+        async def settled(_seal: Callable[[], Any]) -> Literal["active"]:
+            return "active"
+
+        assert await invoke_once(
+            emitter,
+            handle.runnable,
+            RunScope.of(request).scoped_thread_id,
+            {
+                "messages": [
+                    HumanMessage(
+                        content=request.input.content,
+                        id=f"native-input:{request.run_id}",
+                    )
+                ]
+            },
+            initial=True,
+            approval_tool_names=frozenset(),
+            source_for=lambda _name: "runtime-custom",
+            finalize_terminal=finish,
+            record_usage=record_usage,
+            on_native_settled=settled,
+            checkpoint_metadata={
+                "kokoro_run_id": request.run_id,
+                "kokoro_generation": lease.generation,
+            },
+            private_material=handle.private_material,
+        )
+        replay = await chat.replay(
+            "tenant", RunScope.of(request).namespace, request.session_id
+        )
+        completed = [
+            event for event in replay if event.event_type == "assistant.completed"
+        ]
+        terminal = [event for event in replay if event.event_type == "run.completed"]
+        assert len(completed) == len(terminal) == 1
+        assert (
+            json.loads(terminal[0].payload_json)["final_message_id"]
+            == completed[0].chat_message_id
+        )
+        assert json.loads(completed[0].payload_json)["content"] == "continued"
+        assert len(bodies) == len(journal.commands) == len(execution.authorized) == 1
+        serialized = json.dumps(bodies[0], ensure_ascii=False)
+        assert "SAFE_SHARED_USER" in serialized and "CONFIRMED_FINAL_ONLY" in serialized
+        assert (
+            "CREATOR_PRIVATE_CHECKPOINT" not in serialized
+            and "OLD_PRIVATE_FILE" not in serialized
+        )
+        restored = RunRequest.model_validate_json(request.model_dump_json())
+        recovered = await graph.aget_state(
+            {"configurable": {"thread_id": RunScope.of(restored).scoped_thread_id}}
+        )
+        assert recovered.values["messages"]
+        assert "CREATOR_PRIVATE_CHECKPOINT" not in repr(recovered.values)
+        assert not recovered.values.get("files")
+        from datetime import UTC, datetime
+        from kokoro_agent.infrastructure.checkpoint_final_answer import (
+            restore_native_final,
+            supports_final_messages,
+        )
+
+        saver: Any = graph.checkpointer
+        checkpoints = [saved async for saved in saver.alist(config)]
+        parents = {
+            saved.config["configurable"]["checkpoint_id"]: saved.parent_config[
+                "configurable"
+            ]["checkpoint_id"]
+            if saved.parent_config
+            else None
+            for saved in checkpoints
+        }
+        native = await restore_native_final(
+            get_tuple=saver.aget_tuple,
+            thread_id=RunScope.of(request).scoped_thread_id,
+            run_id=request.run_id,
+            parents=parents,
+            terminal_at=datetime.now(UTC),
+        )
+        # The real RunSkills tail checkpoint does not satisfy the separately
+        # reviewed legacy reconstruction profile. Durable FINAL above is authoritative.
+        assert native is None
+        assert not supports_final_messages(
+            json.loads(repository.static_recipes[request.run_id].canonical_bytes)
+        )
+        assert handle.private_material
+    finally:
+        await handle.aclose()
+
+
+async def test_shared_full_window_counts_current_input_before_any_summary_or_finance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kokoro_agent.model.personal_context import PersonalContextWindowExceeded
+
+    async def forbidden_authorize(*args: object, **kwargs: object) -> None:
+        raise AssertionError("shared full-window rejection must not acquire funds")
+
+    monkeypatch.setattr(_Execution, "authorize", forbidden_authorize)
+    with pytest.raises(PersonalContextWindowExceeded):
+        await _handle(
+            monkeypatch,
+            resolver=_Resolver(),
+            run_request=_shared_request(input_words=10000),
+        )

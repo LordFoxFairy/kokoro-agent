@@ -772,3 +772,45 @@ async def test_project_instruction_rejected_before_dispatch_for_wrong_scope(
         await ingress.launch(body, execution_identity=caller)
     assert (denied.value.status, denied.value.code) == (400, "invalid_launch_request")
     assert bus.published == [] and repository.dispatches == {}
+
+
+@pytest.mark.asyncio
+async def test_shared_context_is_frozen_in_original_dispatch_fence_and_not_public_input() -> (
+    None
+):
+    bus = FakeBus()
+    repository = FakeRunRepository()
+    ingress = AgentIngress(
+        bus=bus,
+        run_repository=repository,
+        chat_service=ChatService(FakeChatRepository()),
+    )
+    body = launch_body()
+    body["project_ref"] = "project"
+    body["shared_conversation_context"] = {
+        "project_ref": "project",
+        "conversation_id": body["session_id"],
+        "messages": [
+            {
+                "message_id": "old",
+                "sequence": "1",
+                "role": "assistant",
+                "content": "SAFE_FINAL",
+            }
+        ],
+        "has_earlier_messages": False,
+    }
+    await ingress.launch(body, execution_identity=identity("actor"))
+    stored = repository.dispatch_requests["run-1"]
+    assert stored.shared_conversation_context is not None
+    assert stored.input.content == "hello"
+    assert (
+        bus.published[0][1]["shared_conversation_context"]
+        == body["shared_conversation_context"]
+    )
+    assert (await ingress.launch(body, execution_identity=identity("actor"))).replayed
+    changed = json.loads(json.dumps(body))
+    changed["shared_conversation_context"]["messages"][0]["content"] = "changed"
+    with pytest.raises(IngressError) as denied:
+        await ingress.launch(changed, execution_identity=identity("actor"))
+    assert denied.value.code == "run_identity_conflict"

@@ -1,3 +1,31 @@
+## B10 · Project shared Conversation 执行上下文（已裁决，实施中）
+
+Agent HTTP8.18 仅新增可选私有 `shared_conversation_context`；presence 即 shared 模式，不从 Project ID 推断分享。
+BFF 在真实当前 reader 的 Project 权限和一致快照内冻结 whole-message suffix：共享 user 正文及已确认 FINAL 的 assistant 正文，
+不含 peer reasoning、tool、composer 或任何历史个人材料。Project 曾有 grant（包括保留 revoked）的事实触发该模式，后继 owner 也使用它；
+Agent 不自行查询或推断 grant。当前 actor/subject 都是同一本人 user，personal_context 仍只绑定该 actor。
+
+context 为 closed `{project_ref,conversation_id,messages,has_earlier_messages}`；message 为 closed
+`{message_id,sequence,role,content}`。sequence 是正十进制 string，严格递增，ID 唯一；role 仅 user/assistant。
+最多128条、原文合计 UTF-8 256KiB；BFF whole-message suffix 超出的更早历史用 has_earlier_messages 显式标注。
+不增加 schema_version、逐条摘要或 FINAL 证明字段；完整 Run/dispatch 的既有不可变 fence 冻结这些字节。
+context Project/Conversation 必须匹配 launch；Agent 不再次裁剪、抓历史或发起摘要服务。
+
+typed renderer 沿现私有 system-material 以明确不可信 historical-data 装配；input.content 及本次 HumanMessage 保持原样，
+不伪造历史 AI/Tool 消息。完整 system（含当前个人/Project材料）+ 当前输入 + tools + output reserve 在模型/金融派发前按原窗口拒绝超界。
+纳入现 Langfuse/LangSmith/全局 debug/verbose 私密保护；正文不进入公开事件、错误或日志。
+
+namespace、Chat source sequence 和可信身份不变。shared 模式仅由 RunScope 派生与 legacy 键空间分离的 Run 级 native thread；
+同 Run 重启/HITL/resume/steer/证据 reader 使用同 key，新 Run 不加载任何旧 actor 或同 actor 的旧 checkpoint。
+shared workspace 也按 Run 隔离，复用原 sandbox Run CAS/重连/清理，不新建存储。无字段的 Task A JSON/fence/thread/workspace 分支原样；
+不迁移/清空旧 checkpoint，不重置 BFF source HWM。BFF 多 source 到 Conversation public 顺序由 BFF 独立拥有。
+
+实际 native RunSkills 尾 checkpoint 不符合旧 adjunct 的已审形状；保留旧两 factory 支持锚，新 assembly 的无 durable FINAL 绑定重建仍为 unknown。普通成功仅认原持久 assistant.completed → terminal.final_message_id 绑定，不以 legacy adjunct 冒新支持。
+
+本片不改数据库、依赖、SDK、认证或正常资源。旧活动 Run 不跨 assembly 指纹强行恢复；发布前由主控核活动状态。
+FINAL reader 的 factory 支持锚须实际审查 native root state/reducer 兼容后追加，旧锚保留，不盲重签。
+验收覆盖无字段逆证、严格输入/容量、不可变漂移、旧状态/文件隔离、同 Run 恢复/HITL、私密性与完整窗口；源码验收不冒产品整链完成。
+
 ## 2026-11-12 · 普通 Chat 后端配置，wire 不变
 
 普通 Chat 的后端仅由 Worker `KOKORO_AGENT_CHAT_BACKEND`／`sandbox.chat_backend` 配置；不新增浏览器或 LaunchRequest 字段，HTTP/Redis/Storage 版本不变。原 Custom API 选择仍只运输授权环境引用；只有实际 provider 存在时才有该路径的 fresh Acquire／秘密保护，普通无 provider 执行不冒此保证。

@@ -62,3 +62,25 @@ def test_material_inverse_rejects_new_or_historical_drift(target: str) -> None:
         ] = 10
     with pytest.raises(ValueError):
         http810_personal_context_parent_bytes(current)
+
+
+def test_shared_context_finite_delta_preserves_complete_issued_http817() -> None:
+    from kokoro_agent.chat_contract_check import http817_shared_context_parent_bytes
+
+    current = document()
+    assert current["info"]["version"] == "8.18.0"
+    parent = http817_shared_context_parent_bytes(current)
+    assert (
+        hashlib.sha256(parent).hexdigest()
+        == "c471094369efa80f1182e41c67ef8150835a4544c283fd8d2d4e689707a51aad"
+    )
+    assert (
+        "shared_conversation_context"
+        not in current["components"]["schemas"]["LaunchRequest"]["required"]
+    )
+    validate_openapi_document(current)
+    current["components"]["schemas"]["LaunchRequest"]["properties"][
+        "shared_conversation_context"
+    ]["additionalProperties"] = True
+    with pytest.raises(ValueError):
+        http817_shared_context_parent_bytes(current)

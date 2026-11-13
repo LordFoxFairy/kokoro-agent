@@ -42,6 +42,8 @@ def feature_for_custom_api(
 
 def custom_api_workspace(request: RunRequest) -> str:
     scope = RunScope.of(request)
+    if request.shared_conversation_context is not None:
+        return scope.scoped_thread_id
     if not request.selected_custom_api_profiles:
         return workspace_key(scope.namespace, scope.session_id)
     # Keep the run outside the ordinary conversation's bind mount.

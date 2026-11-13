@@ -14,7 +14,7 @@ from connectrpc.errors import ConnectError
 from connectrpc.method import IdempotencyLevel, MethodInfo
 from connectrpc.server import ConnectASGIApplication, Endpoint
 
-from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginLocalSkillImportRequest, BeginLocalSkillImportResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse, BeginPersonalMcpIconUploadRequest, BeginPersonalMcpIconUploadResponse, BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CancelPersonalMcpIconIntentRequest, CancelPersonalMcpIconIntentResponse, CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse, CompletePersonalMcpIconUploadRequest, CompletePersonalMcpIconUploadResponse, CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse, CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse, CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse, CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse, CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse, DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse, DeletePersonalSkillSeriesRequest, DeletePersonalSkillSeriesResponse, DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse, DiscardSkillDraftRequest, DiscardSkillDraftResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse, GetAdminSkillRequest, GetAdminSkillResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetCurrentSkillRequest, GetCurrentSkillResponse, GetLocalSkillImportRequest, GetLocalSkillImportResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse, GetMcpServerRequest, GetMcpServerResponse, GetPersonalCustomApiRequest, GetPersonalCustomApiResponse, GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse, GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse, GetPersonalMcpIconIntentRequest, GetPersonalMcpIconIntentResponse, GetPersonalMcpPrepareReceiptRequest, GetPersonalMcpPrepareReceiptResponse, GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse, GetPersonalMcpServerRequest, GetPersonalMcpServerResponse, GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse, GetProjectSkillInstallationPackageDownloadRequest, GetProjectSkillInstallationPackageDownloadResponse, GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse, GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse, GetSkillCoverUploadRequest, GetSkillCoverUploadResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, GetSkillRevisionRequest, GetSkillRevisionResponse, ImportPersonalMcpIconUrlRequest, ImportPersonalMcpIconUrlResponse, ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse, InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse, InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse, InspectProjectSkillInstallationPackageRequest, InspectProjectSkillInstallationPackageResponse, InspectSkillPackageRequest, InspectSkillPackageResponse, InstallPersonalSkillRequest, InstallPersonalSkillResponse, InstallProjectSkillRequest, InstallProjectSkillResponse, InstallSkillRequest, InstallSkillResponse, ListAdminSkillsRequest, ListAdminSkillsResponse, ListAppSkillBindingsRequest, ListAppSkillBindingsResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListPersonalCustomApisRequest, ListPersonalCustomApisResponse, ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse, ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse, ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse, ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse, ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse, PublishOfficialSkillRequest, PublishOfficialSkillResponse, PublishSkillRequest, PublishSkillResponse, PutAppSkillBindingRequest, PutAppSkillBindingResponse, QuarantineSkillRequest, QuarantineSkillResponse, ReauthorizePersonalMcpServerRequest, ReauthorizePersonalMcpServerResponse, ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse, RemoveAppSkillBindingRequest, RemoveAppSkillBindingResponse, RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse, RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse, RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse, RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RestoreSkillRequest, RestoreSkillResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse, SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse, SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse, SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse, SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse, SetSkillStatusRequest, SetSkillStatusResponse, UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse, UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse, UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse, UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse, UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse, UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse, UpdateSkillDraftRequest, UpdateSkillDraftResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawAdminSkillRequest, WithdrawAdminSkillResponse, WithdrawSkillRequest, WithdrawSkillResponse
+from .platform_runtime_pb import AuthorizeMcpToolRequest, AuthorizeMcpToolResponse, BeginLocalSkillImportRequest, BeginLocalSkillImportResponse, BeginMcpConnectorAuthorizationRequest, BeginMcpConnectorAuthorizationResponse, BeginPersonalMcpConnectorAuthorizationRequest, BeginPersonalMcpConnectorAuthorizationResponse, BeginPersonalMcpIconUploadRequest, BeginPersonalMcpIconUploadResponse, BeginSkillCoverUploadRequest, BeginSkillCoverUploadResponse, BeginSkillPackageUploadRequest, BeginSkillPackageUploadResponse, CancelPersonalMcpIconIntentRequest, CancelPersonalMcpIconIntentResponse, CompleteLocalSkillImportRequest, CompleteLocalSkillImportResponse, CompleteMcpConnectorAuthorizationRequest, CompleteMcpConnectorAuthorizationResponse, CompletePersonalMcpConnectorAuthorizationRequest, CompletePersonalMcpConnectorAuthorizationResponse, CompletePersonalMcpIconUploadRequest, CompletePersonalMcpIconUploadResponse, CompleteSkillCoverUploadRequest, CompleteSkillCoverUploadResponse, CompleteSkillPackageUploadRequest, CompleteSkillPackageUploadResponse, CreateAdminSkillDraftRequest, CreateAdminSkillDraftResponse, CreateAdminSkillVersionRequest, CreateAdminSkillVersionResponse, CreateMcpConnectionRequest, CreateMcpConnectionResponse, CreateMcpConnectorRequest, CreateMcpConnectorResponse, CreateMcpProviderAdminRecordRequest, CreateMcpProviderAdminRecordResponse, CreatePersonalCustomApiRequest, CreatePersonalCustomApiResponse, CreatePersonalMcpConnectionRequest, CreatePersonalMcpConnectionResponse, CreatePersonalMcpConnectorRequest, CreatePersonalMcpConnectorResponse, CreateSkillDraftRequest, CreateSkillDraftResponse, CreateSkillVersionRequest, CreateSkillVersionResponse, DeletePersonalCustomApiRequest, DeletePersonalCustomApiResponse, DeletePersonalMcpServerRequest, DeletePersonalMcpServerResponse, DeletePersonalSkillSeriesRequest, DeletePersonalSkillSeriesResponse, DiscardAdminSkillDraftRequest, DiscardAdminSkillDraftResponse, DiscardSkillDraftRequest, DiscardSkillDraftResponse, DiscoverVisibleSkillsRequest, DiscoverVisibleSkillsResponse, FinalizeLocalSkillImportRequest, FinalizeLocalSkillImportResponse, GetAdminCustomApiRequest, GetAdminCustomApiResponse, GetAdminSkillRequest, GetAdminSkillResponse, GetApprovedSkillPackageReferenceRequest, GetApprovedSkillPackageReferenceResponse, GetCurrentSkillRequest, GetCurrentSkillResponse, GetLocalSkillImportRequest, GetLocalSkillImportResponse, GetMcpConnectionRequest, GetMcpConnectionResponse, GetMcpConnectorRequest, GetMcpConnectorResponse, GetMcpProviderAdminRecordRequest, GetMcpProviderAdminRecordResponse, GetMcpServerRequest, GetMcpServerResponse, GetPersonalCustomApiRequest, GetPersonalCustomApiResponse, GetPersonalMcpConnectionRequest, GetPersonalMcpConnectionResponse, GetPersonalMcpConnectorRequest, GetPersonalMcpConnectorResponse, GetPersonalMcpIconIntentRequest, GetPersonalMcpIconIntentResponse, GetPersonalMcpPrepareReceiptRequest, GetPersonalMcpPrepareReceiptResponse, GetPersonalMcpProviderRequest, GetPersonalMcpProviderResponse, GetPersonalMcpServerRequest, GetPersonalMcpServerResponse, GetPersonalSkillInstallationRequest, GetPersonalSkillInstallationResponse, GetProjectSkillInstallationPackageDownloadRequest, GetProjectSkillInstallationPackageDownloadResponse, GetProjectSkillInstallationRequest, GetProjectSkillInstallationResponse, GetSkillCoverReferenceRequest, GetSkillCoverReferenceResponse, GetSkillCoverUploadRequest, GetSkillCoverUploadResponse, GetSkillInstallationRequest, GetSkillInstallationResponse, GetSkillPackageDownloadRequest, GetSkillPackageDownloadResponse, GetSkillPackageUploadRequest, GetSkillPackageUploadResponse, GetSkillRevisionRequest, GetSkillRevisionResponse, ImportPersonalMcpIconUrlRequest, ImportPersonalMcpIconUrlResponse, ImportPersonalMcpJsonRequest, ImportPersonalMcpJsonResponse, InspectPersonalSkillInstallationPackageRequest, InspectPersonalSkillInstallationPackageResponse, InspectPersonalSkillPackageRequest, InspectPersonalSkillPackageResponse, InspectProjectSkillInstallationPackageRequest, InspectProjectSkillInstallationPackageResponse, InspectSkillPackageRequest, InspectSkillPackageResponse, InstallPersonalSkillRequest, InstallPersonalSkillResponse, InstallProjectSkillRequest, InstallProjectSkillResponse, InstallSkillRequest, InstallSkillResponse, ListAdminCustomApiAuditEventsRequest, ListAdminCustomApiAuditEventsResponse, ListAdminCustomApisRequest, ListAdminCustomApisResponse, ListAdminSkillsRequest, ListAdminSkillsResponse, ListAppSkillBindingsRequest, ListAppSkillBindingsResponse, ListMcpConnectionsRequest, ListMcpConnectionsResponse, ListMcpConnectorCapabilitiesRequest, ListMcpConnectorCapabilitiesResponse, ListMcpConnectorProvidersRequest, ListMcpConnectorProvidersResponse, ListMcpConnectorsRequest, ListMcpConnectorsResponse, ListMcpProviderAdminRecordsRequest, ListMcpProviderAdminRecordsResponse, ListMcpServerDeclarationsRequest, ListMcpServerDeclarationsResponse, ListMcpServersRequest, ListMcpServersResponse, ListPersonalCustomApisRequest, ListPersonalCustomApisResponse, ListPersonalMcpConnectionsRequest, ListPersonalMcpConnectionsResponse, ListPersonalMcpConnectorsRequest, ListPersonalMcpConnectorsResponse, ListPersonalMcpProvidersRequest, ListPersonalMcpProvidersResponse, ListPersonalSkillInstallationsRequest, ListPersonalSkillInstallationsResponse, ListProjectSkillInstallationsRequest, ListProjectSkillInstallationsResponse, ListSkillInstallationsRequest, ListSkillInstallationsResponse, PreparePersonalMcpServerRequest, PreparePersonalMcpServerResponse, PublishOfficialSkillRequest, PublishOfficialSkillResponse, PublishSkillRequest, PublishSkillResponse, PutAppSkillBindingRequest, PutAppSkillBindingResponse, QuarantineAdminCustomApiRequest, QuarantineAdminCustomApiResponse, QuarantineSkillRequest, QuarantineSkillResponse, ReauthorizePersonalMcpServerRequest, ReauthorizePersonalMcpServerResponse, ReconnectPersonalMcpConnectorAuthorizationRequest, ReconnectPersonalMcpConnectorAuthorizationResponse, RegisterMcpServerRequest, RegisterMcpServerResponse, RegisterPersonalMcpServerRequest, RegisterPersonalMcpServerResponse, RemoveAppSkillBindingRequest, RemoveAppSkillBindingResponse, RemoveMcpProviderAdminRecordRequest, RemoveMcpProviderAdminRecordResponse, RemovePersonalMcpConnectorRequest, RemovePersonalMcpConnectorResponse, RemovePersonalSkillInstallationRequest, RemovePersonalSkillInstallationResponse, RemoveProjectSkillInstallationRequest, RemoveProjectSkillInstallationResponse, RemoveSkillInstallationRequest, RemoveSkillInstallationResponse, ResolveVisibleSkillRequest, ResolveVisibleSkillResponse, RestoreAdminCustomApiRequest, RestoreAdminCustomApiResponse, RestoreSkillRequest, RestoreSkillResponse, RevokeAdminCustomApiRequest, RevokeAdminCustomApiResponse, RevokeMcpConnectionRequest, RevokeMcpConnectionResponse, RevokeMcpConnectorRequest, RevokeMcpConnectorResponse, SetAdminSkillPublicationAudienceRequest, SetAdminSkillPublicationAudienceResponse, SetMcpProviderAdminRecordEnabledRequest, SetMcpProviderAdminRecordEnabledResponse, SetPersonalMcpConnectorEnabledRequest, SetPersonalMcpConnectorEnabledResponse, SetPersonalSkillInstallationEnabledRequest, SetPersonalSkillInstallationEnabledResponse, SetProjectSkillInstallationEnabledRequest, SetProjectSkillInstallationEnabledResponse, SetSkillInstallationEnabledRequest, SetSkillInstallationEnabledResponse, SetSkillPublicationAudienceRequest, SetSkillPublicationAudienceResponse, SetSkillStatusRequest, SetSkillStatusResponse, UpdateMcpProviderAdminRecordRequest, UpdateMcpProviderAdminRecordResponse, UpdatePersonalCustomApiRequest, UpdatePersonalCustomApiResponse, UpdatePersonalMcpConnectorRequest, UpdatePersonalMcpConnectorResponse, UpdatePersonalMcpServerRequest, UpdatePersonalMcpServerResponse, UpdatePersonalSkillInstallationRequest, UpdatePersonalSkillInstallationResponse, UpdateProjectSkillInstallationRequest, UpdateProjectSkillInstallationResponse, UpdateSkillDraftRequest, UpdateSkillDraftResponse, ValidateSkillDraftRequest, ValidateSkillDraftResponse, WithdrawAdminSkillRequest, WithdrawAdminSkillResponse, WithdrawSkillRequest, WithdrawSkillResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -4402,6 +4402,233 @@ class ProductProjectSkillInstallationContentServiceClient(ConnectClient):
                 service_name="kokoro.platform.v1.ProductProjectSkillInstallationContentService",
                 input=GetProjectSkillInstallationPackageDownloadRequest,
                 output=GetProjectSkillInstallationPackageDownloadResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+class CustomApiAdminService(Protocol):
+    async def list_admin_custom_apis(self, request: ListAdminCustomApisRequest, ctx: RequestContext[ListAdminCustomApisRequest, ListAdminCustomApisResponse]) -> ListAdminCustomApisResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_admin_custom_api(self, request: GetAdminCustomApiRequest, ctx: RequestContext[GetAdminCustomApiRequest, GetAdminCustomApiResponse]) -> GetAdminCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def quarantine_admin_custom_api(self, request: QuarantineAdminCustomApiRequest, ctx: RequestContext[QuarantineAdminCustomApiRequest, QuarantineAdminCustomApiResponse]) -> QuarantineAdminCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def restore_admin_custom_api(self, request: RestoreAdminCustomApiRequest, ctx: RequestContext[RestoreAdminCustomApiRequest, RestoreAdminCustomApiResponse]) -> RestoreAdminCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def revoke_admin_custom_api(self, request: RevokeAdminCustomApiRequest, ctx: RequestContext[RevokeAdminCustomApiRequest, RevokeAdminCustomApiResponse]) -> RevokeAdminCustomApiResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_admin_custom_api_audit_events(self, request: ListAdminCustomApiAuditEventsRequest, ctx: RequestContext[ListAdminCustomApiAuditEventsRequest, ListAdminCustomApiAuditEventsResponse]) -> ListAdminCustomApiAuditEventsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+
+class CustomApiAdminServiceASGIApplication(ConnectASGIApplication[CustomApiAdminService]):
+    def __init__(
+        self,
+        service: CustomApiAdminService | AsyncGenerator[CustomApiAdminService],
+        *,
+        interceptors: Iterable[Interceptor] = (),
+        read_max_bytes: int | None = None,
+        compressions: Iterable[Compression] | None = None,
+        codecs: Iterable[Codec] | None = None,
+    ) -> None:
+        super().__init__(
+            service=service,
+            endpoints=lambda svc: {
+                "/kokoro.platform.v1.CustomApiAdminService/ListAdminCustomApis": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListAdminCustomApis",
+                        service_name="kokoro.platform.v1.CustomApiAdminService",
+                        input=ListAdminCustomApisRequest,
+                        output=ListAdminCustomApisResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_admin_custom_apis,
+                ),
+                "/kokoro.platform.v1.CustomApiAdminService/GetAdminCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetAdminCustomApi",
+                        service_name="kokoro.platform.v1.CustomApiAdminService",
+                        input=GetAdminCustomApiRequest,
+                        output=GetAdminCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_admin_custom_api,
+                ),
+                "/kokoro.platform.v1.CustomApiAdminService/QuarantineAdminCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="QuarantineAdminCustomApi",
+                        service_name="kokoro.platform.v1.CustomApiAdminService",
+                        input=QuarantineAdminCustomApiRequest,
+                        output=QuarantineAdminCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.quarantine_admin_custom_api,
+                ),
+                "/kokoro.platform.v1.CustomApiAdminService/RestoreAdminCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RestoreAdminCustomApi",
+                        service_name="kokoro.platform.v1.CustomApiAdminService",
+                        input=RestoreAdminCustomApiRequest,
+                        output=RestoreAdminCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.restore_admin_custom_api,
+                ),
+                "/kokoro.platform.v1.CustomApiAdminService/RevokeAdminCustomApi": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RevokeAdminCustomApi",
+                        service_name="kokoro.platform.v1.CustomApiAdminService",
+                        input=RevokeAdminCustomApiRequest,
+                        output=RevokeAdminCustomApiResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.revoke_admin_custom_api,
+                ),
+                "/kokoro.platform.v1.CustomApiAdminService/ListAdminCustomApiAuditEvents": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListAdminCustomApiAuditEvents",
+                        service_name="kokoro.platform.v1.CustomApiAdminService",
+                        input=ListAdminCustomApiAuditEventsRequest,
+                        output=ListAdminCustomApiAuditEventsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_admin_custom_api_audit_events,
+                ),
+            },
+            interceptors=interceptors,
+            read_max_bytes=read_max_bytes,
+            compressions=compressions,
+            codecs=codecs,
+        )
+
+    @property
+    def path(self) -> str:
+        """Returns the URL path to mount the application to when serving multiple applications."""
+        return "/kokoro.platform.v1.CustomApiAdminService"
+
+
+class CustomApiAdminServiceClient(ConnectClient):
+    async def list_admin_custom_apis(
+        self,
+        request: ListAdminCustomApisRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListAdminCustomApisResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListAdminCustomApis",
+                service_name="kokoro.platform.v1.CustomApiAdminService",
+                input=ListAdminCustomApisRequest,
+                output=ListAdminCustomApisResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_admin_custom_api(
+        self,
+        request: GetAdminCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> GetAdminCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetAdminCustomApi",
+                service_name="kokoro.platform.v1.CustomApiAdminService",
+                input=GetAdminCustomApiRequest,
+                output=GetAdminCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def quarantine_admin_custom_api(
+        self,
+        request: QuarantineAdminCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> QuarantineAdminCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="QuarantineAdminCustomApi",
+                service_name="kokoro.platform.v1.CustomApiAdminService",
+                input=QuarantineAdminCustomApiRequest,
+                output=QuarantineAdminCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def restore_admin_custom_api(
+        self,
+        request: RestoreAdminCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RestoreAdminCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RestoreAdminCustomApi",
+                service_name="kokoro.platform.v1.CustomApiAdminService",
+                input=RestoreAdminCustomApiRequest,
+                output=RestoreAdminCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def revoke_admin_custom_api(
+        self,
+        request: RevokeAdminCustomApiRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RevokeAdminCustomApiResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RevokeAdminCustomApi",
+                service_name="kokoro.platform.v1.CustomApiAdminService",
+                input=RevokeAdminCustomApiRequest,
+                output=RevokeAdminCustomApiResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def list_admin_custom_api_audit_events(
+        self,
+        request: ListAdminCustomApiAuditEventsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListAdminCustomApiAuditEventsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListAdminCustomApiAuditEvents",
+                service_name="kokoro.platform.v1.CustomApiAdminService",
+                input=ListAdminCustomApiAuditEventsRequest,
+                output=ListAdminCustomApiAuditEventsResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

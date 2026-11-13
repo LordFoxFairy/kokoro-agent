@@ -1329,6 +1329,7 @@ message PersonalCustomApi {
   google.protobuf.Timestamp updated_at = 6;
   repeated kokoro.platform.v1.CustomApiEnvironmentDescriptor environment = 7;
   kokoro.platform.v1.PersonalMcpIconBinding icon = 8;
+  string governance_status = 9;
 }
 message CreatePersonalCustomApiRequest {
   reserved 100;
@@ -2546,4 +2547,100 @@ message ReauthorizePersonalMcpServerResponse {
   kokoro.platform.v1.PersonalMcpServer server = 1;
   kokoro.platform.v1.PersonalMcpConnector connector = 2;
   bool replayed = 3;
+}
+
+// B13 Custom API governance: tenant-scoped safe administration, never personal secret access.
+message AdminCustomApiProfile {
+  kokoro.platform.v1.CustomApiProfileId profile_id = 1;
+  string owner_user_id = 2;
+  string name = 3;
+  string governance_status = 4;
+  uint64 state_version = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+message CustomApiAdminAck {
+  kokoro.platform.v1.CustomApiProfileId profile_id = 1;
+  string owner_user_id = 2;
+  string governance_status = 3;
+  uint64 state_version = 4;
+  string audit_ref = 5;
+  bool replayed = 6;
+}
+message CustomApiAdminAuditEvent {
+  string audit_ref = 1;
+  kokoro.platform.v1.CustomApiProfileId profile_id = 2;
+  string owner_user_id = 3;
+  string actor_id = 4;
+  string action = 5;
+  string from_status = 6;
+  string to_status = 7;
+  uint64 from_version = 8;
+  optional uint64 to_version = 9;
+  string command_id = 10;
+  string request_id = 11;
+  string reason_code = 12;
+  google.protobuf.Timestamp occurred_at = 13;
+}
+message ListAdminCustomApisRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.PageRequest page = 2;
+  optional string owner_user_id = 3;
+  optional string governance_status = 4;
+}
+message ListAdminCustomApisResponse { repeated kokoro.platform.v1.AdminCustomApiProfile profiles = 1; kokoro.common.v1.PageResult page = 2; }
+message GetAdminCustomApiRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.CustomApiProfileId profile_id = 2;
+}
+message GetAdminCustomApiResponse { kokoro.platform.v1.AdminCustomApiProfile profile = 1; }
+message QuarantineAdminCustomApiRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.CustomApiProfileId profile_id = 3;
+  uint64 expected_state_version = 4;
+  string reason_code = 5;
+}
+message QuarantineAdminCustomApiResponse { kokoro.platform.v1.CustomApiAdminAck ack = 1; }
+message RestoreAdminCustomApiRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.CustomApiProfileId profile_id = 3;
+  uint64 expected_state_version = 4;
+  string reason_code = 5;
+}
+message RestoreAdminCustomApiResponse { kokoro.platform.v1.CustomApiAdminAck ack = 1; }
+message RevokeAdminCustomApiRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.common.v1.CommandIdentity command = 2;
+  kokoro.platform.v1.CustomApiProfileId profile_id = 3;
+  uint64 expected_state_version = 4;
+  string reason_code = 5;
+}
+message RevokeAdminCustomApiResponse { kokoro.platform.v1.CustomApiAdminAck ack = 1; }
+message ListAdminCustomApiAuditEventsRequest {
+  reserved 100;
+  reserved "tenant_id", "actor_id", "subject_id", "owner_scope", "execution_proof", "attestation";
+  string request_id = 1;
+  kokoro.platform.v1.CustomApiProfileId profile_id = 2;
+  kokoro.common.v1.PageRequest page = 3;
+}
+message ListAdminCustomApiAuditEventsResponse { repeated kokoro.platform.v1.CustomApiAdminAuditEvent events = 1; kokoro.common.v1.PageResult page = 2; }
+service CustomApiAdminService {
+  rpc ListAdminCustomApis(kokoro.platform.v1.ListAdminCustomApisRequest) returns (kokoro.platform.v1.ListAdminCustomApisResponse);
+  rpc GetAdminCustomApi(kokoro.platform.v1.GetAdminCustomApiRequest) returns (kokoro.platform.v1.GetAdminCustomApiResponse);
+  rpc QuarantineAdminCustomApi(kokoro.platform.v1.QuarantineAdminCustomApiRequest) returns (kokoro.platform.v1.QuarantineAdminCustomApiResponse);
+  rpc RestoreAdminCustomApi(kokoro.platform.v1.RestoreAdminCustomApiRequest) returns (kokoro.platform.v1.RestoreAdminCustomApiResponse);
+  rpc RevokeAdminCustomApi(kokoro.platform.v1.RevokeAdminCustomApiRequest) returns (kokoro.platform.v1.RevokeAdminCustomApiResponse);
+  rpc ListAdminCustomApiAuditEvents(kokoro.platform.v1.ListAdminCustomApiAuditEventsRequest) returns (kokoro.platform.v1.ListAdminCustomApiAuditEventsResponse);
 }

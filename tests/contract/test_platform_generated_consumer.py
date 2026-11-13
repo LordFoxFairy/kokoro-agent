@@ -14,7 +14,7 @@ ROOT = Path(__file__).parents[2]
 PIN_PATH = ROOT / "contract" / "platform" / "v1" / "provenance.json"
 EXPECTED_SOURCE_DIGESTS = {
     "contract/platform/v1/proto/kokoro/common/v1/common.proto": "65025b86a89119954bfbc7ad8eb89d59109ae7f390db5ee1a68f016eefa7da08",
-    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "7bc9253cd91a03f20e263a79be7183436497cc205d321e704e3c2338cdc8fe9c",
+    "contract/platform/v1/proto/kokoro/platform/v1/platform_runtime.proto": "c895b7f7b727f88e171b954c1d2bf932b4f7065a827ff0f892a7c6fd977b8f02",
     "contract/platform/v1/proto/kokoro/platform/v1/mcp_runtime.proto": "245ab6b081bf91207caf1d2ea51b453fafea6fbc07c040befbd06937ef9489d7",
 }
 
@@ -140,7 +140,7 @@ EXPECTED_RPC_SHAPES = {
 
 def test_platform_vendor_inputs_match_the_pinned_owner_digests() -> None:
     pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
-    assert pin["owner_commit"] == "573a8f00a92991ae1e6eee6feb238e0132f71f50"
+    assert pin["owner_commit"] == "efe18a1f697f3ff2189e342e40ffed581bedda2b"
     assert {
         source["path"]: source["sha256"] for source in pin["sources"]
     } == EXPECTED_SOURCE_DIGESTS

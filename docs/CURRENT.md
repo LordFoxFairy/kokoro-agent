@@ -1,3 +1,21 @@
+## 2026-11-13 装配期生命周期修复已发行并完成真实取消主路径
+
+`b61234b90fcba02a168cd10f6d6665d6c6ea4d43` 已推原 PR #49。主控仅受控重载正式 Agent HTTP／Worker，原 PG／Redis／卷不变；下方“源码候选”是前阶段事实。最终 test_main 9 PASS；相关 worker／execution supervisor／workspace archive 191 PASS、5 integration 未选，完整 Ruff／Pyright 0 错误与 wheel／sdist 通过、独审 CLEAR；未重复全默认或模型成功链。
+
+正常浏览器的新 QA Run 在 Docker 装配等待期间点击 Stop，原 run.cancel 命令 succeeded，175ms 后 terminal cancelled；model attempt 0、sandbox 尚未绑定，唯一 run.completed(cancelled)，无 run.failed。硬刷新恢复 Stopped。此前在活跃 Run 期间修改源导致 StaticRecipeIncompatible 的失败原样保留，不把旧 admitted Stop 标为取消成功，也不削弱配方校验。
+
+迟到物理构造随后已不再有该 Worker 的 Docker 子进程；daemon version 仍 5 秒超时，未因此声称容器不存在或共享 Docker 已恢复。未重启共享 VM／清卷；原两笔财务 unknown 保持。完整共享项目成功执行／安全产物仍待，Goal active。
+
+## 2026-11-13 · Task B 装配期租约与既有取消交付（源码候选，未重载）
+
+真实 Docker 装配可能超过现 Run lease，而初次／reclaim 构建尚未登记为运行 task，旧 heartbeat 不续该窗口。现 `_build_owned` 以原 heartbeat 间隔分段等待 ready，只续其捕获的 lease；失去权限即放弃领取，原 manager 继续拥有物理构建与晚资源清理。初次及恢复入口在装配前复用原 control listener；终态／接管后的晚 handle 不进入 native 恢复或 graph，不增终态、不借后继 generation。未改 Docker 120 秒预算、TTL、资金、wire 或 Schema。
+
+四个新增纯用例先 RED 后 GREEN，覆盖初次／reclaim 续租、装配期原 control cancel、旧 fence 与晚资源一次清理。现 worker／supervisor／workspace-owned cleanup focused 为191 PASS／5 integration deselected；原未按标记选择时5项因缺 MinIO 输入 setup ERROR 保留，不取正常资源补跑。相关 Ruff 与全 Pyright 通过；后继仅把 initial／resume listener 移到原 emitter attach 后、外部装配前，防止缓存 miss 的并发创建窗口，最终定向复验另列主控收据。
+
+正常旧 Run 已于 2026-11-13 18:18:30 UTC 因本次 writer 改变磁盘三源码触发原 `StaticRecipeIncompatible` 配方守卫，终态 `contract_incompatible`、generation7、modelAttempt0；原 cancel 仍 admitted，不是取消成功。本片未改配方守卫，主控后继须绑定冻结版本验证，不把该终态冒真实 Docker／模型恢复。
+
+既有同一 control stream 正在串行处理 resume 时，后续尚未交付的 cancel 仍需等该次装配结束；本片不改控制应用调度、不宣称所有阶段即时取消。物理构造取消不等于线程停止，shutdown 仍须等待 manager 与清理真实 settle。
+
 ## 2026-11-12 · Task B Platform发布pin精确配对
 
 顶层Platform owner从24094960配对到候选573a8f00；仅provenance和对应常量／断言共4行，四Proto与生成物字节不变，独立execution-v4／package／runtime／Custom API历史锚全部保留。无wire、Schema、执行配方或认证变化。

@@ -87,6 +87,9 @@ class SupervisorExecutionMixin(SupervisorContext):
     ) -> None:
         try:
             emitter = await self._emitter(bus, request.run_id, lease)
+            # Attach the single cached emitter before control can use it, but
+            # do not postpone durable cancel delivery behind slow construction.
+            self._ensure_control_listener(bus, request.run_id)
             built = await self._build_owned(
                 request,
                 lease,

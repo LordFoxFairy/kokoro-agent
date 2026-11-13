@@ -1,3 +1,9 @@
+## 2026-11-13 · 既有装配 manager 的 lease／control 窗口窄修
+
+`_build_owned` 等待既有 ready future 时使用原 heartbeat 间隔，`asyncio.wait` 不取消 builder；首次、reclaim 与 resume 都只续捕获的 Run／lease，不从全局缓存借后继 generation。续租失败或本地权限改变则放弃领取，原 manager 继续等待物理结果并清理晚 handle；成功结果在交给调用者前重核原 fence，避免终态／接管后的 native 恢复和 graph。原运行 task 的 heartbeat、terminal CAS、资源 transfer 与 shutdown drain 语义保持。
+
+初次 Run 及恢复入口在原 emitter attach 后、外部装配前幂等建立原 per-run control listener，避免 emitter 缓存 miss 的并发创建，同时供已有 admitted cancel 正常交付及原子终态；不新增监听器、队列、协议、超时框架或资源 owner。同一 listener 串行处理 resume 后的后续 cancel 调度不在此片扩写，原装配预算与物理 settlement 保障保持。
+
 ## B10 · Project shared Conversation 执行上下文（已裁决，实施中）
 
 Agent HTTP8.18 仅新增可选私有 `shared_conversation_context`；presence 即 shared 模式，不从 Project ID 推断分享。

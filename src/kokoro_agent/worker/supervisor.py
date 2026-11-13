@@ -280,8 +280,21 @@ class RunSupervisor(
 
         task.add_done_callback(settle_manager)
         try:
-            handle, error = await asyncio.shield(ready)
-        except asyncio.CancelledError:
+            # Reclaim and resume can themselves be awaited by the heartbeat
+            # scanner. Keep this constructor's captured generation alive here,
+            # without cancelling the physical builder on a heartbeat timeout.
+            while not ready.done():
+                completed, _ = await asyncio.wait((ready,), timeout=self._heartbeat_s)
+                if completed:
+                    break
+                if self._leases.get(request.run_id) != lease:
+                    raise RuntimeError("agent assembly ownership lost")
+                if not await self._run_repository.renew(request.run_id, lease):
+                    self._release_local_ownership(request.run_id, lease)
+                    raise RuntimeError("agent assembly lease superseded")
+            handle, error = ready.result()
+        except BaseException:
+            # The manager still owns the builder and any late returned resource.
             decision.set_result(False)
             raise
         if error is not None:
@@ -292,6 +305,14 @@ class RunSupervisor(
             raise RuntimeError("agent assembly completed without a handle")
         self._assembly_handles[id(handle)] = task
         decision.set_result(True)
+        try:
+            if self._leases.get(
+                request.run_id
+            ) != lease or not await self._guarded_entry_gate(request.run_id, lease):
+                raise RuntimeError("agent assembly lease superseded")
+        except BaseException as primary:
+            await self._close_handle_after_primary(handle, primary)
+            raise
         return handle
 
     async def serve(self, bus: StreamProtocol) -> None:

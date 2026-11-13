@@ -176,6 +176,59 @@ class PersonalContext(PersonalMaterialModel):
         return value
 
 
+SHARED_CONTEXT_MAX_BYTES = 256 * 1024
+
+
+class SharedConversationMessage(PersonalMaterialModel):
+    message_id: NonEmptyStr
+    sequence: Annotated[str, StringConstraints(pattern=r"^[1-9][0-9]{0,18}$")]
+    role: Literal["user", "assistant"]
+    content: Annotated[str, StringConstraints(max_length=SHARED_CONTEXT_MAX_BYTES)] = (
+        Field(repr=False)
+    )
+
+    @field_validator("sequence")
+    @classmethod
+    def _sequence(cls, value: str) -> str:
+        if (
+            re.fullmatch(r"[1-9][0-9]{0,18}", value) is None
+            or int(value) > (1 << 63) - 1
+        ):
+            raise ValueError("invalid shared history sequence")
+        return value
+
+
+_SHARED_MESSAGES: TypeAdapter[
+    list[SharedConversationMessage] | tuple[SharedConversationMessage, ...]
+] = TypeAdapter(list[SharedConversationMessage] | tuple[SharedConversationMessage, ...])
+
+
+class SharedConversationContext(PersonalMaterialModel):
+    project_ref: Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    conversation_id: NonEmptyStr
+    messages: tuple[SharedConversationMessage, ...] = Field(max_length=128, repr=False)
+    has_earlier_messages: bool
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _messages(cls, value: object) -> tuple[SharedConversationMessage, ...]:
+        return tuple(_SHARED_MESSAGES.validate_python(value, strict=True))
+
+    @model_validator(mode="after")
+    def _history(self) -> SharedConversationContext:
+        if len({message.message_id for message in self.messages}) != len(self.messages):
+            raise ValueError("duplicate shared history message")
+        sequences = [int(message.sequence) for message in self.messages]
+        if any(left >= right for left, right in zip(sequences, sequences[1:])):
+            raise ValueError("shared history sequence is not increasing")
+        if (
+            sum(len(message.content.encode("utf-8")) for message in self.messages)
+            > SHARED_CONTEXT_MAX_BYTES
+        ):
+            raise ValueError("shared history exceeds byte limit")
+        return self
+
+
 class CustomApiProfileSelection(StrictModel):
     """Safe exact Platform intent, never descriptions, credentials or authority."""
 
@@ -412,10 +465,36 @@ class RunRequest(StrictModel):
         default=None, exclude_if=lambda value: value is None, repr=False
     )
 
+    shared_conversation_context: SharedConversationContext | None = Field(
+        default=None, exclude_if=lambda value: value is None, repr=False
+    )
+
+    @field_validator("shared_conversation_context", mode="before")
+    @classmethod
+    def _shared_context_present(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("shared context must be omitted or an object")
+        return value
+
+    @model_validator(mode="after")
+    def _shared_context_scope(self) -> RunRequest:
+        context = self.shared_conversation_context
+        identity = self.execution_identity
+        if context is not None and (
+            self.feature_key != "chat"
+            or identity.actor.kind != "user"
+            or identity.subject != identity.actor
+            or context.project_ref != self.project_ref
+            or context.conversation_id != self.session_id
+        ):
+            raise ValueError("shared history differs from trusted Project chat")
+        return self
+
     @property
     def has_private_prompt_material(self) -> bool:
         return (
-            self.personal_context is not None
+            self.shared_conversation_context is not None
+            or self.personal_context is not None
             or self.project_instruction is not None
             or bool(self.selected_resource_refs)
         )

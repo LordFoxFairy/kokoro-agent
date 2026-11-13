@@ -45,6 +45,7 @@ from kokoro_agent.domain.run.scope import runtime_namespace
 from kokoro_agent.protocol.control import (
     CustomApiProfileSelection,
     PersonalContext,
+    SharedConversationContext,
     SelectedResourceRef,
     control_request_digest,
 )
@@ -84,6 +85,9 @@ class LaunchBody(BaseModel):
     requested_model_label: str | None = None
     trace: dict[str, Any] | None = None
     personal_context: PersonalContext | None = Field(default=None, repr=False)
+    shared_conversation_context: SharedConversationContext | None = Field(
+        default=None, repr=False
+    )
     project_instruction: str | None = Field(default=None, repr=False)
     selected_mcp_connection_ids: list[str] = Field(default_factory=list)
     selected_custom_api_profiles: list[CustomApiProfileSelection] = Field(
@@ -126,6 +130,11 @@ def _parse_launch(
 ) -> RunRequest:
     try:
         launch = LaunchBody.model_validate(dict(body))
+        if (
+            "shared_conversation_context" in body
+            and launch.shared_conversation_context is None
+        ):
+            raise ValueError("shared context must be omitted or an object")
         if launch.project_instruction is None and "project_instruction" in body:
             raise ValueError("project instruction must be omitted or text")
         return RunRequest(
@@ -144,6 +153,11 @@ def _parse_launch(
             requested_model_label=launch.requested_model_label,
             trace=launch.trace,
             personal_context=launch.personal_context,
+            **(
+                {"shared_conversation_context": launch.shared_conversation_context}
+                if launch.shared_conversation_context is not None
+                else {}
+            ),
             project_instruction=launch.project_instruction,
         )
     except (ValidationError, TypeError, ValueError) as error:

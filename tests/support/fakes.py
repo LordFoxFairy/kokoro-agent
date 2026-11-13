@@ -1253,6 +1253,7 @@ class FakeRunRepository:
             ):
                 payload = RunCompletedPayload(
                     status="completed",
+                    final_segment_id=payload.final_segment_id,
                     token_usage=(
                         TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
                         if any(totals)
@@ -1344,6 +1345,7 @@ class FakeRunRepository:
             ):
                 payload = RunCompletedPayload(
                     status="completed",
+                    final_segment_id=payload.final_segment_id,
                     token_usage=(
                         TokenUsage(input_tokens=totals[0], output_tokens=totals[1])
                         if any(totals)

@@ -595,6 +595,7 @@ def failure_model_bytes(
         "8.14.0",
         "8.15.0",
         "8.16.0",
+        "8.17.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(
@@ -849,7 +850,7 @@ def validate_decoded_chat_payload(
     only declared profiles; unknown/missing bindings fail closed.
     """
     version = _object(document.get("info"), source="info").get("version")
-    if version in {"8.16.0", HTTP_CONTRACT_VERSION}:
+    if version in {"8.16.0", "8.17.0", HTTP_CONTRACT_VERSION}:
         profiles = _CURRENT_DECODED_PROFILES
     elif version in {"8.8.0", "8.9.0", "8.10.0", "8.11.0", "8.14.0", "8.15.0"}:
         profiles = _DECODED_PROFILES_WITH_TERMINAL
@@ -1740,11 +1741,87 @@ _FINAL_ANSWER_RESOURCE_REFS_SCHEMA = {
 }
 
 
-def http816_workspace_output_parent_bytes(document: dict[str, object]) -> bytes:
-    """Remove only the private RunDisplay workspace fact and verify issued HTTP8.16."""
+_SHARED_CONVERSATION_CONTEXT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["project_ref", "conversation_id", "messages", "has_earlier_messages"],
+    "properties": {
+        "project_ref": {"type": "string", "minLength": 1, "maxLength": 255},
+        "conversation_id": {"type": "string", "minLength": 1},
+        "messages": {
+            "type": "array",
+            "maxItems": 128,
+            "x-kokoro-unique-by": "message_id",
+            "x-kokoro-order-by": "sequence",
+            "x-kokoro-content-utf8-max-bytes": 262144,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["message_id", "sequence", "role", "content"],
+                "properties": {
+                    "message_id": {"type": "string", "minLength": 1},
+                    "sequence": {
+                        "type": "string",
+                        "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)(?![\\s\\S])",
+                    },
+                    "role": {"type": "string", "enum": ["user", "assistant"]},
+                    "content": {
+                        "type": "string",
+                        "pattern": "^[^\\u0000\\uD800-\\uDFFF]*(?![\\s\\S])",
+                        "maxLength": 262144,
+                    },
+                },
+            },
+        },
+        "has_earlier_messages": {"type": "boolean"},
+    },
+    "description": "Private BFF-authorized whole-message suffix for this Project Conversation. Presence selects isolated shared Run checkpoint/workspace; actor and subject must be the current same user. Scope equals launch project_ref/session_id. Message sequence is strictly increasing positive i64 decimal, IDs unique. Assistant text is only BFF-confirmed FINAL; no tool, peer reasoning, composer or historical personal material. Total content UTF-8 bytes <=262144; has_earlier_messages explicitly marks omitted earlier whole messages. Agent never truncates this frozen context. Not tool authority; omission preserves existing request bytes and behavior.",
+}
+
+
+def http817_shared_context_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the shared context child and prove every issued HTTP8.17 byte."""
     parent = copy.deepcopy(document)
     info = _object(parent.get("info"), source="info")
-    if info.get("version") != HTTP_CONTRACT_VERSION:
+    if info.get("version") != "8.18.0":
+        raise ValueError("shared context requires Agent HTTP8.18")
+    components = _object(parent.get("components"), source="components")
+    schemas = _object(components.get("schemas"), source="schemas")
+    launch = _object(schemas.get("LaunchRequest"), source="LaunchRequest")
+    props = _object(launch.get("properties"), source="launch properties")
+    if (
+        props.pop("shared_conversation_context", None)
+        != _SHARED_CONVERSATION_CONTEXT_SCHEMA
+    ):
+        raise ValueError("shared context schema differs")
+    launch["properties"] = props
+    schemas["LaunchRequest"] = launch
+    components["schemas"] = schemas
+    parent["components"] = components
+    info["version"] = "8.17.0"
+    parent["info"] = info
+    raw = (json.dumps(parent, indent=2, ensure_ascii=False) + "\n").encode()
+    if (
+        hashlib.sha256(raw).hexdigest()
+        != "c471094369efa80f1182e41c67ef8150835a4544c283fd8d2d4e689707a51aad"
+    ):
+        raise ValueError("complete HTTP8.17 shared context parent differs")
+    return raw
+
+
+def http816_workspace_output_parent_bytes(document: dict[str, object]) -> bytes:
+    """Remove only the private RunDisplay workspace fact and verify issued HTTP8.16."""
+    if (
+        _object(document.get("info"), source="info").get("version")
+        == HTTP_CONTRACT_VERSION
+    ):
+        document = _object(
+            json.loads(http817_shared_context_parent_bytes(document)),
+            source="HTTP8.17 shared context parent",
+        )
+    parent = copy.deepcopy(document)
+    info = _object(parent.get("info"), source="info")
+    if info.get("version") != "8.17.0":
         raise ValueError("workspace output requires Agent HTTP8.17")
     components = _object(parent.get("components"), source="components")
     schemas = _object(components.get("schemas"), source="schemas")
@@ -1797,10 +1874,10 @@ def http816_workspace_output_parent_bytes(document: dict[str, object]) -> bytes:
 
 def http815_delivery_display_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the decoded Delivery extension and prove every issued 8.15 byte."""
-    if (
-        _object(document.get("info"), source="info").get("version")
-        == HTTP_CONTRACT_VERSION
-    ):
+    if _object(document.get("info"), source="info").get("version") in {
+        "8.17.0",
+        HTTP_CONTRACT_VERSION,
+    }:
         document = _object(
             json.loads(http816_workspace_output_parent_bytes(document)),
             source="HTTP8.16 workspace output parent",
@@ -1858,6 +1935,7 @@ def http814_final_answer_parent_bytes(document: dict[str, object]) -> bytes:
     """Remove only the frozen final answer branch and prove every issued 8.14 byte."""
     if _object(document.get("info"), source="info").get("version") in {
         "8.16.0",
+        "8.17.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(
@@ -1923,6 +2001,7 @@ def http812_resource_refs_parent_bytes(document: dict[str, object]) -> bytes:
     if _object(document.get("info"), source="info").get("version") in {
         "8.15.0",
         "8.16.0",
+        "8.17.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(
@@ -1966,6 +2045,7 @@ def http811_project_instruction_parent_bytes(document: dict[str, object]) -> byt
         "8.14.0",
         "8.15.0",
         "8.16.0",
+        "8.17.0",
         HTTP_CONTRACT_VERSION,
     }:
         document = _object(

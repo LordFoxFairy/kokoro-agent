@@ -1228,19 +1228,35 @@ async def test_heartbeat_keeps_queued_outbox_recoverable_on_publish_failure() ->
 
 
 # ⑨ 跨 supervisor（模拟另一 pod / 重启）：共享 store + 总线续接，index 不回卷。
-async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
+@pytest.mark.parametrize("shared", [False, True])
+async def test_resume_on_fresh_supervisor_via_shared_store(shared: bool) -> None:
     store = FakeRunRepository()
     agent = FakeAgent(run=_interrupt_run(), state=_PENDING_STATE)
     bus = FakeBus()
     sup_a, _ = _supervisor(
         agent, store=store, native_resume={"decisions": [{"type": "approve"}]}
     )
-    await sup_a.dispatch(bus, request("rx2"))
+    launched = request("rx2")
+    if shared:
+        body = launched.model_dump(mode="json")
+        body["project_ref"] = "project"
+        body["execution_identity"]["actor"] = body["execution_identity"]["subject"]
+        body["shared_conversation_context"] = {
+            "project_ref": "project",
+            "conversation_id": "s1",
+            "messages": [],
+            "has_earlier_messages": False,
+        }
+        launched = RunRequest.model_validate(body)
+    await sup_a.dispatch(bus, launched)
     await _drain(sup_a)
 
     sup_b, _ = _supervisor(
         agent, store=store, native_resume={"decisions": [{"type": "approve"}]}
     )
+    assert agent.seen_config.get("configurable") == {
+        "thread_id": RunScope.of(launched).scoped_thread_id
+    }
     agent.seen_payloads.clear()
     resume = _inbound(
         {
@@ -1255,6 +1271,9 @@ async def test_resume_on_fresh_supervisor_via_shared_store() -> None:
     await sup_b.dispatch(bus, resume)
     await _drain(sup_b)
 
+    assert agent.seen_config.get("configurable") == {
+        "thread_id": RunScope.of(launched).scoped_thread_id
+    }
     assert len(agent.seen_payloads) == 1
     assert isinstance(agent.seen_payloads[0], Command)
     indexes = [e.index for e in bus.run_events("rx2")]

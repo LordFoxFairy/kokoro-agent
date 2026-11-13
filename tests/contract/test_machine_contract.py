@@ -41,7 +41,7 @@ def test_agent_http_contract_is_versioned_and_owned() -> None:
     document = _document()
     assert isinstance(document["openapi"], str)
     assert document["openapi"].startswith("3.")
-    assert _object(document["info"])["version"] == "8.17.0"
+    assert _object(document["info"])["version"] == "8.18.0"
     assert document["x-kokoro-owner"] == "kokoro-agent"
     assert document["x-kokoro-visibility"] == "internal-owner"
     assert CONTRACT_README.is_file()
@@ -569,7 +569,7 @@ def test_current_http_and_proof2_versions_are_explicit() -> None:
         json.loads((ROOT / "contract/execution-proof/v2/schema.json").read_text())
     )
     assert proof["x-kokoro-contract-version"] == "2.0.0"
-    assert _object(document["info"])["version"] == "8.17.0"
+    assert _object(document["info"])["version"] == "8.18.0"
 
 
 def test_r95_safe_progress_has_exact_decoded_discriminators() -> None:
@@ -1344,7 +1344,7 @@ def test_canonical_resource_launch_preserves_complete_http813_parent() -> None:
     )
 
     document = _document()
-    assert _object(document["info"])["version"] == "8.17.0"
+    assert _object(document["info"])["version"] == "8.18.0"
     parent = http814_final_answer_parent_bytes(document)
     assert hashlib.sha256(parent).hexdigest() == (
         "6d33f1110e354570ec2977d18b4620ba7e44be9174e1d8d6ceeb7234b76be424"

@@ -32,10 +32,11 @@ from deepagents.backends.state import StateBackend
 from langchain_core.globals import get_debug, get_verbose
 from langchain_core.tracers.context import tracing_v2_callback_var
 from kokoro_agent.model.call_models import ModelCallInputInvalid
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from kokoro_agent.model.personal_context import (
     PersonalContextWindowMiddleware,
     append_personal_context,
+    append_shared_conversation_context,
     validate_personal_context_window,
 )
 from kokoro_agent.agents.subagents import build_subagent_bundle
@@ -256,6 +257,9 @@ async def build_deep_agent(
         )
 
     def system_material(prompt: str) -> str:
+        prompt = append_shared_conversation_context(
+            prompt, request.shared_conversation_context
+        )
         prompt = append_personal_context(prompt, request.personal_context)
         prompt += input_resource_prompt(request.selected_resource_refs)
         if request.project_instruction is None:
@@ -515,7 +519,12 @@ async def build_deep_agent(
         if private_material:
             # System material cannot be compacted. Reject it before even a summary can acquire funds.
             validate_personal_context_window(
-                [SystemMessage(content=system_prompt)],
+                [SystemMessage(content=system_prompt)]
+                + (
+                    [HumanMessage(content=request.input.content)]
+                    if request.shared_conversation_context is not None
+                    else []
+                ),
                 tools=toolset.tools,
                 context_window=route.context_window,
                 max_output_tokens=route.max_output_tokens,

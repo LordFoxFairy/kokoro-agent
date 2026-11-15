@@ -7,9 +7,14 @@ import re
 from typing import Any
 
 import psycopg
+from psycopg import sql
+from kokoro_agent.infrastructure.financial_close_schema import (
+    financial_close_ddl,
+    verify_financial_close_schema,
+)
 
 from kokoro_agent.distribution_assets import canonical_ddl_path, read_canonical_ddl
-from kokoro_agent.infrastructure.postgres import ensure_schema
+from kokoro_agent.infrastructure.postgres import ensure_schema, qualified
 
 RUN_CLAIMS_TABLE = "kokoro_agent_run"
 RUN_DISPATCHES_TABLE = "kokoro_agent_run_dispatch"
@@ -24,6 +29,7 @@ RUN_STEERS_TABLE = "kokoro_agent_run_steer"
 RUN_USAGE_SEGMENTS_TABLE = "kokoro_agent_run_usage_segment"
 MODEL_CALL_ATTEMPTS_TABLE = "kokoro_agent_model_call_attempt"
 MODEL_USAGE_EVIDENCE_TABLE = "kokoro_agent_model_usage_evidence"
+MODEL_FINANCIAL_CLOSE_TABLE = "kokoro_agent_model_financial_close"
 SANDBOX_CLEANUP_INTENTS_TABLE = "kokoro_agent_sandbox_cleanup_intent"
 TOOL_RESULTS_TABLE = "kokoro_agent_tool_result"
 TOOL_JOURNAL_TABLE = "kokoro_agent_tool_journal"
@@ -48,6 +54,7 @@ AGENT_TABLES = (
     RUN_USAGE_SEGMENTS_TABLE,
     MODEL_CALL_ATTEMPTS_TABLE,
     MODEL_USAGE_EVIDENCE_TABLE,
+    MODEL_FINANCIAL_CLOSE_TABLE,
     SANDBOX_CLEANUP_INTENTS_TABLE,
     TOOL_RESULTS_TABLE,
     TOOL_JOURNAL_TABLE,
@@ -111,7 +118,12 @@ async def apply_agent_schema(
             await dynamic_cursor.execute(schema_sql)
 
 
-async def verify_agent_schema(conn: psycopg.AsyncConnection[Any], schema: str) -> None:
+async def verify_agent_schema(
+    conn: psycopg.AsyncConnection[Any],
+    schema: str,
+    *,
+    financial_close_required: bool = True,
+) -> None:
     """Fail loudly when runtime starts against an incomplete deployment schema."""
 
     async with conn.cursor() as cur:
@@ -124,7 +136,10 @@ async def verify_agent_schema(conn: psycopg.AsyncConnection[Any], schema: str) -
             (schema,),
         )
         actual = {str(row["table_name"]) for row in await cur.fetchall()}
-    missing = sorted(set(AGENT_TABLES) - actual)
+    required = set(AGENT_TABLES)
+    if not financial_close_required:
+        required.remove(MODEL_FINANCIAL_CLOSE_TABLE)
+    missing = sorted(required - actual)
     if missing:
         raise SchemaNotReadyError(
             "Agent canonical schema is incomplete; missing tables: "
@@ -182,6 +197,11 @@ async def verify_agent_schema(conn: psycopg.AsyncConnection[Any], schema: str) -
 
     await _verify_interaction_schema(conn, schema)
     await _verify_model_evidence_schema(conn, schema)
+    if financial_close_required or MODEL_FINANCIAL_CLOSE_TABLE in actual:
+        try:
+            await verify_financial_close_schema(conn, schema)
+        except ValueError as error:
+            raise SchemaNotReadyError(str(error)) from None
 
 
 async def _verify_interaction_schema(
@@ -866,3 +886,35 @@ __all__ = [
     "canonical_schema_sql",
     "verify_agent_schema",
 ]
+
+
+async def expand_financial_close_schema(
+    conn: psycopg.AsyncConnection[Any], schema: str
+) -> None:
+    """Add only the approved table to a verified populated owner schema; drift stops."""
+    ddl = financial_close_ddl()  # Asset verification before SQL, including on replay.
+    qualified(
+        schema, MODEL_FINANCIAL_CLOSE_TABLE
+    )  # Validate schema identifier before dynamic search_path.
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute("SET LOCAL lock_timeout='2000ms'")
+            await cur.execute("SET LOCAL statement_timeout='4000ms'")
+            await cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                ("kokoro-agent:schema:" + schema,),
+            )
+            await verify_agent_schema(conn, schema, financial_close_required=False)
+            await cur.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema=%s AND table_name=%s",
+                (schema, MODEL_FINANCIAL_CLOSE_TABLE),
+            )
+            if await cur.fetchone() is None:
+                await cur.execute(
+                    sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(
+                        sql.Identifier(schema)
+                    )
+                )
+                dynamic: Any = cur
+                await dynamic.execute(ddl)
+            await verify_agent_schema(conn, schema)

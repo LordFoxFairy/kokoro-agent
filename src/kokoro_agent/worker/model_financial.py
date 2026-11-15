@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
-import json
 import logging
 import math
-import re
 from typing import Protocol
 
-from pydantic import SecretStr, TypeAdapter
+from pydantic import SecretStr
 
-from kokoro_agent.clients.model_budget import BffModelBudgetClient, ModelBudgetError
+from kokoro_agent.clients.model_budget import (
+    BffModelBudgetClient,
+    ModelAdmissionSecrets,
+)
 
 from dataclasses import dataclass
 from kokoro_agent.domain.run.models import LeasedRun
@@ -28,52 +29,6 @@ from kokoro_agent.execution.execution_proof_supplier import (
 )
 
 LOGGER = logging.getLogger(__name__)
-_SECRETS = TypeAdapter(dict[str, str])
-
-
-def _members(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    values: dict[str, object] = {}
-    for key, value in pairs:
-        if key in values:
-            raise ValueError
-        values[key] = value
-    return values
-
-
-class ModelAdmissionSecrets:
-    """An immutable env-only workload snapshot, not a user or model credential store."""
-
-    def __init__(self, value: SecretStr) -> None:
-        parsed: dict[str, str] | None = None
-        try:
-            raw = value.get_secret_value().encode("utf-8", errors="strict")
-            if not 1 <= len(raw) <= 65536:
-                raise ValueError
-            values = _SECRETS.validate_python(
-                json.loads(raw, object_pairs_hook=_members), strict=True
-            )
-            if not 1 <= len(values) <= 32 or len(set(values.values())) != len(values):
-                raise ValueError
-            for tenant, secret in values.items():
-                if not re.fullmatch(
-                    r"[^\s\x00-\x1f\x7f]{1,191}", tenant
-                ) or not re.fullmatch(r"[\x21-\x7e]{32,4096}", secret):
-                    raise ValueError
-            parsed = values
-        except (ValueError, TypeError, RecursionError):
-            pass
-        if parsed is None:
-            raise ValueError("BFF model billing credentials unavailable")
-        self._values = {tenant: SecretStr(secret) for tenant, secret in parsed.items()}
-
-    def __repr__(self) -> str:
-        return "ModelAdmissionSecrets(<redacted>)"
-
-    def __call__(self, tenant_id: str) -> SecretStr:
-        value = self._values.get(tenant_id)
-        if value is None:
-            raise ModelBudgetError("MODEL_BUDGET_CREDENTIAL_UNAVAILABLE")
-        return value
 
 
 @asynccontextmanager

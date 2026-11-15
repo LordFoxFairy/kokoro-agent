@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Kokoro BFF internal project execution binding
-  version: 1.3.0
+  version: 1.4.0
 paths:
   /internal/v1/model-admissions:
     post:
@@ -201,6 +201,117 @@ paths:
                 $ref: '#/components/schemas/AgentModelAdmissionError'
         '502':
           description: Invalid original receipt acknowledgement
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAdmissionError'
+        '503':
+          description: Dependency or shared deadline unavailable
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAdmissionError'
+  /internal/v1/model-admissions/close-unreserved:
+    post:
+      operationId: closeUnreservedAgentModelAdmission
+      summary: Permanently close the original unreserved budget command without settlement or usage inference
+      description: >-
+        Only an explicit Agent recovery operator may use this action after its durable eligibility checks. The original Idempotency-Key must
+        equal request_ref. Execution proof and retired consumption headers are forbidden. An unknown ACK is recovered only by replaying this
+        original command.
+      x-kokoro-owner: kokoro-bff
+      x-kokoro-visibility: internal
+      x-kokoro-stability: stable
+      x-kokoro-idempotency: permanent-billing-command-receipt
+      x-kokoro-permission: agent.model_admission_recovery
+      security:
+        - AgentModelAdmissionBearer: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: ^[!-~]+$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentModelUnreservedCloseRequest'
+      responses:
+        '200':
+          description: Original nonmonetary no-reservation closure
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelUnreservedCloseResponse'
+        '400':
+          description: Invalid closed request or original key mismatch
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAdmissionError'
+        '403':
+          description: Dedicated service or original payer denied
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAdmissionError'
+        '404':
+          description: Original submission not visible
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAdmissionError'
+        '409':
+          description: Original command conflict or reservation already exists
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAdmissionError'
+        '422':
+          description: Original command is ineligible for unreserved closure
+          headers:
+            x-request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAdmissionError'
+        '502':
+          description: Invalid owner closure acknowledgement
           headers:
             x-request-id:
               schema:
@@ -815,6 +926,135 @@ components:
           additionalProperties: false
       required:
         - error
+      additionalProperties: false
+    AgentModelUnreservedCloseRequest:
+      $schema: https://json-schema.org/draft/2020-12/schema
+      type: object
+      properties:
+        run_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        attempt_id:
+          type: string
+          allOf:
+            - pattern: >-
+                ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$
+            - pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?![\s\S])
+        request_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        attempt_binding_digest:
+          type: string
+          pattern: ^[0-9a-f]{64}$(?![\s\S])
+        planned_digest:
+          type: string
+          pattern: ^[0-9a-f]{64}$(?![\s\S])
+        final_request_digest:
+          type: string
+          pattern: ^[0-9a-f]{64}$(?![\s\S])
+        evidence_event_id:
+          type: string
+          format: uuid
+          pattern: >-
+            ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$
+        evidence_revision:
+          type: string
+          maxLength: 19
+          pattern: ^[1-9][0-9]*$(?![\s\S])
+          not:
+            pattern: >-
+              ^(?:9[3-9][0-9]{17}|92[3-9][0-9]{16}|922[4-9][0-9]{15}|9223[4-9][0-9]{14}|92233[8-9][0-9]{13}|922337[3-9][0-9]{12}|9223372[1-9][0-9]{11}|92233720[4-9][0-9]{10}|922337203[7-9][0-9]{9}|92233720369[0-9]{8}|92233720368[6-9][0-9]{7}|922337203685[5-9][0-9]{6}|9223372036854[8-9][0-9]{5}|92233720368547[8-9][0-9]{4}|922337203685477[6-9][0-9]{3}|92233720368547759[0-9]{2}|92233720368547758[1-9][0-9]{1}|922337203685477580[8-9])$(?![\s\S])
+        evidence_digest:
+          type: string
+          pattern: ^[0-9a-f]{64}$(?![\s\S])
+      required:
+        - run_id
+        - attempt_id
+        - request_ref
+        - attempt_binding_digest
+        - planned_digest
+        - final_request_digest
+        - evidence_event_id
+        - evidence_revision
+        - evidence_digest
+      additionalProperties: false
+    AgentModelUnreservedCloseResponse:
+      $schema: https://json-schema.org/draft/2020-12/schema
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            run_id:
+              type: string
+              minLength: 1
+              maxLength: 512
+            attempt_id:
+              type: string
+              allOf:
+                - pattern: >-
+                    ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$
+                - pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?![\s\S])
+            request_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            attempt_binding_digest:
+              type: string
+              pattern: ^[0-9a-f]{64}$(?![\s\S])
+            planned_digest:
+              type: string
+              pattern: ^[0-9a-f]{64}$(?![\s\S])
+            final_request_digest:
+              type: string
+              pattern: ^[0-9a-f]{64}$(?![\s\S])
+            evidence_event_id:
+              type: string
+              format: uuid
+              pattern: >-
+                ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$
+            evidence_revision:
+              type: string
+              maxLength: 19
+              pattern: ^[1-9][0-9]*$(?![\s\S])
+              not:
+                pattern: >-
+                  ^(?:9[3-9][0-9]{17}|92[3-9][0-9]{16}|922[4-9][0-9]{15}|9223[4-9][0-9]{14}|92233[8-9][0-9]{13}|922337[3-9][0-9]{12}|9223372[1-9][0-9]{11}|92233720[4-9][0-9]{10}|922337203[7-9][0-9]{9}|92233720369[0-9]{8}|92233720368[6-9][0-9]{7}|922337203685[5-9][0-9]{6}|9223372036854[8-9][0-9]{5}|92233720368547[8-9][0-9]{4}|922337203685477[6-9][0-9]{3}|92233720368547759[0-9]{2}|92233720368547758[1-9][0-9]{1}|922337203685477580[8-9])$(?![\s\S])
+            evidence_digest:
+              type: string
+              pattern: ^[0-9a-f]{64}$(?![\s\S])
+            closure_ref:
+              type: string
+              format: uuid
+              pattern: >-
+                ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$
+            status:
+              type: string
+              const: unreserved_closed
+            closed_at:
+              type: string
+              allOf:
+                - pattern: >-
+                    ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z))$
+                - pattern: Z$
+          required:
+            - run_id
+            - attempt_id
+            - request_ref
+            - attempt_binding_digest
+            - planned_digest
+            - final_request_digest
+            - evidence_event_id
+            - evidence_revision
+            - evidence_digest
+            - closure_ref
+            - status
+            - closed_at
+          additionalProperties: false
+      required:
+        - data
       additionalProperties: false
     AgentModelAdmissionRequest:
       $schema: https://json-schema.org/draft/2020-12/schema

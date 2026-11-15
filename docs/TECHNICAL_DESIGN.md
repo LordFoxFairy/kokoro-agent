@@ -1,3 +1,11 @@
+## 2026-11-15 原两笔无预占恢复的显式关闭
+
+沿 [ADR-005](ADR/ADR-005-unreserved-financial-close-expand.md)，只增加单目标 operator；不改变 worker 对其他 pending 的行为，不重派模型或请求资金操作。`application/model_financial_close.py` 装配既有 BFF model-admission client 和 owner repository；凭据解析从 worker 移至现 transport，由原 worker 同样复用，配置及语义不变。
+
+repository 前后使用 Run→Attempt 短事务复验 terminal、原 user actor=subject、sealed not_dispatched/requested_unknown、原 canonical evidence/head 和 dispatch/admission/ACK 空；网络在事务外。owner `unreserved_closed` 只证明 Billing 原预算已永久 fenced/无预占，evidence tuple 是精确关联，不是 Billing 对 usage 的认定。独立 append-only close 不改原 Run/Attempt/Evidence；同事实重放零写，旧 work 的 admission/ACK 写入被原 Attempt 锁串行拒绝。
+
+`next_work/latest_close` 严格解码关联，`list_pending` 先有界校验本切片关闭事实后排除对应 attempt，原 keyset 保持；close 损坏保留为 pending，由原逐条恢复报告冲突，不静默修复或阻塞其他候选。该窄审计表一次最多校验128条，超界明确停止而非无限扫描；本轮仅执行原批准两条。close 与 attempt/evidence 共同保留，不加入 Chat GC。公开 HTTP/proof2/usage2 不变；BFF1.4正式 pin/生成与实际两笔处置需分别完成，不能把本地源码/隔离测试称作正常资金闭环。
+
 ## 2026-11-13 · 既有装配 manager 的 lease／control 窗口窄修
 
 `_build_owned` 等待既有 ready future 时使用原 heartbeat 间隔，`asyncio.wait` 不取消 builder；首次、reclaim 与 resume 都只续捕获的 Run／lease，不从全局缓存借后继 generation。续租失败或本地权限改变则放弃领取，原 manager 继续等待物理结果并清理晚 handle；成功结果在交给调用者前重核原 fence，避免终态／接管后的 native 恢复和 graph。原运行 task 的 heartbeat、terminal CAS、资源 transfer 与 shutdown drain 语义保持。

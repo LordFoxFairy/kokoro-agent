@@ -8,8 +8,8 @@ from pathlib import Path
 from pydantic import TypeAdapter
 import yaml
 
-OWNER_COMMIT = "5a303f2003fabeb50376c7f7e1f66f0d163adebb"
-OWNER_SHA256 = "4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39"
+OWNER_COMMIT = "bfbaf3b24bfa7c339761facf97278f933b64e710"
+OWNER_SHA256 = "16ddcd287f9b1fa230bfdb216f4ce192205a1bda9d756c9ac8288c1ad37ac502"
 SOURCE = "contract/bff/internal-v1/openapi.yaml"
 GENERATED = "src/kokoro_agent/clients/bff_admission_generated.py"
 BFF_ADMISSION_AUDIT_FILES = (
@@ -22,13 +22,14 @@ _OBJECT = TypeAdapter(dict[str, object])
 _OBJECTS = TypeAdapter(list[dict[str, object]])
 _STRINGS = TypeAdapter(list[str])
 
-HEADER = '''"""Generated from the fixed BFF internal1.3 publication. Do not edit."""
+HEADER = '''"""Generated from the fixed BFF internal1.4 publication. Do not edit."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 import re
 from typing import Annotated, Literal, TypeAlias
+from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
@@ -37,13 +38,24 @@ SOURCE_SHA256 = "OWNER_SHA256"
 
 def _patterns(*patterns: str, forbidden: tuple[str, ...] = ()) -> Callable[[str], str]:
     def validate(value: str) -> str:
+        # Only the owner Z suffix assertion uses search; full-field patterns stay strict.
         if not all(
-            re.fullmatch(pattern, value, re.ASCII) for pattern in patterns
+            (
+                re.search(pattern, value, re.ASCII)
+                if pattern == "Z$"
+                else re.fullmatch(pattern, value, re.ASCII)
+            )
+            for pattern in patterns
         ) or any(re.search(pattern, value, re.ASCII) for pattern in forbidden):
             raise ValueError("invalid BFF budget field")
         return value
 
     return validate
+
+
+def _uuid(value: str) -> str:
+    UUID(value)
+    return value
 
 
 '''
@@ -119,6 +131,7 @@ class _ModelCompiler:
         patterns: list[str] = []
         forbidden: list[str] = []
         choices: list[str] | None = None
+        uuid_format = False
         lower, upper = 0, None
         for term in terms:
             if set(term) - {
@@ -129,8 +142,13 @@ class _ModelCompiler:
                 "not",
                 "enum",
                 "const",
+                "format",
             }:
                 raise ValueError("unsupported fixed BFF string constraint")
+            if "format" in term:
+                if term["format"] != "uuid":
+                    raise ValueError("unsupported fixed BFF string format")
+                uuid_format = True
             if "pattern" in term:
                 patterns.extend(
                     _STRINGS.validate_python([term["pattern"]], strict=True)
@@ -181,7 +199,13 @@ class _ModelCompiler:
                     "",
                 ]
             )
-        if not patterns and not forbidden and lower == 0 and upper is None:
+        if (
+            not patterns
+            and not forbidden
+            and not uuid_format
+            and lower == 0
+            and upper is None
+        ):
             return base
         alias = f"Field{self.counter}"
         self.counter += 1
@@ -208,6 +232,8 @@ class _ModelCompiler:
                     ]
                 )
             self.aliases.extend(["        ),", "    ),"])
+        if uuid_format:
+            self.aliases.append("    AfterValidator(_uuid),")
         self.aliases.extend(["]", "", ""])
         return alias
 
@@ -263,12 +289,16 @@ def bff_admission_model_bytes(raw: bytes) -> bytes:
     if hashlib.sha256(raw).hexdigest() != OWNER_SHA256:
         raise ValueError("BFF publication differs from fixed owner")
     doc = _OBJECT.validate_python(yaml.safe_load(raw), strict=True)
-    if _OBJECT.validate_python(doc["info"])["version"] != "1.3.0":
+    if _OBJECT.validate_python(doc["info"])["version"] != "1.4.0":
         raise ValueError("BFF internal version differs")
     paths = _OBJECT.validate_python(doc["paths"])
     for path, operation_id in (
         ("/internal/v1/model-admissions", "createAgentModelAdmission"),
         ("/internal/v1/model-admissions/recover", "recoverAgentModelAdmission"),
+        (
+            "/internal/v1/model-admissions/close-unreserved",
+            "closeUnreservedAgentModelAdmission",
+        ),
         (
             "/internal/v1/model-admissions/{admission_id}/settle",
             "settleAgentModelAdmission",
@@ -294,6 +324,8 @@ def bff_admission_model_bytes(raw: bytes) -> bytes:
         "AgentModelSettlementRequest",
         "AgentModelSettlementResponse",
         "AgentModelSettlementError",
+        "AgentModelUnreservedCloseRequest",
+        "AgentModelUnreservedCloseResponse",
     ):
         compiler.emit_class(_OBJECT.validate_python(schemas[name]), name)
     admission = _OBJECT.validate_python(schemas["AgentModelAdmissionResponse"])
@@ -327,13 +359,14 @@ def bff_admission_receipt() -> dict[str, object]:
     return {
         "owner": "kokoro-bff",
         "contract": "contract/openapi/internal/v1/openapi.yaml",
-        "version": "1.3.0",
+        "version": "1.4.0",
         "source_commit": OWNER_COMMIT,
         "sha256": OWNER_SHA256,
         "operations": [
             "POST /internal/v1/model-admissions",
             "POST /internal/v1/model-admissions/recover",
             "POST /internal/v1/model-admissions/{admission_id}/settle",
+            "POST /internal/v1/model-admissions/close-unreserved",
         ],
     }
 

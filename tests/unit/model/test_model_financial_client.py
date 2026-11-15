@@ -374,3 +374,128 @@ async def test_even_a_recover_miss_requires_bounded_successful_response_cleanup(
                 recover(c) if operation == "recover" else settle(c), timeout=1
             )
     assert len(calls) == 1
+
+
+def close_work():
+    from kokoro_agent.model.financial_close import (
+        ModelFinancialCloseCommand,
+        ModelFinancialCloseWork,
+    )
+    from kokoro_agent.model.financial_reconciliation import ModelFinancialWork
+
+    target = ModelFinancialCloseCommand(
+        tenant_id="tenant-1",
+        run_id=COMMAND.run_id,
+        attempt_id=ID,
+        evidence_event_id=ID,
+        evidence_revision="1",
+        evidence_digest="e" * 64,
+    )
+    return ModelFinancialCloseWork(
+        command=target,
+        actor_ref="user-1",
+        financial=ModelFinancialWork(
+            tenant_id="tenant-1",
+            budget=COMMAND,
+            evidence=ModelSettlementCommand(
+                run_id=COMMAND.run_id,
+                attempt_id=ID,
+                event_id=ID,
+                revision="1",
+                digest="e" * 64,
+            ),
+            admission_ref=None,
+        ),
+    )
+
+
+def close_ack() -> dict[str, dict[str, object]]:
+    data: dict[str, object] = asdict(COMMAND)
+    data.update(
+        evidence_event_id=ID,
+        evidence_revision="1",
+        evidence_digest="e" * 64,
+        closure_ref=ADMISSION,
+        status="unreserved_closed",
+        closed_at="2026-11-15T00:00:00.000Z",
+    )
+    return {"data": data}
+
+
+async def test_explicit_close_transport_uses_original_binding_key_and_no_execution_proof() -> (
+    None
+):
+    calls: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        assert req.url.path == "/internal/v1/model-admissions/close-unreserved"
+        assert json.loads(req.content) == asdict(COMMAND) | dict(
+            evidence_event_id=ID, evidence_revision="1", evidence_digest="e" * 64
+        )
+        assert req.headers["idempotency-key"] == COMMAND.request_ref
+        assert req.headers["authorization"] == "Bearer " + "s" * 32
+        assert not any(
+            key in req.headers
+            for key in (
+                "cookie",
+                "x-billing-execution-proof",
+                "x-billing-consumption-token",
+            )
+        )
+        return httpx.Response(200, json=close_ack(), headers=headers())
+
+    async with BffModelBudgetClient(
+        "http://bff.test",
+        lambda _: SecretStr("s" * 32),
+        transport=httpx.MockTransport(handler),
+    ) as c:
+        result = await c.close_unreserved(
+            tenant_id="tenant-1",
+            command=close_work(),
+            key=COMMAND.request_ref,
+            request_id="finance-test",
+        )
+    assert (
+        result.status == "unreserved_closed"
+        and result.closure_ref == ADMISSION
+        and len(calls) == 1
+    )
+
+
+@pytest.mark.parametrize(
+    "case", ["404", "digest", "run", "admission", "unknown", "bad_key"]
+)
+async def test_explicit_close_never_accepts_miss_grant_or_mismatched_receipt(
+    case: str,
+) -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req)
+        if case == "404":
+            return httpx.Response(404, json=error(), headers=headers())
+        if case == "admission":
+            return httpx.Response(200, json=grant(), headers=headers())
+        raw = close_ack()
+        if case == "digest":
+            raw["data"]["evidence_digest"] = "0" * 64
+        elif case == "run":
+            raw["data"]["run_id"] = "other-run"
+        elif case == "unknown":
+            raw["data"]["status"] = "requested_unknown"
+        return httpx.Response(200, json=raw, headers=headers())
+
+    async with BffModelBudgetClient(
+        "http://bff.test",
+        lambda _: SecretStr("s" * 32),
+        transport=httpx.MockTransport(handler),
+    ) as c:
+        with pytest.raises(ModelBudgetError):
+            await c.close_unreserved(
+                tenant_id="tenant-1",
+                command=close_work(),
+                key="different-key" if case == "bad_key" else COMMAND.request_ref,
+                request_id="finance-test",
+            )
+    assert len(calls) == (0 if case == "bad_key" else 1)

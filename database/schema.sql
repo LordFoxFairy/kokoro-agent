@@ -455,6 +455,30 @@ CREATE INDEX IF NOT EXISTS ix_model_financial_pending
   ON kokoro_agent_model_usage_evidence (tenant_id, attempt_id, revision)
   WHERE financial_ack_bytes IS NULL;
 
+-- BEGIN MODEL FINANCIAL CLOSE
+CREATE TABLE IF NOT EXISTS kokoro_agent_model_financial_close (
+  id UUID PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  attempt_id UUID NOT NULL,
+  event_id UUID NOT NULL,
+  revision BIGINT NOT NULL,
+  evidence_digest TEXT NOT NULL,
+  actor_ref TEXT NOT NULL,
+  receipt_bytes BYTEA NOT NULL,
+  receipt_digest TEXT NOT NULL,
+  created_at TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT uq_model_financial_close_attempt UNIQUE (tenant_id, attempt_id),
+  CONSTRAINT ck_model_financial_close_identity CHECK (
+    length(trim(tenant_id)) > 0 AND length(run_id) > 0 AND length(actor_ref) > 0
+    AND revision > 0 AND evidence_digest ~ '^[0-9a-f]{64}$'
+  ),
+  CONSTRAINT ck_model_financial_close_receipt CHECK (
+    octet_length(receipt_bytes) BETWEEN 1 AND 16384 AND receipt_digest ~ '^[0-9a-f]{64}$'
+  )
+);
+-- END MODEL FINANCIAL CLOSE
+
 CREATE TABLE IF NOT EXISTS kokoro_agent_sandbox_cleanup_intent (
   cleanup_id       TEXT PRIMARY KEY,
   run_id           TEXT NOT NULL,

@@ -1,3 +1,11 @@
+## 2026-11-15 无预占终局关闭的私有 operator
+
+本片只扩现 BFF Agent model-admission 受信通道的 `close-unreserved` consumer；Agent 不新增 HTTP、proof 或 usage wire，不直连 Billing。正式 BFF1.4 原件、commit/digest 与生成物配对后才启用 consumer，不手写第二 wire schema或伪造 pin。
+
+内部命令严格指定 tenant/run/attempt 与预期 `evidence_event_id/evidence_revision/evidence_digest`；tenant 凭据来自现部署 snapshot，BFF 核原 Run submitter。传输 body 为原六预算 binding 加 evidence 三字段，Idempotency-Key 沿原 request_ref；独立结果为原九字段、`closure_ref`、`status=unreserved_closed`、毫秒 UTC `closed_at`。无金额、usage、proof、自报 tenant/actor。错误、404、超时均不等于关闭。
+
+本地 `ModelFinancialCloseReceipt` 与 settlement receipt 分开编码/查询；owner ACK 精确匹配后才 append close。重复命令返回原 close，原 `latest_ack` 仍为空，不伪造0积分结算或新执行许可。操作入口及保数据扩展见 RUNBOOK 和 [ADR-005](ADR/ADR-005-unreserved-financial-close-expand.md)。
+
 ## B10 · Project shared Conversation 执行上下文（已裁决，实施中）
 
 Agent HTTP8.18 仅新增可选私有 `shared_conversation_context`；presence 即 shared 模式，不从 Project ID 推断分享。

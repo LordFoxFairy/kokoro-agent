@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import asdict
+import json
 from collections.abc import Mapping, Sequence
 
 from kokoro_agent.features import FEATURE_CATALOG
@@ -11,7 +13,11 @@ from kokoro_agent.inspect import describe_feature, render_catalog
 from kokoro_agent.application.schema import (
     apply_database_schema,
     db_apply_schema_main as _schema_db_apply_schema_main,
+    expand_model_financial_close,
 )
+
+from kokoro_agent.application.model_financial_close import close_unreserved
+from kokoro_agent.model.financial_close import ModelFinancialCloseCommand
 
 
 def main(
@@ -30,7 +36,41 @@ def main(
         "db:apply-schema",
         help="install the current canonical schema into an empty PostgreSQL namespace",
     )
+    subcommands.add_parser(
+        "db:expand-model-financial-close",
+        help="apply the approved additive close-table expansion; never rebuild existing data",
+    )
+    close_parser = subcommands.add_parser(
+        "model:close-unreserved",
+        help="close one exact terminal, never-dispatched original budget command",
+    )
+    for field in (
+        "tenant-id",
+        "run-id",
+        "attempt-id",
+        "evidence-event-id",
+        "evidence-revision",
+        "evidence-digest",
+    ):
+        close_parser.add_argument("--" + field, required=True)
     args = parser.parse_args(argv)
+
+    if args.command == "db:expand-model-financial-close":
+        asyncio.run(expand_model_financial_close(environment))
+        print("verified additive model financial close schema")
+        return 0
+    if args.command == "model:close-unreserved":
+        command = ModelFinancialCloseCommand(
+            tenant_id=args.tenant_id,
+            run_id=args.run_id,
+            attempt_id=args.attempt_id,
+            evidence_event_id=args.evidence_event_id,
+            evidence_revision=args.evidence_revision,
+            evidence_digest=args.evidence_digest,
+        )
+        receipt = asyncio.run(close_unreserved(environment, command))
+        print(json.dumps(asdict(receipt), ensure_ascii=False, sort_keys=True))
+        return 0
 
     if args.command == "db:apply-schema":
         if environment is None:

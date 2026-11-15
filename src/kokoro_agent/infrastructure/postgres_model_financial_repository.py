@@ -6,13 +6,15 @@ import asyncio
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from kokoro_agent.infrastructure.postgres import connect_pg, qualified
 from kokoro_agent.infrastructure.sql import execute_sql, fetch_one, fetch_all
 from kokoro_agent.infrastructure.schema import (
     MODEL_CALL_ATTEMPTS_TABLE,
     MODEL_USAGE_EVIDENCE_TABLE,
+    MODEL_FINANCIAL_CLOSE_TABLE,
+    RUN_CLAIMS_TABLE,
 )
 from kokoro_agent.infrastructure.postgres_model_call_final import (
     read_final_evidence_in_cursor,
@@ -33,6 +35,21 @@ from kokoro_agent.model.financial_receipt import (
 )
 
 
+from kokoro_agent.protocol import RunRequest
+from kokoro_agent.model.call_models import (
+    ModelCallEvidenceInvariantFailed,
+    AttemptBinding,
+)
+from kokoro_agent.model.financial_close import (
+    ModelFinancialCloseCommand,
+    ModelFinancialCloseWork,
+    ModelFinancialCloseReceipt,
+    encode_close_receipt,
+    decode_close_receipt,
+    validate_close_binding,
+)
+
+
 class PostgresModelFinancialRepository:
     def __init__(self, database_url: str, schema: str, *, timeout_s: float = 5) -> None:
         if not 0 < timeout_s <= 10:
@@ -42,6 +59,8 @@ class PostgresModelFinancialRepository:
         self._timeout_s = timeout_s
         self._attempt = qualified(schema, MODEL_CALL_ATTEMPTS_TABLE)
         self._evidence = qualified(schema, MODEL_USAGE_EVIDENCE_TABLE)
+        self._close = qualified(schema, MODEL_FINANCIAL_CLOSE_TABLE)
+        self._run = qualified(schema, RUN_CLAIMS_TABLE)
 
     @asynccontextmanager
     async def _cursor(self) -> AsyncGenerator[object, None]:
@@ -171,6 +190,8 @@ class PostgresModelFinancialRepository:
                 or row["sealed_at"] is None
             ):
                 return None
+            if await self._closed(cursor, row) is not None:
+                return None
             await execute_sql(
                 cursor,
                 f"SELECT event_id FROM {self._evidence} WHERE tenant_id=%s AND attempt_id=%s AND financial_ack_bytes IS NULL ORDER BY revision LIMIT 1",
@@ -219,6 +240,8 @@ class PostgresModelFinancialRepository:
     async def _bound(self, cursor: object, work: ModelFinancialWork):
         row = await self._attempt_row(cursor, work.tenant_id, work.evidence.attempt_id)
         if row is None:
+            raise ModelFinancialConflict()
+        if await self._closed(cursor, row) is not None:
             raise ModelFinancialConflict()
         actual = await self._work(cursor, row, work.evidence.event_id)
         if actual.budget != work.budget or actual.evidence != work.evidence:
@@ -298,12 +321,29 @@ class PostgresModelFinancialRepository:
         async with self._cursor() as cursor:
             await execute_sql(
                 cursor,
+                f"SELECT a.* FROM {self._attempt} a JOIN {self._close} c ON c.tenant_id=a.tenant_id AND c.attempt_id=a.attempt_id ORDER BY a.tenant_id,a.attempt_id LIMIT 129",
+            )
+            closed_attempts = await fetch_all(cursor)
+            if len(closed_attempts) > 128:
+                raise ModelFinancialConflict()  # Explicit recovery slice is bounded, never an unbounded audit scan.
+            closed_ids: list[str] = []
+            for attempt in closed_attempts:
+                try:
+                    if await self._closed(cursor, attempt) is not None:
+                        closed_ids.append(str(attempt["attempt_id"]))
+                except (ModelFinancialConflict, ModelCallEvidenceInvariantFailed):
+                    # Invalid close stays pending; the existing per-attempt recovery reports it.
+                    continue
+            await execute_sql(
+                cursor,
                 f"""SELECT a.tenant_id,a.attempt_id FROM {self._attempt} a JOIN {self._evidence} e
                 ON e.attempt_id=a.attempt_id AND e.tenant_id=a.tenant_id
                 WHERE e.financial_ack_bytes IS NULL AND a.authorization_state IN ('granted','requested_unknown')
+                AND NOT (a.attempt_id=ANY(%s::uuid[]))
                 AND (%s::text IS NULL OR (a.tenant_id,a.attempt_id) > (%s::text,%s::uuid))
                 GROUP BY a.tenant_id,a.attempt_id ORDER BY a.tenant_id,a.attempt_id LIMIT %s""",
                 (
+                    closed_ids,
                     None if after is None else after[0],
                     None if after is None else after[0],
                     None if after is None else after[1],
@@ -314,3 +354,210 @@ class PostgresModelFinancialRepository:
                 (str(row["tenant_id"]), str(row["attempt_id"]))
                 for row in await fetch_all(cursor)
             ]
+
+    async def _closed(
+        self, cursor: object, attempt: dict[str, object]
+    ) -> ModelFinancialCloseReceipt | None:
+        await execute_sql(
+            cursor,
+            f"SELECT * FROM {self._close} WHERE tenant_id=%s AND attempt_id=%s",
+            (attempt["tenant_id"], attempt["attempt_id"]),
+        )
+        row = await fetch_one(cursor)
+        if row is None:
+            return None
+        raw = row["receipt_bytes"]
+        digest = row["receipt_digest"]
+        if not isinstance(raw, bytes) or not isinstance(digest, str):
+            raise ModelFinancialConflict()
+        receipt = decode_close_receipt(raw, digest)
+        work = await self._work(cursor, attempt, str(row["event_id"]))
+        command = ModelFinancialCloseCommand(
+            tenant_id=work.tenant_id,
+            run_id=work.budget.run_id,
+            attempt_id=work.budget.attempt_id,
+            evidence_event_id=work.evidence.event_id,
+            evidence_revision=work.evidence.revision,
+            evidence_digest=work.evidence.digest,
+        )
+        if (
+            row["run_id"],
+            row["revision"],
+            row["evidence_digest"],
+            str(attempt["latest_event_id"]),
+        ) != (
+            command.run_id,
+            int(command.evidence_revision),
+            command.evidence_digest,
+            command.evidence_event_id,
+        ):
+            raise ModelFinancialConflict()
+        await self._close_eligible(cursor, attempt)
+        binding = self._close_identity(attempt)
+        if row["actor_ref"] != binding.actor.opaque_ref:
+            raise ModelFinancialConflict()
+        validate_close_binding(
+            ModelFinancialCloseWork(
+                command=command, financial=work, actor_ref=str(row["actor_ref"])
+            ),
+            receipt,
+        )
+        return receipt
+
+    @staticmethod
+    def _close_identity(attempt: dict[str, object]) -> AttemptBinding:
+        raw = attempt["attempt_binding_bytes"]
+        if not isinstance(raw, bytes):
+            raise ModelFinancialConflict()
+        try:
+            binding = AttemptBinding.model_validate_json(raw, strict=True)
+        except (ValueError, TypeError):
+            raise ModelFinancialConflict() from None
+        if binding.actor.kind != "user" or binding.actor != binding.subject:
+            raise ModelFinancialConflict()
+        return binding
+
+    async def _close_eligible(self, cursor: object, attempt: dict[str, object]) -> None:
+        if (
+            attempt["status"] != "not_dispatched"
+            or attempt["authorization_state"] != "requested_unknown"
+            or attempt["dispatch_started_at"] is not None
+            or attempt["financial_admission_ref"] is not None
+            or attempt["sealed_at"] is None
+        ):
+            raise ModelFinancialConflict()
+        await execute_sql(
+            cursor,
+            f"SELECT evidence_bytes,financial_ack_bytes,financial_ack_digest,financial_acked_at FROM {self._evidence} WHERE tenant_id=%s AND attempt_id=%s",
+            (attempt["tenant_id"], attempt["attempt_id"]),
+        )
+        for event in await fetch_all(cursor):
+            raw = event["evidence_bytes"]
+            if not isinstance(raw, bytes):
+                raise ModelFinancialConflict()
+            artifact = parse_evidence(raw)
+            if (
+                artifact.execution.outcome != "not_dispatched"
+                or artifact.usage.state != "unresolved"
+            ):
+                raise ModelFinancialConflict()
+            if any(
+                event[key] is not None
+                for key in (
+                    "financial_ack_bytes",
+                    "financial_ack_digest",
+                    "financial_acked_at",
+                )
+            ):
+                raise ModelFinancialConflict()
+
+    async def _prepare_close(
+        self, cursor: object, command: ModelFinancialCloseCommand
+    ) -> ModelFinancialCloseWork:
+        await execute_sql(
+            cursor,
+            f"SELECT * FROM {self._run} WHERE tenant_id=%s AND run_id=%s FOR UPDATE",
+            (command.tenant_id, command.run_id),
+        )
+        run = await fetch_one(cursor)
+        if (
+            run is None
+            or run["terminal"] is not True
+            or run["terminal_at"] is None
+            or not isinstance(run["request_json"], str)
+        ):
+            raise ModelFinancialConflict()
+        try:
+            request = RunRequest.model_validate_json(run["request_json"])
+            identity = request.execution_identity
+            if (
+                request.run_id != command.run_id
+                or identity.tenant_ref != command.tenant_id
+                or identity.actor != identity.subject
+                or identity.actor.kind != "user"
+            ):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ModelFinancialConflict() from None
+        attempt = await self._attempt_row(cursor, command.tenant_id, command.attempt_id)
+        if attempt is None or attempt["run_id"] != command.run_id:
+            raise ModelFinancialConflict()
+        binding = self._close_identity(attempt)
+        if (
+            binding.tenant_ref,
+            binding.run_id,
+            binding.session_id,
+            binding.identity_assertion_ref,
+            binding.actor.model_dump(mode="json"),
+            binding.subject.model_dump(mode="json"),
+        ) != (
+            identity.tenant_ref,
+            request.run_id,
+            request.session_id,
+            identity.identity_assertion_ref,
+            identity.actor.model_dump(mode="json"),
+            identity.subject.model_dump(mode="json"),
+        ):
+            raise ModelFinancialConflict()
+        await self._close_eligible(cursor, attempt)
+        work = await self._work(cursor, attempt, command.evidence_event_id)
+        if (
+            work.evidence.revision,
+            work.evidence.digest,
+            str(attempt["latest_event_id"]),
+        ) != (
+            command.evidence_revision,
+            command.evidence_digest,
+            command.evidence_event_id,
+        ):
+            raise ModelFinancialConflict()
+        return ModelFinancialCloseWork(
+            command=command,
+            financial=work,
+            actor_ref=identity.actor.opaque_ref,
+            receipt=await self._closed(cursor, attempt),
+        )
+
+    async def prepare_close(
+        self, command: ModelFinancialCloseCommand
+    ) -> ModelFinancialCloseWork:
+        async with self._cursor() as cursor:
+            return await self._prepare_close(cursor, command)
+
+    async def latest_close(
+        self, tenant_id: str, attempt_id: str
+    ) -> ModelFinancialCloseReceipt | None:
+        async with self._cursor() as cursor:
+            row = await self._attempt_row(cursor, tenant_id, attempt_id)
+            return None if row is None else await self._closed(cursor, row)
+
+    async def record_close(
+        self, work: ModelFinancialCloseWork, receipt: ModelFinancialCloseReceipt
+    ) -> ModelFinancialCloseReceipt:
+        validate_close_binding(work, receipt)
+        raw, digest = encode_close_receipt(receipt)
+        async with self._cursor() as cursor:
+            actual = await self._prepare_close(cursor, work.command)
+            if actual.financial != work.financial or actual.actor_ref != work.actor_ref:
+                raise ModelFinancialConflict()
+            if actual.receipt is not None:
+                if actual.receipt != receipt:
+                    raise ModelFinancialConflict()
+                return actual.receipt
+            await execute_sql(
+                cursor,
+                f"INSERT INTO {self._close} (id,tenant_id,run_id,attempt_id,event_id,revision,evidence_digest,actor_ref,receipt_bytes,receipt_digest) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    str(uuid4()),
+                    work.command.tenant_id,
+                    work.command.run_id,
+                    work.command.attempt_id,
+                    work.command.evidence_event_id,
+                    int(work.command.evidence_revision),
+                    work.command.evidence_digest,
+                    work.actor_ref,
+                    raw,
+                    digest,
+                ),
+            )
+            return receipt

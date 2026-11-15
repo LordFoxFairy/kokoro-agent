@@ -22,10 +22,19 @@ from kokoro_agent.clients.bff_admission_generated import (
     AgentModelAttemptId,
     AgentModelSettlementResponse,
     AgentModelSettlementError,
+    AgentModelUnreservedCloseRequest,
+    AgentModelUnreservedCloseResponse,
 )
 from kokoro_agent.model.budget import ModelBudgetCommand, ModelBudgetGrant
 from kokoro_agent.model.call_models import ModelCallAuthorizationDenied
 from kokoro_agent.model.settlement import ModelSettlementCommand, ModelSettlementReceipt
+from kokoro_agent.model.financial_close import (
+    ModelFinancialCloseWork,
+    ModelFinancialCloseReceipt,
+    ModelFinancialCloseCommand,
+    validate_close_binding,
+)
+from kokoro_agent.model.financial_receipt import ModelFinancialConflict
 
 _T = TypeVar("_T")
 _ID = re.compile(r"[A-Za-z0-9._:-]{1,128}", re.ASCII)
@@ -314,6 +323,84 @@ class BffModelBudgetClient:
             return None
         return BffModelBudgetClient._grant(status, raw, command, success_status=200)
 
+    async def close_unreserved(
+        self,
+        *,
+        tenant_id: str,
+        command: ModelFinancialCloseWork,
+        key: str,
+        request_id: str,
+    ) -> ModelFinancialCloseReceipt:
+        """Explicit operator close only: original intent key, never reserve or settlement."""
+        expected = ModelFinancialCloseCommand(
+            tenant_id=tenant_id,
+            run_id=command.budget.run_id,
+            attempt_id=command.budget.attempt_id,
+            evidence_event_id=command.evidence.event_id,
+            evidence_revision=command.evidence.revision,
+            evidence_digest=command.evidence.digest,
+        )
+        if (
+            command.command != expected
+            or command.financial.tenant_id != tenant_id
+            or command.financial.admission_ref is not None
+            or key != command.budget.request_ref
+        ):
+            raise ModelBudgetError("MODEL_BUDGET_REQUEST_INVALID")
+        values: dict[str, object] = asdict(command.budget)
+        values.update(
+            evidence_event_id=command.evidence.event_id,
+            evidence_revision=command.evidence.revision,
+            evidence_digest=command.evidence.digest,
+        )
+        body = self._encode(AgentModelUnreservedCloseRequest, values)
+        return await self._post(
+            tenant_id=tenant_id,
+            path="/internal/v1/model-admissions/close-unreserved",
+            body=body,
+            key=key,
+            request_id=request_id,
+            decode=lambda status, raw: self._unreserved_closed(status, raw, command),
+        )
+
+    @staticmethod
+    def _unreserved_closed(
+        status: int, raw: dict[str, object], command: ModelFinancialCloseWork
+    ) -> ModelFinancialCloseReceipt:
+        error: AgentModelAdmissionError | None = None
+        try:
+            if status == 200:
+                data = AgentModelUnreservedCloseResponse.model_validate(raw).data
+                value = ModelFinancialCloseReceipt(
+                    run_id=data.run_id,
+                    attempt_id=data.attempt_id,
+                    request_ref=data.request_ref,
+                    attempt_binding_digest=data.attempt_binding_digest,
+                    planned_digest=data.planned_digest,
+                    final_request_digest=data.final_request_digest,
+                    evidence_event_id=data.evidence_event_id,
+                    evidence_revision=data.evidence_revision,
+                    evidence_digest=data.evidence_digest,
+                    closure_ref=data.closure_ref,
+                    status=data.status,
+                    closed_at=data.closed_at,
+                )
+                validate_close_binding(command, value)
+                return value
+            error = AgentModelAdmissionError.model_validate(raw)
+        except (ValueError, TypeError, ModelFinancialConflict):
+            pass
+        if (
+            error is not None
+            and _ERROR_STATUS.get(error.error.code) == status
+            and error.error.retryable is (status == 503)
+        ):
+            raise ModelBudgetError(
+                "MODEL_BUDGET_CLOSE_"
+                + error.error.code.removeprefix("model_admission_").upper()
+            )
+        raise ModelBudgetError("MODEL_BUDGET_RESPONSE_INVALID")
+
     async def settle(
         self,
         *,
@@ -511,3 +598,51 @@ class BffModelBudgetClient:
                 + error.error.code.removeprefix("model_admission_").upper()
             )
         raise ModelBudgetError("MODEL_BUDGET_RESPONSE_INVALID")
+
+
+_SECRETS = TypeAdapter(dict[str, str])
+
+
+def _members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for key, value in pairs:
+        if key in values:
+            raise ValueError
+        values[key] = value
+    return values
+
+
+class ModelAdmissionSecrets:
+    """An immutable env-only workload snapshot, not a user or model credential store."""
+
+    def __init__(self, value: SecretStr) -> None:
+        parsed: dict[str, str] | None = None
+        try:
+            raw = value.get_secret_value().encode("utf-8", errors="strict")
+            if not 1 <= len(raw) <= 65536:
+                raise ValueError
+            values = _SECRETS.validate_python(
+                json.loads(raw, object_pairs_hook=_members), strict=True
+            )
+            if not 1 <= len(values) <= 32 or len(set(values.values())) != len(values):
+                raise ValueError
+            for tenant, secret in values.items():
+                if not re.fullmatch(
+                    r"[^\s\x00-\x1f\x7f]{1,191}", tenant
+                ) or not re.fullmatch(r"[\x21-\x7e]{32,4096}", secret):
+                    raise ValueError
+            parsed = values
+        except (ValueError, TypeError, RecursionError):
+            pass
+        if parsed is None:
+            raise ValueError("BFF model billing credentials unavailable")
+        self._values = {tenant: SecretStr(secret) for tenant, secret in parsed.items()}
+
+    def __repr__(self) -> str:
+        return "ModelAdmissionSecrets(<redacted>)"
+
+    def __call__(self, tenant_id: str) -> SecretStr:
+        value = self._values.get(tenant_id)
+        if value is None:
+            raise ModelBudgetError("MODEL_BUDGET_CREDENTIAL_UNAVAILABLE")
+        return value

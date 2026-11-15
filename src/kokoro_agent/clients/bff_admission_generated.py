@@ -1,25 +1,37 @@
-"""Generated from the fixed BFF internal1.3 publication. Do not edit."""
+"""Generated from the fixed BFF internal1.4 publication. Do not edit."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 import re
 from typing import Annotated, Literal, TypeAlias
+from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-SOURCE_SHA256 = "4de1a6c7564f3a994d879cfc93588021c5ef4aeebbcc89959fa574d5b6f16d39"
+SOURCE_SHA256 = "16ddcd287f9b1fa230bfdb216f4ce192205a1bda9d756c9ac8288c1ad37ac502"
 
 
 def _patterns(*patterns: str, forbidden: tuple[str, ...] = ()) -> Callable[[str], str]:
     def validate(value: str) -> str:
+        # Only the owner Z suffix assertion uses search; full-field patterns stay strict.
         if not all(
-            re.fullmatch(pattern, value, re.ASCII) for pattern in patterns
+            (
+                re.search(pattern, value, re.ASCII)
+                if pattern == "Z$"
+                else re.fullmatch(pattern, value, re.ASCII)
+            )
+            for pattern in patterns
         ) or any(re.search(pattern, value, re.ASCII) for pattern in forbidden):
             raise ValueError("invalid BFF budget field")
         return value
 
     return validate
+
+
+def _uuid(value: str) -> str:
+    UUID(value)
+    return value
 
 
 Field0: TypeAlias = Annotated[
@@ -623,16 +635,8 @@ Field60: TypeAlias = Literal[
 
 Field61: TypeAlias = Annotated[
     str,
-    AfterValidator(
-        _patterns(
-            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?![\\s\\S])",
-        ),
-    ),
+    Field(min_length=1, max_length=512),
 ]
-
-
-AgentModelAdmissionId: TypeAlias = Field61
 
 
 Field62: TypeAlias = Annotated[
@@ -646,7 +650,216 @@ Field62: TypeAlias = Annotated[
 ]
 
 
-AgentModelAttemptId: TypeAlias = Field62
+Field63: TypeAlias = Annotated[
+    str,
+    Field(min_length=1, max_length=512),
+]
+
+
+Field64: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field65: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field66: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field67: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ),
+    AfterValidator(_uuid),
+]
+
+
+Field68: TypeAlias = Annotated[
+    str,
+    Field(max_length=19),
+    AfterValidator(
+        _patterns(
+            "^[1-9][0-9]*$(?![\\s\\S])",
+            forbidden=(
+                "^(?:9[3-9][0-9]{17}|92[3-9][0-9]{16}|922[4-9][0-9]{15}|9223[4-9][0-9]{14}|92233[8-9][0-9]{13}|922337[3-9][0-9]{12}|9223372[1-9][0-9]{11}|92233720[4-9][0-9]{10}|922337203[7-9][0-9]{9}|92233720369[0-9]{8}|92233720368[6-9][0-9]{7}|922337203685[5-9][0-9]{6}|9223372036854[8-9][0-9]{5}|92233720368547[8-9][0-9]{4}|922337203685477[6-9][0-9]{3}|92233720368547759[0-9]{2}|92233720368547758[1-9][0-9]{1}|922337203685477580[8-9])$(?![\\s\\S])",
+            ),
+        ),
+    ),
+]
+
+
+Field69: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field70: TypeAlias = Annotated[
+    str,
+    Field(min_length=1, max_length=512),
+]
+
+
+Field71: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field72: TypeAlias = Annotated[
+    str,
+    Field(min_length=1, max_length=512),
+]
+
+
+Field73: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field74: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field75: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field76: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ),
+    AfterValidator(_uuid),
+]
+
+
+Field77: TypeAlias = Annotated[
+    str,
+    Field(max_length=19),
+    AfterValidator(
+        _patterns(
+            "^[1-9][0-9]*$(?![\\s\\S])",
+            forbidden=(
+                "^(?:9[3-9][0-9]{17}|92[3-9][0-9]{16}|922[4-9][0-9]{15}|9223[4-9][0-9]{14}|92233[8-9][0-9]{13}|922337[3-9][0-9]{12}|9223372[1-9][0-9]{11}|92233720[4-9][0-9]{10}|922337203[7-9][0-9]{9}|92233720369[0-9]{8}|92233720368[6-9][0-9]{7}|922337203685[5-9][0-9]{6}|9223372036854[8-9][0-9]{5}|92233720368547[8-9][0-9]{4}|922337203685477[6-9][0-9]{3}|92233720368547759[0-9]{2}|92233720368547758[1-9][0-9]{1}|922337203685477580[8-9])$(?![\\s\\S])",
+            ),
+        ),
+    ),
+]
+
+
+Field78: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^[0-9a-f]{64}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+Field79: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ),
+    AfterValidator(_uuid),
+]
+
+
+Field80: TypeAlias = Literal["unreserved_closed"]
+
+
+Field81: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "Z$",
+        ),
+    ),
+]
+
+
+Field82: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+AgentModelAdmissionId: TypeAlias = Field82
+
+
+Field83: TypeAlias = Annotated[
+    str,
+    AfterValidator(
+        _patterns(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?![\\s\\S])",
+        ),
+    ),
+]
+
+
+AgentModelAttemptId: TypeAlias = Field83
 
 
 class AgentModelAdmissionRequest(BaseModel):
@@ -807,3 +1020,46 @@ class AgentModelSettlementError(BaseModel):
     )
 
     error: AgentModelSettlementErrorError
+
+
+class AgentModelUnreservedCloseRequest(BaseModel):
+    model_config = ConfigDict(
+        strict=True, frozen=True, extra="forbid", hide_input_in_errors=True
+    )
+
+    run_id: Field61
+    attempt_id: Field62
+    request_ref: Field63
+    attempt_binding_digest: Field64
+    planned_digest: Field65
+    final_request_digest: Field66
+    evidence_event_id: Field67
+    evidence_revision: Field68
+    evidence_digest: Field69
+
+
+class AgentModelUnreservedCloseResponseData(BaseModel):
+    model_config = ConfigDict(
+        strict=True, frozen=True, extra="forbid", hide_input_in_errors=True
+    )
+
+    run_id: Field70
+    attempt_id: Field71
+    request_ref: Field72
+    attempt_binding_digest: Field73
+    planned_digest: Field74
+    final_request_digest: Field75
+    evidence_event_id: Field76
+    evidence_revision: Field77
+    evidence_digest: Field78
+    closure_ref: Field79
+    status: Field80
+    closed_at: Field81
+
+
+class AgentModelUnreservedCloseResponse(BaseModel):
+    model_config = ConfigDict(
+        strict=True, frozen=True, extra="forbid", hide_input_in_errors=True
+    )
+
+    data: AgentModelUnreservedCloseResponseData

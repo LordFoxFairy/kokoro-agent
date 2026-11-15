@@ -70,6 +70,36 @@ def request() -> RunRequest:
     )
 
 
+@pytest.mark.parametrize("pattern", ["**/*", "/**/*", "{0,1}"])
+async def test_native_input_glob_uses_sdk_patterns_without_reading_content(
+    pattern: str,
+) -> None:
+    reader = Reader()
+    route = InputResourceBackend(
+        request(), LeaseFence(owner="worker", generation=1), reader
+    )
+    backend = CompositeBackend(default=StateBackend(), routes={INPUTS_ROOT: route})
+    result = await backend.aglob(pattern, INPUTS_ROOT)
+    assert result.error is None
+    assert [item["path"] for item in result.matches or []] == ["/.inputs/0"]
+    assert reader.requests == []
+
+
+@pytest.mark.parametrize("glob", ["0", "{0,1}", ""])
+async def test_native_input_grep_filters_basename_before_reading(glob: str) -> None:
+    reader = Reader()
+    route = InputResourceBackend(
+        request(), LeaseFence(owner="worker", generation=1), reader
+    )
+    backend = CompositeBackend(default=StateBackend(), routes={INPUTS_ROOT: route})
+    result = await backend.agrep("original", INPUTS_ROOT, glob=glob)
+    assert result.error is None
+    assert [item["path"] for item in result.matches or []] == ["/.inputs/0"]
+    assert len(reader.requests) == 1
+    assert (await backend.agrep("original", INPUTS_ROOT, glob="1")).matches == []
+    assert len(reader.requests) == 1
+
+
 async def test_native_route_reads_lists_greps_downloads_only_indexed_selected_input() -> (
     None
 ):

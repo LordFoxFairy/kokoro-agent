@@ -1,3 +1,10 @@
+## 2026-11-15 事件持久化错误边界：未确认不进入正常暂停
+
+本轮只沿执行结果→持久事件→恢复展示。BFF限定纯映射／回放只读审查未发现确认缺陷，不改BFF或扩扫SQL；Agent确认delivery已成功journal后，critical staging／前置fence读取普通异常被pump按单帧publish失败吞掉，暂停阶段无已确认queued记录可依赖，终态repair不能覆盖暂停窗口。
+
+stage普通异常就地归现ProgressPersistenceError；租约查询归一化下沉既有_lease_allows，调用方保原False差异。typed原对象、取消、None围栏与已queued后的Redis／mark恢复保持。不加helper层／异常类／协议／Schema或重试框架。
+公开invoke暂停路径分别RED1/PASS1、fence RED1/PASS3（各15筛除），修后stage/fence×ordinary/typed四等价类通过；现producer收束和Redis queued正控承接，三相关文件125PASS/4 integration marker未选，锁定SDK Beta warnings不隐藏。剩余工程门和最终来源见本PR，不冒真实模型／DB／整产品端到端或已部署。
+
 ## 2026-11-15 Agent核心业务：输入查询假空与scan尾响应修复
 
 本轮两独立只读面、主控唯一writer，只沿输入／工具／产物主链，不涉及基础设施／部署／运维或旧财务事项。

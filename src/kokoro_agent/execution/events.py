@@ -450,13 +450,7 @@ class RunEmitter:
         return report
 
     async def _require_progress_lease(self, kind: str) -> None:
-        try:
-            allowed = await self._lease_allows(kind)
-        except Exception as error:
-            raise ProgressPersistenceError(
-                "progress lease check unconfirmed"
-            ) from error
-        if not allowed:
+        if not await self._lease_allows(kind):
             raise ProgressAuthorityLost("original progress lease lost")
 
     async def _reserve_index(self) -> int:
@@ -500,22 +494,30 @@ class RunEmitter:
             payload_json = json.dumps(
                 payload.model_dump(mode="json", exclude_none=True)
             )
-            staged = await self._outbox.stage_critical_frame(
-                self._run_id,
-                lease,
-                kind,
-                timestamp,
-                payload_json,
-                terminal=kind in TERMINAL_KINDS,
-                event_id=(
-                    "evt_"
-                    + hashlib.sha256(
-                        f"delivery\0{self._run_id}\0{payload.tool_call_id}".encode()
-                    ).hexdigest()
-                    if isinstance(payload, DeliveryCreatedPayload)
-                    else None
-                ),
-            )
+            try:
+                staged = await self._outbox.stage_critical_frame(
+                    self._run_id,
+                    lease,
+                    kind,
+                    timestamp,
+                    payload_json,
+                    terminal=kind in TERMINAL_KINDS,
+                    event_id=(
+                        "evt_"
+                        + hashlib.sha256(
+                            f"delivery\0{self._run_id}\0{payload.tool_call_id}".encode()
+                        ).hexdigest()
+                        if isinstance(payload, DeliveryCreatedPayload)
+                        else None
+                    ),
+                )
+            except ProgressPersistenceError:
+                raise
+            except Exception as error:
+                # A failed stage has no confirmed queued row for replay to recover.
+                raise ProgressPersistenceError(
+                    "critical frame staging unconfirmed"
+                ) from error
             if staged is None:
                 if kind == "run.started":
                     raise ProgressAuthorityLost("original started lease lost")
@@ -603,12 +605,19 @@ class RunEmitter:
             return True
         lease = self._lease
         assert lease is not None
-        if kind in TERMINAL_KINDS or kind in {
-            "run.control.receipt",
-            "delivery.created",
-        }:
-            return await self._outbox.is_fence_current(self._run_id, lease)
-        return await self._outbox.is_lease_current(self._run_id, lease)
+        try:
+            if kind in TERMINAL_KINDS or kind in {
+                "run.control.receipt",
+                "delivery.created",
+            }:
+                return await self._outbox.is_fence_current(self._run_id, lease)
+            return await self._outbox.is_lease_current(self._run_id, lease)
+        except ProgressPersistenceError:
+            raise
+        except Exception as error:
+            raise ProgressPersistenceError(
+                "progress lease check unconfirmed"
+            ) from error
 
     async def _persist_chat(
         self,

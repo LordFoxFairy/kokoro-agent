@@ -9,6 +9,10 @@ wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 r
 
 `input_backend.py` 的glob按相对索引路径匹配，去pattern前导slash，沿锁定SDK使用BRACE／GLOBSTAR；grep的glob仅匹配basename，空glob不筛选。未匹配项不读取正文，稳定索引路径／只读／现manifest与lease校验保持。复用已纳管的wcmatch10.1公共matcher，不自行实现另一套glob。
 
+## 持久事实未确认与live发布失败分开
+
+critical outbox staging与其前置lease/fence查询的技术异常统一传播现`ProgressPersistenceError`，不被投影泵当成可丢单帧，也不进入正常waiting／terminal回调。已有typed错误保原对象，取消不包装。查询False和staging None仍由原caller处理；只有已queued且已投影的live发送失败沿原replay恢复，mark行为不改。不新增恢复框架或Schema。
+
 ## 公开 API
 
 - Agent 的创建不属于本目录；由 `agent_factory.py` 接线

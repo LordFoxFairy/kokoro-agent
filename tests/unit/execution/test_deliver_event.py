@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 import json
 from typing import cast
+from unittest.mock import AsyncMock
 
 from pydantic import JsonValue
 
@@ -33,8 +34,14 @@ from kokoro_agent.protocol import (
     SubagentSource,
 )
 from kokoro_agent.domain.chat.projection import project_chat_fact
+from kokoro_agent.domain.run.repository import LeaseFence, StagedFrame
+from kokoro_agent.domain.run.scope import RunScope
 from kokoro_agent.streams.protocol import StreamItem
-from kokoro_agent.execution.events import RunEmitter, delivery_created_payload
+from kokoro_agent.execution.events import (
+    ProgressPersistenceError,
+    RunEmitter,
+    delivery_created_payload,
+)
 from kokoro_agent.execution.run_agent import invoke_once
 from kokoro_agent.tools.deliver import DeliverResult
 
@@ -307,3 +314,102 @@ async def test_durable_delivery_does_not_wait_for_redis_live_publish() -> None:
 
     assert store.outbox["r1"][0]["kind"] == "delivery.created"
     assert store.outbox["r1"][0]["status"] == "queued"
+
+
+@pytest.mark.parametrize("operation", ["stage", "fence"])
+@pytest.mark.parametrize("already_typed", [False, True])
+async def test_delivery_persistence_failure_never_reaches_waiting_or_terminal(
+    operation: str, already_typed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bus, store, chat = FakeBus(), FakeRunRepository(), FakeChatRepository()
+    canonical = request("r1")
+    lease = await store.try_claim(canonical)
+    assert lease is not None
+    frozen = _delivered_json()
+    store.tool_journal[("r1", "t1")] = {
+        "name": "deliver",
+        "status": "succeeded",
+        "result": frozen,
+        "is_error": False,
+    }
+    failure = (
+        ProgressPersistenceError("staging unavailable")
+        if already_typed
+        else OSError("staging unavailable")
+    )
+    original_stage = store.stage_critical_frame
+    failed_kinds: list[str] = []
+
+    async def stage(
+        run_id: str,
+        fence: LeaseFence,
+        kind: str,
+        timestamp: int,
+        payload_json: str,
+        *,
+        terminal: bool,
+        event_id: str | None = None,
+    ) -> StagedFrame | None:
+        if kind == "delivery.created":
+            failed_kinds.append(kind)
+            raise failure
+        return await original_stage(
+            run_id,
+            fence,
+            kind,
+            timestamp,
+            payload_json,
+            terminal=terminal,
+            event_id=event_id,
+        )
+
+    if operation == "stage":
+        monkeypatch.setattr(store, "stage_critical_frame", stage)
+    else:
+
+        async def fence_check(run_id: str, fence: LeaseFence) -> bool:
+            assert run_id == canonical.run_id and fence == lease
+            failed_kinds.append("delivery.created")
+            raise failure
+
+        monkeypatch.setattr(store, "is_fence_current", fence_check)
+    scope = RunScope.of(canonical)
+    emitter = await RunEmitter.attach(
+        bus,
+        "r1",
+        outbox=store,
+        lease=lease,
+        tenant_id=canonical.execution_identity.tenant_ref,
+        namespace=scope.namespace,
+        session_id=canonical.session_id,
+        chat_repository=chat,
+    )
+    native = FakeRunStream(tool_views=(_deliver_call(frozen),), is_interrupted=True)
+    settled = AsyncMock(return_value="waiting")
+    terminal = AsyncMock(return_value=True)
+    with pytest.raises(ProgressPersistenceError) as raised:
+        await invoke_once(
+            emitter,
+            FakeAgent(run=native),
+            "c1",
+            {"messages": []},
+            initial=True,
+            approval_tool_names=frozenset(),
+            source_for=_runtime_custom,
+            finalize_terminal=terminal,
+            record_usage=usage_recorder()[0],
+            on_native_settled=settled,
+        )
+    assert failed_kinds == ["delivery.created"]
+    if already_typed:
+        assert raised.value is failure
+    else:
+        assert raised.value.__cause__ is failure
+    assert native.context_exited
+    settled.assert_not_awaited()
+    terminal.assert_not_awaited()
+    assert not {"delivery.created", "run.completed", "run.failed"}.intersection(
+        bus.kinds("r1")
+    )
+    assert all(row["kind"] != "delivery.created" for row in store.outbox.get("r1", []))
+    assert all(record.event_type != "delivery" for record in chat.records)

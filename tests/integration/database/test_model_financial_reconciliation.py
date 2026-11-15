@@ -42,6 +42,11 @@ from kokoro_agent.model.financial_reconciliation import (
     ModelFinancialWork,
 )
 from kokoro_agent.model.financial_receipt import ModelFinancialConflict
+from kokoro_agent.model.financial_close import (
+    ModelFinancialCloseCommand,
+    ModelFinancialCloseWork,
+    ModelFinancialCloseReceipt,
+)
 
 ADMISSION = "11111111-1111-4111-8111-111111111111"
 
@@ -839,4 +844,293 @@ async def test_pending_scan_keyset_boundary_deduplicates_events_and_preserves_ro
     ) == [key]
     assert await r.list_pending(limit=1, after=("tenant-0", sealed.attempt)) == [key]
     assert await r.list_pending(limit=1, after=("tenant-z", sealed.attempt)) == []
+    assert await sealed.facts() == before
+
+
+async def close_target(f: Fixture) -> ModelFinancialCloseCommand:
+    from kokoro_agent.model.financial_close import ModelFinancialCloseCommand
+
+    work = await repository(f).next_work(f.tenant, f.attempt)
+    assert work is not None
+    return ModelFinancialCloseCommand(
+        tenant_id=f.tenant,
+        run_id=f.run,
+        attempt_id=f.attempt,
+        evidence_event_id=work.evidence.event_id,
+        evidence_revision=work.evidence.revision,
+        evidence_digest=work.evidence.digest,
+    )
+
+
+def closure_receipt(work: ModelFinancialCloseWork) -> ModelFinancialCloseReceipt:
+    from kokoro_agent.model.financial_close import ModelFinancialCloseReceipt
+
+    return ModelFinancialCloseReceipt(
+        **asdict(work.budget),
+        evidence_event_id=work.evidence.event_id,
+        evidence_revision=work.evidence.revision,
+        evidence_digest=work.evidence.digest,
+        closure_ref="22222222-2222-4222-8222-222222222222",
+        status="unreserved_closed",
+        closed_at="2026-11-15T00:00:00.000Z",
+    )
+
+
+async def test_explicit_unreserved_close_preserves_original_rows_and_replays(
+    sealed: Fixture,
+) -> None:
+    r = repository(sealed)
+    command = await close_target(sealed)
+    before = await sealed.facts()
+    stale = await r.next_work(sealed.tenant, sealed.attempt)
+    assert stale is not None
+    work = await r.prepare_close(command)
+    assert work.actor_ref == "user-1"
+    receipt = closure_receipt(work)
+    assert await r.record_close(work, receipt) == receipt
+    assert await r.record_close(work, receipt) == receipt
+    assert (await r.prepare_close(command)).receipt == receipt
+    assert await r.latest_close(sealed.tenant, sealed.attempt) == receipt
+    assert await r.next_work(sealed.tenant, sealed.attempt) is None
+    assert await r.latest_ack(sealed.tenant, sealed.attempt) is None
+    assert await r.list_pending() == []
+    with pytest.raises(ModelFinancialConflict):
+        await r.record_admission(stale, ADMISSION)
+    with pytest.raises(ModelFinancialConflict):
+        await r.record_close(work, replace(receipt, evidence_digest="0" * 64))
+    assert await sealed.facts() == before
+
+
+@pytest.mark.parametrize(
+    "damage", ["tenant", "digest", "active", "admission", "actor", "both_users"]
+)
+async def test_unreserved_close_rejects_changed_local_authority_without_writes(
+    sealed: Fixture,
+    damage: str,
+) -> None:
+    r = repository(sealed)
+    command = await close_target(sealed)
+    if damage == "tenant":
+        command = replace(command, tenant_id="other-tenant")
+    elif damage == "digest":
+        command = replace(command, evidence_digest="0" * 64)
+    else:
+        async with connect_pg(sealed.url) as c, c.cursor() as cur:
+            if damage == "active":
+                await execute_sql(
+                    cur,
+                    f"UPDATE {qualified(sealed.schema, 'kokoro_agent_run')} SET terminal=false,terminal_at=NULL,interaction_phase='active'",
+                )
+            elif damage == "admission":
+                await execute_sql(
+                    cur,
+                    f"UPDATE {qualified(sealed.schema, 'kokoro_agent_model_call_attempt')} SET financial_admission_ref=%s",
+                    (ADMISSION,),
+                )
+            elif damage == "both_users":
+                await execute_sql(
+                    cur,
+                    f"UPDATE {qualified(sealed.schema, 'kokoro_agent_run')} SET request_json=jsonb_set(jsonb_set(request_json::jsonb,'{{execution_identity,actor,opaque_ref}}','\"other-user\"'),'{{execution_identity,subject,opaque_ref}}','\"other-user\"')::text",
+                )
+            else:
+                await execute_sql(
+                    cur,
+                    f"UPDATE {qualified(sealed.schema, 'kokoro_agent_run')} SET request_json=jsonb_set(request_json::jsonb,'{{execution_identity,actor,opaque_ref}}','\"other-user\"')::text",
+                )
+    before = await sealed.facts()
+    with pytest.raises(ModelFinancialConflict):
+        await r.prepare_close(command)
+    assert await sealed.facts() == before
+
+
+async def test_unreserved_close_rechecks_after_owner_network_and_concurrent_replay(
+    sealed: Fixture,
+) -> None:
+    r = repository(sealed)
+    work = await r.prepare_close(await close_target(sealed))
+    await r.record_admission(work.financial, ADMISSION)
+    before = await sealed.facts()
+    with pytest.raises(ModelFinancialConflict):
+        await r.record_close(work, closure_receipt(work))
+    assert await sealed.facts() == before
+
+
+async def test_unreserved_close_parallel_commit_has_one_durable_receipt(
+    sealed: Fixture,
+) -> None:
+    r = repository(sealed)
+    work = await r.prepare_close(await close_target(sealed))
+    receipt = closure_receipt(work)
+    assert (
+        await asyncio.gather(*(r.record_close(work, receipt) for _ in range(4)))
+        == [receipt] * 4
+    )
+    async with connect_pg(sealed.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"SELECT count(*) AS n FROM {qualified(sealed.schema, 'kokoro_agent_model_financial_close')}",
+        )
+        row = await fetch_one(cur)
+    assert row is not None and row["n"] == 1
+
+
+async def test_unreserved_close_additive_expansion_preserves_populated_schema(
+    sealed: Fixture,
+) -> None:
+    from kokoro_agent.infrastructure.schema import expand_financial_close_schema
+
+    before = await sealed.facts()
+    async with connect_pg(sealed.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"DROP TABLE {qualified(sealed.schema, 'kokoro_agent_model_financial_close')}",
+        )
+    async with connect_pg(sealed.url) as c:
+        await expand_financial_close_schema(c, sealed.schema)
+        await expand_financial_close_schema(c, sealed.schema)
+        await verify_agent_schema(c, sealed.schema)
+    assert await sealed.facts() == before
+    async with connect_pg(sealed.url) as c, c.cursor() as cur:
+        await execute_sql(
+            cur,
+            f"ALTER TABLE {qualified(sealed.schema, 'kokoro_agent_model_financial_close')} ALTER COLUMN receipt_digest DROP NOT NULL",
+        )
+    async with connect_pg(sealed.url) as c:
+        with pytest.raises(SchemaNotReadyError):
+            await expand_financial_close_schema(c, sealed.schema)
+    assert await sealed.facts() == before
+
+
+@pytest.mark.parametrize("sealed", ["granted", "history"], indirect=True)
+async def test_unreserved_close_rejects_granted_and_dispatched_attempts(
+    sealed: Fixture,
+) -> None:
+    r = repository(sealed)
+    before = await sealed.facts()
+    with pytest.raises(ModelFinancialConflict):
+        await r.prepare_close(await close_target(sealed))
+    assert await r.list_pending() == [(sealed.tenant, sealed.attempt)]
+    assert await sealed.facts() == before
+
+
+@pytest.mark.parametrize("damage", ["digest", "actor"])
+async def test_corrupt_close_is_not_silently_hidden_by_pending_scan(
+    sealed: Fixture,
+    damage: str,
+) -> None:
+    r = repository(sealed)
+    work = await r.prepare_close(await close_target(sealed))
+    await r.record_close(work, closure_receipt(work))
+    async with connect_pg(sealed.url) as c, c.cursor() as cur:
+        if damage == "actor":
+            await execute_sql(
+                cur,
+                f"UPDATE {qualified(sealed.schema, 'kokoro_agent_model_financial_close')} SET actor_ref='other-user'",
+            )
+        else:
+            await execute_sql(
+                cur,
+                f"UPDATE {qualified(sealed.schema, 'kokoro_agent_model_financial_close')} SET receipt_digest=repeat('0',64)",
+            )
+
+    before = await sealed.facts()
+    assert await r.list_pending() == [(sealed.tenant, sealed.attempt)]
+    with pytest.raises(ModelFinancialConflict):
+        await r.latest_close(sealed.tenant, sealed.attempt)
+    assert await sealed.facts() == before
+
+
+@pytest.mark.parametrize("lost_ack", ["owner", "local"])
+async def test_explicit_close_operator_recovers_lost_ack_without_holding_sql_locks(
+    sealed: Fixture,
+    monkeypatch: pytest.MonkeyPatch,
+    lost_ack: str,
+) -> None:
+    from typing import Self
+    from pydantic import SecretStr
+    from collections.abc import Callable
+    from kokoro_agent.application import model_financial_close as operator
+
+    calls: list[str] = []
+    owner_receipt: ModelFinancialCloseReceipt | None = None
+    command = await close_target(sealed)
+    before = await sealed.facts()
+
+    class NamedClosurePeer:
+        def __init__(
+            self, origin: str, credentials: Callable[[str], SecretStr]
+        ) -> None:
+            assert origin == "http://closure-owner.fixture"
+            assert (
+                credentials(sealed.tenant).get_secret_value()
+                == "fixture-workload-credential-000000000000000"
+            )
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            pass
+
+        async def close_unreserved(
+            self,
+            *,
+            tenant_id: str,
+            command: ModelFinancialCloseWork,
+            key: str,
+            request_id: str,
+        ) -> ModelFinancialCloseReceipt:
+            nonlocal owner_receipt
+            assert (
+                tenant_id == sealed.tenant
+                and key == command.budget.request_ref
+                and request_id
+            )
+            # A separate connection can lock both rows while the owner request is running.
+            async with connect_pg(sealed.url) as c, c.cursor() as cur:
+                await execute_sql(
+                    cur,
+                    f"SELECT run_id FROM {qualified(sealed.schema, 'kokoro_agent_run')} WHERE run_id=%s FOR UPDATE NOWAIT",
+                    (sealed.run,),
+                )
+                await execute_sql(
+                    cur,
+                    f"SELECT attempt_id FROM {qualified(sealed.schema, 'kokoro_agent_model_call_attempt')} WHERE attempt_id=%s FOR UPDATE NOWAIT",
+                    (sealed.attempt,),
+                )
+            calls.append(key)
+            owner_receipt = owner_receipt or closure_receipt(command)
+            if lost_ack == "owner" and len(calls) == 1:
+                raise TimeoutError("named owner committed; ACK lost")
+            return owner_receipt
+
+    class LocalAckLost(PostgresModelFinancialRepository):
+        failures = 0
+
+        async def record_close(
+            self, work: ModelFinancialCloseWork, receipt: ModelFinancialCloseReceipt
+        ) -> ModelFinancialCloseReceipt:
+            value = await super().record_close(work, receipt)
+            if type(self).failures == 0:
+                type(self).failures += 1
+                raise TimeoutError("local close committed; ACK lost")
+            return value
+
+    monkeypatch.setattr(operator, "BffModelBudgetClient", NamedClosurePeer)
+    if lost_ack == "local":
+        monkeypatch.setattr(operator, "PostgresModelFinancialRepository", LocalAckLost)
+    environment = {
+        "KOKORO_AGENT_DATABASE_URL": sealed.url,
+        "KOKORO_AGENT_DATABASE_SCHEMA": sealed.schema,
+        "KOKORO_BFF_BASE_URL": "http://closure-owner.fixture",
+        "KOKORO_BFF_MODEL_ADMISSION_SECRETS": json.dumps(
+            {sealed.tenant: "fixture-workload-credential-000000000000000"}
+        ),
+    }
+    with pytest.raises(TimeoutError):
+        await operator.close_unreserved(environment, command)
+    receipt = await operator.close_unreserved(environment, command)
+    assert receipt == owner_receipt
+    assert len(calls) == (2 if lost_ack == "owner" else 1)
+    assert await operator.close_unreserved(environment, command) == receipt
     assert await sealed.facts() == before

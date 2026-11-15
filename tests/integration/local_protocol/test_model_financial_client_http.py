@@ -12,13 +12,18 @@ import pytest
 from pydantic import SecretStr
 from kokoro_agent.clients.model_budget import BffModelBudgetClient
 from kokoro_agent.model.budget import ModelBudgetCommand
+from kokoro_agent.model.financial_close import (
+    ModelFinancialCloseWork,
+    ModelFinancialCloseCommand,
+)
+from kokoro_agent.model.financial_reconciliation import ModelFinancialWork
 from kokoro_agent.model.settlement import ModelSettlementCommand
 
 ID = "11111111-1111-4111-8111-111111111111"
 COMMAND = ModelBudgetCommand(
     run_id="run",
     attempt_id=ID,
-    request_ref="request",
+    request_ref="original-key",
     attempt_binding_digest="a" * 64,
     planned_digest="b" * 64,
     final_request_digest="c" * 64,
@@ -27,7 +32,15 @@ COMMAND = ModelBudgetCommand(
 
 @pytest.mark.parametrize(
     "operation",
-    ["reserve", "recover", "miss", "captured", "released", "pending_reconciliation"],
+    [
+        "reserve",
+        "recover",
+        "miss",
+        "captured",
+        "released",
+        "pending_reconciliation",
+        "unreserved_closed",
+    ],
 )
 async def test_formal_financial_client_over_actual_http_with_exact_body_and_ack(
     operation: str,
@@ -49,6 +62,19 @@ async def test_formal_financial_client_over_actual_http_with_exact_body_and_ack(
                         "retryable": False,
                         "message": "not found",
                     }
+                }
+            elif operation == "unreserved_closed":
+                status = 200
+                payload = {
+                    "data": asdict(COMMAND)
+                    | dict(
+                        evidence_event_id=ID,
+                        evidence_revision="1",
+                        evidence_digest="e" * 64,
+                        closure_ref=ID,
+                        status="unreserved_closed",
+                        closed_at="2026-11-15T00:00:00.000Z",
+                    )
                 }
             elif operation in {"reserve", "recover"}:
                 status = 201 if operation == "reserve" else 200
@@ -119,6 +145,32 @@ async def test_formal_financial_client_over_actual_http_with_exact_body_and_ack(
                     assert result is None
                 else:
                     assert result is not None and result.admission_ref == ID
+            elif operation == "unreserved_closed":
+                work = ModelFinancialCloseWork(
+                    command=ModelFinancialCloseCommand(
+                        tenant_id="tenant",
+                        run_id="run",
+                        attempt_id=ID,
+                        evidence_event_id=ID,
+                        evidence_revision="1",
+                        evidence_digest="e" * 64,
+                    ),
+                    actor_ref="user",
+                    financial=ModelFinancialWork(
+                        tenant_id="tenant",
+                        budget=COMMAND,
+                        evidence=ModelSettlementCommand(
+                            run_id="run",
+                            attempt_id=ID,
+                            event_id=ID,
+                            revision="1",
+                            digest="e" * 64,
+                        ),
+                        admission_ref=None,
+                    ),
+                )
+                closed = await c.close_unreserved(**common, command=work)
+                assert closed.status == operation and closed.closure_ref == ID
             else:
                 settled = await c.settle(
                     **common,
@@ -145,6 +197,11 @@ async def test_formal_financial_client_over_actual_http_with_exact_body_and_ack(
             assert json.loads(raw) == asdict(COMMAND)
             assert path == "/internal/v1/model-admissions" + (
                 "" if operation == "reserve" else "/recover"
+            )
+        elif operation == "unreserved_closed":
+            assert path == "/internal/v1/model-admissions/close-unreserved"
+            assert json.loads(raw) == asdict(COMMAND) | dict(
+                evidence_event_id=ID, evidence_revision="1", evidence_digest="e" * 64
             )
         else:
             assert path == f"/internal/v1/model-admissions/{ID}/settle"

@@ -47,7 +47,7 @@ execution/runtime_profile.py execution/runtime_profile_plan.py execution/runtime
 execution/protocols.py execution/custom_api_selection.py execution/input_backend.py tools/toolset.py tools/toolbox.py tools/registry.py
 clients/system.py model/credentials.py model/factory.py model/summary_adapter.py model/summary_result.py model/usage_observation.py model/call_runtime.py model/personal_context.py model/call_scope.py model/call_models.py model/call_artifacts.py model/request_profile.py
 clients/model_budget.py clients/bff_admission_generated.py model/budget.py model/settlement.py
-model/financial_receipt.py model/financial_reconciliation.py model/execution.py model/usage_producer.py
+model/financial_receipt.py model/financial_close.py model/financial_reconciliation.py model/execution.py model/usage_producer.py
 worker/dependencies.py worker/main.py worker/model_financial.py
 """,
     ),
@@ -169,6 +169,7 @@ infrastructure/postgres_run_profiles.py
 infrastructure/postgres_run_interactions.py
 infrastructure/postgres_run_sandbox.py
 infrastructure/schema.py
+infrastructure/financial_close_schema.py
 infrastructure/sql.py
 distribution_assets.py
 mcp/__init__.py

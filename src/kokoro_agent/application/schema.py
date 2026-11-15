@@ -11,7 +11,12 @@ from dotenv import load_dotenv
 
 from kokoro_agent.config import AppConfig
 from kokoro_agent.infrastructure.postgres import connect_pg
-from kokoro_agent.infrastructure.schema import apply_agent_schema, canonical_schema_sql
+from kokoro_agent.infrastructure.schema import (
+    apply_agent_schema,
+    canonical_schema_sql,
+    expand_financial_close_schema,
+)
+from kokoro_agent.infrastructure.financial_close_schema import financial_close_ddl
 
 
 async def apply_database_schema(environment: Mapping[str, str]) -> None:
@@ -38,3 +43,10 @@ def db_apply_schema_main() -> int:
 
 
 __all__ = ["apply_database_schema", "db_apply_schema_main"]
+
+
+async def expand_model_financial_close(environment: Mapping[str, str] | None) -> None:
+    config = AppConfig.from_env(os.environ if environment is None else environment)
+    financial_close_ddl()
+    async with connect_pg(config.database_url) as connection:
+        await expand_financial_close_schema(connection, config.database_schema)

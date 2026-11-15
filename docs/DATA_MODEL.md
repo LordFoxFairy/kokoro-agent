@@ -1,3 +1,11 @@
+## 2026-11-15 原两笔无预占关闭事实
+
+canonical SQL 新增唯一 `kokoro_agent_model_financial_close`：本地 id、tenant/run/attempt、原 event/revision/evidence_digest、受信 actor_ref、有界 owner receipt bytes/domain-separated digest、created_at；tenant+attempt唯一。无可变 status/update/delete、金额、usage、FK 或新的费用真源。原 request_ref/六绑定及 Billing closure_ref 完整存在严格 canonical receipt 内，应用逐项匹配原 frozen attempt/evidence。不将 Billing 回显 evidence 解读为其对 Agent execution/usage 的裁决。
+
+写入只经显式单目标命令，前后 Run→Attempt 锁复验后 append；重复相同事实零写，不一致拒绝。原 Run/Attempt/Evidence bytes/digests/revision/ACK/xmin 保持，unknown 不补零。close 仅控制既有金融恢复候选；`latest_ack` 仍只返回 settlement。关闭事实与 attempt/evidence 同生命周期，不随 Chat GC 清除。
+
+[ADR-005](ADR/ADR-005-unreserved-financial-close-expand.md) 明确批准一次 owner-scoped additive expand：读取 canonical 标记块、核旧 catalog、持安装 advisory 锁添加本表/唯一索引、核新 catalog；已有正确表仅验证，漂移或超时停止回滚。不另存 DDL、migration ledger 或重建现有 owner schema。fresh installer 仍只允许空 schema；正常数据应用及原两笔操作由 Root 单独核验执行。
+
 ## 当前准入拒绝转移（2026-11-12，无DDL变化）
 
 现canonical已有`authorization_denied/denied`。仅第一次reserve收到已验证的明确余额拒绝时，原Run→attempt事务锁和当前lease保护下写原授权canonical bytes／digest、首条not_dispatched sealed usage2、head／sealed_at及Run completeness；任一步失败整笔回滚，未dispatch且无零usage、资金ACK或金额写入。重复拒绝只读原事件，不能覆盖granted／dispatch或改变历史unknown。已有requested_unknown仅recover，404不转denied；因此denied自然不进入原financial待处理扫描，不放宽扫描或资金闸。数据列、CHECK、索引及Billing owner不变。

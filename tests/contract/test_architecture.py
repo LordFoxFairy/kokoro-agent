@@ -81,6 +81,7 @@ def test_config_imports_are_limited_to_process_entrypoints() -> None:
             "worker/platform.py",  # worker-only resource composition, never HTTP
             "interfaces/http/main.py",
             "application/schema.py",
+            "application/model_financial_close.py",  # explicit operator composition root
         }:
             continue
         offenders = {m for m in _imports(path) if m.startswith("kokoro_agent.config")}
@@ -321,6 +322,7 @@ def test_environ_reads_are_limited_to_process_entrypoints() -> None:
             "worker/main.py",
             "interfaces/http/main.py",
             "application/schema.py",
+            "application/model_financial_close.py",  # explicit operator composition root
         }:
             continue
         assert "os.environ" not in path.read_text(encoding="utf-8"), (

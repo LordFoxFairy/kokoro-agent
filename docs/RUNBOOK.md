@@ -1,3 +1,25 @@
+## 2026-11-15 原两笔无预占恢复关闭
+
+仅 Root 原登记两笔适用；先核 [ADR-005](ADR/ADR-005-unreserved-financial-close-expand.md)、BFF1.4正式部署及 Billing 原命令 fence。凭据继续从现受管环境注入，不写命令参数、日志或 Run。源码/隔离验证不自动授权执行其他目标。
+
+先由主控对已有 Agent owner schema 显式 additive，严禁用 fresh installer 重建：
+
+```bash
+uv run --frozen kokoro-agent db:expand-model-financial-close
+```
+
+该命令不清库、不修 drift；失败立即停止，保留原 owner 数据。确认新 catalog/readiness 后再启用对应新 selector。应用回退保留表及关闭事实，不能启动不认识 close 的旧金融恢复进程冒称回退完成。
+
+仅以原私有清单的准确值执行单条命令；下方均为占位符，不是新目标或批量授权：
+
+```bash
+uv run --frozen kokoro-agent model:close-unreserved \
+  --tenant-id TARGET --run-id TARGET --attempt-id TARGET \
+  --evidence-event-id TARGET --evidence-revision TARGET --evidence-digest TARGET
+```
+
+先后各核原 Run/Attempt/Evidence 的原 bytes/digest、ACK空及 owner 资金快照；仅允许新增相应 close 行。输出独立 unreserved_closed receipt，不是费用结算。Billing 已关闭但 Agent 未落行时，按相同全部参数重试；新 key/改 evidence/手工清 ACK 均不是恢复手段。若出现 admission/hold、身份或 head 漂移，停止该目标并交原 owner，绝不执行 reserve/capture/release/refund。工作进程不会自动调用本命令。
+
 ## 2026-10-24 普通会话 MCP 选择配对
 
 Agent HTTP7.4 的 selected_mcp_connection_ids 是不可变业务输入；只有BFF/App消费固定候选且整片验证后才正常启用。先drain旧worker／核无活跃Run；源码hash本来属于冻结recipe，不能凭空字段字节兼容就宣称旧profile可在新代码恢复。正常旧JSON不批量补字段，空选择保原序列化/fence；非空请求已接纳后，回退仍须保留能消费该字段的reader，不将7.3回灌新队列。精确ID不是授权，资格失效按原失败关闭，不删项或改同名连接；trace.mcp_servers仅旧诊断，不能启用MCP。

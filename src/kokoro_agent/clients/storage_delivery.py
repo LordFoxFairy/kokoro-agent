@@ -906,20 +906,7 @@ class StorageDeliveryClient:
         )
 
     async def _require_clean(self, request: DeliveryRequest, asset_id: str) -> None:
-        scan = _expect(
-            await self._call(
-                request, "get_scan_status", pb.GetScanStatusRequest(asset_id=asset_id)
-            ),
-            pb.GetScanStatusResponse,
-        )
-        for _ in range(10):
-            if scan.asset_id != asset_id:
-                raise StorageClientError("DELIVERY_SCAN_MISMATCH")
-            if scan.state == pb.ScanState.CLEAN:
-                break
-            if scan.state in {pb.ScanState.INFECTED, pb.ScanState.UNKNOWN}:
-                raise StorageClientError("DELIVERY_SCAN_REJECTED")
-            await asyncio.sleep(0.5)
+        for attempt in range(11):
             scan = _expect(
                 await self._call(
                     request,
@@ -928,8 +915,15 @@ class StorageDeliveryClient:
                 ),
                 pb.GetScanStatusResponse,
             )
-        else:
-            raise StorageClientError("DELIVERY_SCAN_PENDING", retryable=True)
+            if scan.asset_id != asset_id:
+                raise StorageClientError("DELIVERY_SCAN_MISMATCH")
+            if scan.state == pb.ScanState.CLEAN:
+                return
+            if scan.state in {pb.ScanState.INFECTED, pb.ScanState.UNKNOWN}:
+                raise StorageClientError("DELIVERY_SCAN_REJECTED")
+            if attempt < 10:
+                await asyncio.sleep(0.5)
+        raise StorageClientError("DELIVERY_SCAN_PENDING", retryable=True)
 
     async def _finalize(
         self,

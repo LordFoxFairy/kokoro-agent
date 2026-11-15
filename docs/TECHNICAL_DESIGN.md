@@ -1,3 +1,9 @@
+## 2026-11-15 原生选中输入匹配：复用既有SDK依赖
+
+只修`/.inputs/`虚拟只读backend的glob／grep匹配，不改Run快照、权限、数据模型或协议。采用SDK同款wcmatch10.1公共API，支持递归glob、BRACE、相对pattern及grep basename／空filter；不采用手写glob子集或私有SDK工具函数。该MIT包已存在于uv.lock及执行配方版本清单，本轮仅显式声明直接依赖；全部132包的版本、来源和artifact摘要保持。后续随原SDK兼容更新review，不引入第二matcher／fallback或独立发布面。
+
+Storage scan仅重排既有有限轮询：一处RPC、一处状态判定，每份响应含尾轮均核验；查询／等待预算与现owner调用边界保持。无新API／Schema／owner或框架层。
+
 ## 2026-11-15 原两笔无预占恢复的显式关闭
 
 沿 [ADR-005](ADR/ADR-005-unreserved-financial-close-expand.md)，只增加单目标 operator；不改变 worker 对其他 pending 的行为，不重派模型或请求资金操作。`application/model_financial_close.py` 装配既有 BFF model-admission client 和 owner repository；凭据解析从 worker 移至现 transport，由原 worker 同样复用，配置及语义不变。

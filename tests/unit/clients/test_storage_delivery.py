@@ -103,6 +103,7 @@ class FakeTransport:
         self.calls: list[tuple[str, object, dict[str, str]]] = []
         self.puts: list[bytes] = []
         self.scan = pb.ScanState.CLEAN
+        self.scan_responses: list[pb.GetScanStatusResponse] = []
         self.completed = False
         self.fail_artifact_once = False
         self.after_create: Callable[[], None] | None = None
@@ -161,6 +162,8 @@ class FakeTransport:
                 upload_id="upload-1", asset_id="asset-1", scan_state=self.scan
             )
         if method == "get_scan_status":
+            if self.scan_responses:
+                return self.scan_responses.pop(0)
             return pb.GetScanStatusResponse(asset_id="asset-1", state=self.scan)
         if method == "abort_upload":
             return pb.AbortUploadResponse(
@@ -698,6 +701,49 @@ async def test_corrupt_closed_stage_stops_actual_tool_before_workspace_read(
     assert isinstance(result, str) and "DELIVERY_INTENT_INVALID" in result
     assert downloads == 0
     assert transport.calls == [] and transport.puts == []
+
+
+@pytest.mark.parametrize(
+    ("state", "asset_id", "error_code"),
+    [
+        (pb.ScanState.CLEAN, "asset-1", None),
+        (pb.ScanState.INFECTED, "asset-1", "DELIVERY_SCAN_REJECTED"),
+        (pb.ScanState.UNKNOWN, "asset-1", "DELIVERY_SCAN_REJECTED"),
+        (pb.ScanState.CLEAN, "different-asset", "DELIVERY_SCAN_MISMATCH"),
+        (pb.ScanState.PENDING, "asset-1", "DELIVERY_SCAN_PENDING"),
+    ],
+)
+async def test_delivery_checks_last_scan_response_within_existing_budget(
+    state: pb.ScanState,
+    asset_id: str,
+    error_code: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runs, transport = FakeRuns(), FakeTransport()
+    transport.scan_responses = [
+        pb.GetScanStatusResponse(asset_id="asset-1", state=pb.ScanState.PENDING)
+        for _ in range(10)
+    ] + [pb.GetScanStatusResponse(asset_id=asset_id, state=state)]
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr("kokoro_agent.clients.storage_delivery.asyncio.sleep", sleep)
+    client = StorageDeliveryClient(runs, transport)
+    if error_code is None:
+        receipt = await client.publish(_request())
+        assert receipt.artifact_id == "artifact-1"
+    else:
+        with pytest.raises(StorageClientError) as raised:
+            await client.publish(_request())
+        assert raised.value.code == error_code
+        assert raised.value.retryable is (error_code == "DELIVERY_SCAN_PENDING")
+    methods = [name for name, _, _ in transport.calls]
+    assert methods.count("get_scan_status") == 11
+    assert waits == [0.5] * 10
+    assert ("create_artifact" in methods) is (error_code is None)
+    assert ("finalize_artifact" in methods) is (error_code is None)
 
 
 async def test_infected_scan_never_creates_artifact() -> None:

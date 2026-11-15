@@ -1,3 +1,7 @@
+## Storage交付扫描的有限轮询
+
+`storage_delivery.py` 的publish／recover共用scan判定：最多11次查询、10次0.5秒等待，每份响应都先核asset／state，包含最后一次。CLEAN才进入原finalize，INFECTED／UNKNOWN拒绝，错asset报mismatch，耗尽后才pending；每次RPC沿原canonical／lease／取消边界，不新增重试框架或改变Storage owner。
+
 # clients — 外部 public contract 客户端
 
 本目录只定义 GA 需要的窄协议和连接适配边界，不复制 Capability、Storage、Studio、Billing 或

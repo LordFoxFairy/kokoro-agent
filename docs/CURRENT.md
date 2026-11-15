@@ -1,3 +1,13 @@
+## 2026-11-15 Agent核心业务：输入查询假空与scan尾响应修复
+
+本轮两独立只读面、主控唯一writer，只沿输入／工具／产物主链，不涉及基础设施／部署／运维或旧财务事项。
+原生Composite查询的`**/*`与grep basename／空glob不再假空；glob仅枚举元数据，grep过滤先于受控正文读取，稳定索引／只读／manifest与lease边界不变。沿锁定SDK公共matcher，已有wcmatch10.1提升为显式直接依赖，132包图版本／来源／摘要不变。
+Storage publish／recover共用scan循环检查最后一份响应，CLEAN正常finalize、感染／UNKNOWN拒绝、错asset报mismatch，仍11查询／10次0.5秒等待，不增retry框架。
+
+最小RED10／PASS1（60未选），修后两文件71／四相关文件最终102PASS；现有取消／恢复／只读断言保持。Ruff全lint／format404、固定Pyright1.1.409显式现Python3.14.3解释器0错误、contract-check、lock-check及wheel/sdist构建通过，两独立只读复核CLEAR。
+首次offline锁刷新缺其它平台cache，正常生成后仅新增root两项依赖字段；未换索引／升级／缩平台。初次Pyright未指venv误读依赖，显式pythonpath后0，未放宽规则。失败原件保留。
+本轮无owner／wire／Schema变化；未运行真实Storage／模型／供应商／Docker、数据库集成或全默认，不以unit冒整条真实链。本PR交付源码，未重启正常服务或宣称已部署。
+
 ## 2026-11-13 装配期生命周期修复已发行并完成真实取消主路径
 
 `b61234b90fcba02a168cd10f6d6665d6c6ea4d43` 已推原 PR #49。主控仅受控重载正式 Agent HTTP／Worker，原 PG／Redis／卷不变；下方“源码候选”是前阶段事实。最终 test_main 9 PASS；相关 worker／execution supervisor／workspace archive 191 PASS、5 integration 未选，完整 Ruff／Pyright 0 错误与 wheel／sdist 通过、独审 CLEAR；未重复全默认或模型成功链。

@@ -5,6 +5,10 @@
 单次 Run 的执行核心：消费 DeepAgents 原生调用结果、v3 四投影并发消费合流、
 wire 事件唯一构造点（per-run 单调 index）、HITL 暂停帧构造与 resume 对齐。
 
+## 选中输入的原生查询语义
+
+`input_backend.py` 的glob按相对索引路径匹配，去pattern前导slash，沿锁定SDK使用BRACE／GLOBSTAR；grep的glob仅匹配basename，空glob不筛选。未匹配项不读取正文，稳定索引路径／只读／现manifest与lease校验保持。复用已纳管的wcmatch10.1公共matcher，不自行实现另一套glob。
+
 ## 公开 API
 
 - Agent 的创建不属于本目录；由 `agent_factory.py` 接线

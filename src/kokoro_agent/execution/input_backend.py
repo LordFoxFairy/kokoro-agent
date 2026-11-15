@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import hashlib
 import json
 from collections.abc import Sequence
@@ -24,6 +23,7 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 from deepagents.backends.utils import create_file_data, slice_read_response
+from wcmatch import glob as wcglob
 
 from kokoro_agent.clients.storage import (
     InputResourceReadClient,
@@ -200,7 +200,11 @@ class InputResourceBackend(BackendProtocol):
             matches=[
                 FileInfo(path=path, is_dir=False, size=int(ref.size_bytes))
                 for path, ref in self._refs.items()
-                if fnmatch.fnmatch(path.lstrip("/"), pattern)
+                if wcglob.globmatch(
+                    path.lstrip("/"),
+                    pattern.lstrip("/"),
+                    flags=wcglob.BRACE | wcglob.GLOBSTAR,
+                )
             ]
         )
 
@@ -213,7 +217,10 @@ class InputResourceBackend(BackendProtocol):
         output_bytes = 0
         for candidate in self._refs:
             if path not in {None, "/", candidate} or (
-                glob is not None and not fnmatch.fnmatch(candidate, glob)
+                glob
+                and not wcglob.globmatch(
+                    candidate.rsplit("/", 1)[-1], glob, flags=wcglob.BRACE
+                )
             ):
                 continue
             content = await self._bytes(candidate)

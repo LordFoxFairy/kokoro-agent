@@ -814,6 +814,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "redis" },
     { name = "rfc8785" },
+    { name = "wcmatch" },
 ]
 
 [package.dev-dependencies]
@@ -853,6 +854,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "redis", specifier = ">=5" },
     { name = "rfc8785", specifier = ">=0.1.4" },
+    { name = "wcmatch", specifier = "==10.1" },
 ]
 
 [package.metadata.requires-dev]

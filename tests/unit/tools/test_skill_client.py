@@ -138,6 +138,62 @@ async def test_backend_reauthorizes_all_read_surfaces_and_preserves_binary() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target,expected",
+    [
+        ("SKILL.md", ["SKILL.md"]),
+        ("references/guide.md", ["references/guide.md"]),
+        ("references", ["references/guide.md", "references/nested/guide.md"]),
+    ],
+)
+async def test_routed_skill_grep_scopes_files_and_directories(
+    target: str, expected: list[str]
+) -> None:
+    from collections.abc import Mapping
+    from deepagents.backends.composite import CompositeBackend
+    from kokoro_agent.clients.skills import ResolvedSkill
+    from kokoro_agent.skills.backend import SKILLS_ROOT, TypedSkillBackend
+
+    class Reader:
+        deny = False
+
+        async def load_package(self, skill: ResolvedSkill) -> Mapping[str, bytes]:
+            if self.deny:
+                raise SkillClientError("revoked")
+            return {
+                "SKILL.md": b"intro\nneedle in instructions",
+                "references/guide.md": b"intro\nneedle in reference",
+                "references/nested/guide.md": b"intro\nneedle in nested reference",
+                "references-other/guide.md": b"intro\nneedle outside directory",
+                "SKILL.md.bak": b"intro\nneedle outside file",
+            }
+
+    skill = ResolvedSkill(
+        source_ref="skill:search",
+        skill_id="search",
+        revision=1,
+        asset_ref="asset",
+        content_digest="a" * 64,
+        manifest_identity="skill-md-v1:sha256:" + "b" * 64,
+    )
+    reader = Reader()
+    backend = CompositeBackend(
+        default=TypedSkillBackend((), None),
+        routes={SKILLS_ROOT: TypedSkillBackend((skill,), reader)},
+    )
+    prefix = SKILLS_ROOT + skill.path_segment + "/"
+    result = await backend.agrep("needle", prefix + target)
+    assert result.error is None
+    matches = result.matches or []
+    assert [match["path"] for match in matches] == [prefix + path for path in expected]
+    assert all(match["line"] == 2 and "needle" in match["text"] for match in matches)
+    assert (await backend.agrep("needle", prefix + "missing.md")).matches == []
+    reader.deny = True
+    with pytest.raises(SkillClientError, match="revoked"):
+        await backend.agrep("needle", prefix + target)
+
+
+@pytest.mark.asyncio
 async def test_backend_canonical_id_paths_no_alias_and_all_writes_denied() -> None:
     from collections.abc import Mapping
     from kokoro_agent.clients.skills import ResolvedSkill

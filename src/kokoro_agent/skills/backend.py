@@ -200,7 +200,7 @@ class TypedSkillBackend(BackendProtocol):
                 continue
             for relative, content in sorted(package.items()):
                 file_path = f"/{name}/{relative}"
-                if not file_path.startswith(prefix) or (
+                if (file_path != path and not file_path.startswith(prefix)) or (
                     glob is not None and not fnmatch.fnmatch(file_path, glob)
                 ):
                     continue

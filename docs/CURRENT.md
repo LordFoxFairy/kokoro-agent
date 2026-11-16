@@ -1,3 +1,9 @@
+## 2026-11-15 Skills 精确文件 grep：原生路由假空修复
+
+本轮两只读面先确认MCP结果语义与现覆盖无需修改；仅处理此前未查的Skills精确文件搜索。原生Composite将`/.skills/<canonical>/SKILL.md`／嵌套参考文件路由到TypedSkillBackend，原目录前缀筛选漏掉文件自身。现仅在原筛选条件承接exact-file，保原目录`/`边界及trailing-slash政策，不改glob或增helper。
+
+公开Composite三等价类先RED2／PASS1（19未选），最小修复后该文件22PASS；精确文件／嵌套文件／目录正确原路径、行号、相邻前缀隔离、未知路径空及撤权传播均由现入口承接。包重验、原始bytes、预算、解码与只读保持，MCP未改，无wire／Schema／依赖变更。最终停写工程门及PR出口见本PR；不运行模型／外部Provider／真实数据库或整产品E2E，不涉及基础设施／运维／部署。
+
 ## 2026-11-15 事件持久化错误边界：未确认不进入正常暂停
 
 本轮只沿执行结果→持久事件→恢复展示。BFF限定纯映射／回放只读审查未发现确认缺陷，不改BFF或扩扫SQL；Agent确认delivery已成功journal后，critical staging／前置fence读取普通异常被pump按单帧publish失败吞掉，暂停阶段无已确认queued记录可依赖，终态repair不能覆盖暂停窗口。
